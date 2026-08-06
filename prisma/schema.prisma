@@ -1,0 +1,110 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id String @id @default(uuid())
+  name String @unique
+  isFixed Boolean @default(false)
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users User[]
+  permissions RolePermission[]
+}
+
+model CompanySettings {
+  id String @id @default(uuid())
+  companyName String @default("")
+  address String?
+  phone String?
+  email String?
+  taxId String?
+  currency String @default("USD")
+  logoPath String?
+  updatedAt DateTime @updatedAt
+}
+
+model Module {
+  id String @id @default(uuid())
+  name String
+  code String @unique
+  parentId String?
+  parent Module? @relation("ModuleHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Module[] @relation("ModuleHierarchy")
+  sorting Int @default(0)
+  createdAt DateTime @default(now())
+  permissions Permission[]
+  @@index([parentId])
+}
+
+model Permission {
+  id String @id @default(uuid())
+  moduleId String
+  module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  name String
+  code String @unique
+  description String?
+  createdAt DateTime @default(now())
+  rolePermissions RolePermission[]
+  @@index([moduleId])
+}
+
+model RolePermission {
+  id String @id @default(uuid())
+  roleId String
+  permissionId String
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("RolePermissions")
+}
+
+model User {
+  id String @id @default(uuid())
+  email String @unique
+  passwordHash String
+  pinHash String?
+  firstName String
+  lastName String
+  phone String?
+  roleId String
+  role Role @relation(fields: [roleId], references: [id])
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  refreshTokens RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  @@index([roleId])
+}
+
+model RefreshToken {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  usedAt DateTime?
+  @@index([userId])
+}
+
