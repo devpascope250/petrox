@@ -4,19 +4,20 @@ import type { AppConfig } from "../../config/env.js";
 import { createOpaqueToken, hashToken, verifyPin } from "../../utils/crypto.js";
 import { AppError, unauthorized } from "../../utils/errors.js";
 import { AuthRepository } from "./auth.repository.js";
-
+import { emailService} from "../../utils/emailService.js";
 type AuthUser = NonNullable<Awaited<ReturnType<AuthRepository["findUserByEmail"]>>>;
 
 export class AuthService {
   constructor(private repo: AuthRepository, private app: FastifyInstance, private config: AppConfig) {}
   private permissions(user: AuthUser) {
-    return user.role.permissions.map((item) => item.permission.code);
+    return user.role ? user.role.permissions.map((item) => item.permission.code) : null;
   }
   private publicUser(user: AuthUser) {
-    return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role.name };
+    return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role?.name };
   }
   private async issue(user: AuthUser) {
     const permissions = this.permissions(user);
+    if (!user || !user?.role || !user?.roleId || !permissions) throw unauthorized();
     const accessToken = this.app.jwt.sign(
       { sub: user.id, roleId: user.roleId, role: user.role.name, permissions },
       { expiresIn: this.config.ACCESS_TOKEN_TTL }
@@ -27,7 +28,7 @@ export class AuthService {
     return { accessToken, refreshToken, expiresAt, user: this.publicUser(user), permissions };
   }
   private ensureActive(user: AuthUser | null): asserts user is AuthUser {
-    if (!user || !user.isActive || !user.role.isActive) throw unauthorized("Invalid credentials");
+    if (!user || !user.isActive || !user.role?.isActive) throw unauthorized("Invalid credentials");
   }
   async login(email: string, password: string) {
     const user = await this.repo.findUserByEmail(email);
@@ -53,17 +54,21 @@ export class AuthService {
     const stored = await this.repo.findRefreshToken(hashToken(rawToken));
     if (stored && !stored.revokedAt) await this.repo.revokeRefreshToken(stored.id);
   }
-  async createResetToken(userId: string) {
-    const user = await this.repo.findUserById(userId);
+  async createResetToken(email: string) {
+    const user = await this.repo.findUserByEmail(email);
     if (!user) throw new AppError(404, "USER_NOT_FOUND", "User not found");
     const token = createOpaqueToken();
     const expiresAt = new Date(Date.now() + 30 * 60_000);
-    await this.repo.createPasswordResetToken(userId, hashToken(token), expiresAt);
+    await this.repo.createPasswordResetToken(user.id, hashToken(token), expiresAt);
+    await emailService.sendPasswordResetEmail(user.email, user.firstName, token);
     return { token, expiresAt };
   }
   async resetPassword(token: string, password: string) {
     const stored = await this.repo.findPasswordResetToken(hashToken(token));
     if (!stored || stored.usedAt || stored.expiresAt <= new Date()) throw unauthorized("Invalid or expired reset token");
     await this.repo.consumePasswordResetToken(stored.id, stored.userId, await bcrypt.hash(password, 12));
+     const user = await this.repo.findUserById(stored.userId);
+    if (!user) throw new AppError(404, "USER_NOT_FOUND", "User not found");
+    await emailService.sendPasswordResetSuccessEmail(user.email, user.firstName);
   }
 }

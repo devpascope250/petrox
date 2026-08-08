@@ -8,15 +8,10 @@ vi.mock("../src/plugins/prisma.js", () => ({
 }));
 
 import { buildApp } from "../src/app.js";
-import type { AppConfig } from "../src/config/env.js";
+import { loadConfig } from "../src/config/env.js";
 import { BusinessError } from "../src/utils/errors.js";
 
-const config: AppConfig = {
-  NODE_ENV: "test", HOST: "127.0.0.1", PORT: 3000, LOG_LEVEL: "silent",
-  DATABASE_URL: "mysql://unused", JWT_SECRET: "test-jwt-secret-that-is-at-least-32-chars",
-  PIN_HMAC_SECRET: "test-pin-secret-that-is-at-least-32-chars", ACCESS_TOKEN_TTL: "15m",
-  REFRESH_TOKEN_TTL_DAYS: 30, CORS_ORIGIN: "http://localhost:5173"
-};
+const config = loadConfig();
 
 describe("HTTP API", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;

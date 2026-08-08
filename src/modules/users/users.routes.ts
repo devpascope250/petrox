@@ -7,11 +7,11 @@ import { UsersService } from "./users.service.js";
 
 const routes: FastifyPluginAsync = async (app) => {
   const service = new UsersService(new UsersRepository(app.prisma), app.config);
-  app.get("/", { preHandler: [app.authenticate, app.authorize("users.read")] }, async (request) =>
+  app.get("/", { preHandler: [app.authenticate, app.authorize("system.users.manage")] }, async (request) =>
     success(await service.list(parseInput(paginationQuerySchema, request.query))));
-  app.get("/:id", { preHandler: [app.authenticate, app.authorize("users.read")] }, async (request) =>
+  app.get("/:id", { preHandler: [app.authenticate, app.authorize("system.users.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));
-  app.post("/", { preHandler: [app.authenticate, app.authorize("users.create")] }, async (request, reply) =>
+  app.post("/", { preHandler: [app.authenticate, app.authorize("system.users.manage")] }, async (request, reply) =>
     created(reply, await service.create(parseInput(createUserSchema, request.body))));
 };
 

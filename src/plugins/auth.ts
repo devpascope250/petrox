@@ -16,10 +16,41 @@ export default fp(async (app) => {
       throw unauthorized("Invalid or expired access token");
     }
   });
-  app.decorate("authorize", (...required: string[]) => async function (request) {
-    if (!request.contextUser) throw unauthorized();
-    if (!required.every((permission) => request.contextUser!.permissions.includes(permission))) {
-      throw forbidden();
+ function hasPermission(
+  userPermissions: readonly string[],
+  requiredPermission: string
+): boolean {
+  if (userPermissions.includes(requiredPermission)) {
+    return true;
+  }
+
+  const parts = requiredPermission.split(".");
+
+  if (parts.length < 2) {
+    return false;
+  }
+
+  const resource = parts.slice(0, -1).join(".");
+  const managePermission = `${resource}.manage`;
+
+  return userPermissions.includes(managePermission);
+}
+
+app.decorate(
+  "authorize",
+  (...required: string[]) =>
+    async function (request) {
+      if (!request.contextUser) {
+        throw unauthorized();
+      }
+
+      const permissions = request.contextUser.permissions;
+
+      if (!required.every((permission) =>
+        hasPermission(permissions, permission)
+      )) {
+        throw forbidden();
+      }
     }
-  });
+);
 }, { name: "auth", dependencies: ["jwt"] });

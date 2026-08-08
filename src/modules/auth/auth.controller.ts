@@ -26,7 +26,7 @@ export class AuthController {
   };
 
   requestReset = async (request: FastifyRequest, reply: FastifyReply) =>
-    created(reply, await this.service.createResetToken(parseInput(resetRequestSchema, request.body).userId));
+    created(reply, await this.service.createResetToken(parseInput(resetRequestSchema, request.body).email));
 
   resetPassword = async (request: FastifyRequest) => {
     const input = parseInput(resetPasswordSchema, request.body);

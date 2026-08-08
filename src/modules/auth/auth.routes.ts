@@ -10,7 +10,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   app.post("/pin-login", limited, controller.pinLogin);
   app.post("/refresh", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, controller.refresh);
   app.post("/logout", controller.logout);
-  app.post("/password-reset/request", { preHandler: [app.authenticate, app.authorize("users.reset_password")] }, controller.requestReset);
+  app.post("/password-reset/request", controller.requestReset);
   app.post("/password-reset/confirm", limited, controller.resetPassword);
 };
 export default authRoutes;

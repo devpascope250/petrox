@@ -5,6 +5,6 @@ export const loginSchema = z.object({ email: emailSchema, password: passwordSche
 export const pinLoginSchema = z.object({ email: emailSchema, pin: pinSchema });
 export const refreshSchema = z.object({ refreshToken: opaqueTokenSchema });
 export const logoutSchema = refreshSchema;
-export const resetRequestSchema = z.object({ userId: uuidSchema });
+export const resetRequestSchema = z.object({ email: emailSchema });
 export const resetPasswordSchema = z.object({ token: opaqueTokenSchema, password: passwordSchema });
 export type LoginInput = z.infer<typeof loginSchema>;
