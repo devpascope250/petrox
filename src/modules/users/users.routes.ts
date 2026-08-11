@@ -4,15 +4,21 @@ import { idParamsSchema, paginationQuerySchema, parseInput } from "../../shared/
 import { UsersRepository } from "./users.repository.js";
 import { createUserSchema } from "./users.schema.js";
 import { UsersService } from "./users.service.js";
+import { request } from "http";
 
 const routes: FastifyPluginAsync = async (app) => {
   const service = new UsersService(new UsersRepository(app.prisma), app.config);
-  app.get("/", { preHandler: [app.authenticate, app.authorize("system.users.manage")] }, async (request) =>
+  app.get("/", { preHandler: [app.authenticate, app.authorize("users.manage")] }, async (request) =>
     success(await service.list(parseInput(paginationQuerySchema, request.query))));
-  app.get("/:id", { preHandler: [app.authenticate, app.authorize("system.users.manage")] }, async (request) =>
+  app.get("/:id", { preHandler: [app.authenticate, app.authorize("users.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));
-  app.post("/", { preHandler: [app.authenticate, app.authorize("system.users.manage")] }, async (request, reply) =>
+  app.post("/", { preHandler: [app.authenticate, app.authorize("users.manage")] }, async (request, reply) =>
     created(reply, await service.create(parseInput(createUserSchema, request.body))));
+  app.put("/:id", { preHandler: [app.authenticate, app.authorize("users.manage")] }, async (request, reply) =>
+    created(reply, await service.create(parseInput(createUserSchema, request.body))));
+
+  app.put("/status/:id", {preHandler: [app.authenticate, app.authorize("users.manage")]}, async(request, reply) => 
+    created(reply, await service.changeStatus(parseInput(idParamsSchema, request.params).id)))
 };
 
 export default routes;

@@ -6,6 +6,7 @@ import type { PaginationQuery } from "../../shared/validation/index.js";
 import { hashPin } from "../../utils/crypto.js";
 import type { createUserSchema } from "./users.schema.js";
 import { UsersRepository } from "./users.repository.js";
+import { NotFoundError } from "../../utils/errors.js";
 
 export class UsersService {
   constructor(private repo: UsersRepository, private config: AppConfig) {}
@@ -15,7 +16,7 @@ export class UsersService {
     return paginatedData(items, total, query);
   }
 
-  find(id: string) { return this.repo.find(id); }
+  async find(id: string) { return await this.repo.find(id); }
 
   async create(input: z.infer<typeof createUserSchema>) {
     const { password, pin, ...profile } = input;
@@ -24,5 +25,9 @@ export class UsersService {
       passwordHash: await bcrypt.hash(password, 12),
       pinHash: pin ? hashPin(pin, this.config.PIN_HMAC_SECRET) : null
     });
+  }
+
+  async changeStatus(id: string){
+    return await this.repo.updateStatus(id);    
   }
 }

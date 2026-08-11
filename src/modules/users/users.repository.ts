@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "../../../generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PaginationQuery } from "../../shared/validation/index.js";
+import { NotFoundError } from "../../utils/errors.js";
 
 const publicUserSelect = {
   id: true,
@@ -28,6 +29,25 @@ export class UsersRepository {
       data,
       select: { id: true, email: true, firstName: true, lastName: true, isActive: true, roleId: true }
     });
+  }
+  async updateStatus(id: string){
+    const user = await this.find(id);
+    if(!user) throw new NotFoundError();
+    return this.db.user.update({
+      where: {
+        id
+      },
+      data: {
+        isActive: !user.isActive
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        isActive: true,
+      }
+    })
   }
 
   find(id: string) {

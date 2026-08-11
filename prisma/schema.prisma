@@ -84,6 +84,7 @@ model User {
   updatedAt DateTime @updatedAt
   refreshTokens RefreshToken[]
   passwordResetTokens PasswordResetToken[]
+  orders  Order[]
   @@index([roleId])
 }
 
@@ -109,3 +110,142 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+
+// phase 2 of impementing items
+
+model Item {
+  id  String @id @default(uuid())
+  name String
+  descriptions String?
+  parentId  String?
+  baseUnitId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  status    StatusType @default(active)
+
+  baseUnit Unit? @relation(fields: [baseUnitId], references: [id], onDelete: SetNull)
+  itemUnits ItemUnit[]
+
+  itemClass Item? @relation("ItemHierarchy", fields: [parentId], references: [id])
+  items     Item[] @relation("ItemHierarchy")
+  orders    Order[]
+
+  @@index([id])
+  @@index([parentId])
+}
+
+model Unit {
+  id  String  @id @default(uuid())
+  name String
+  code String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  status   StatusType @default(active)
+  itemsUnits ItemUnit[]
+  items  Item[]
+
+  @@index([id])
+}
+
+
+model ItemUnit {
+  id      String   @id  @default(uuid())
+  unitId  String
+  itemId  String
+  factorialValue Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  status     StatusType @default(active)
+
+  item  Item @relation(fields: [itemId], references: [id],onDelete: Cascade)
+  unit  Unit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([unitId, itemId])
+  @@index([id])
+  @@index([unitId])
+  @@index([itemId])
+
+}
+
+
+model Supplier {
+  id   String  @id @default(uuid())
+  name String
+  address String?
+  phone   String?
+  tinNumber String?
+  supplierTypeId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  status       StatusType @default(active)
+  supplierType SupplierType @relation(fields: [supplierTypeId], references: [id])
+  orders        Order[]
+  @@index([id])
+  @@index([supplierTypeId])
+}
+
+
+model SupplierType {
+  id    String   @id @default(uuid())
+  type  String
+  createdAt DateTime @default(now())
+  updatedAt  DateTime @default(now())
+  status     StatusType @default(active)
+  suppliers   Supplier[]
+
+  @@index([id])
+}
+
+enum StatusType {
+  active
+  inactive
+}
+
+// for orders and order plans
+
+model OrderPlan {
+  id  String    @id @default(uuid())
+  name    String
+  startDate DateTime
+  endDate   DateTime
+  status    PlanStatus @default(active)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  orders     Order[]
+  
+  @@index([id])
+  @@index([startDate, endDate])
+  @@index([status])
+}
+
+
+enum PlanStatus {
+  active
+  closed
+  terminated
+  force_closed
+}
+
+model Order {
+  id   String @id @default(uuid())
+  orderCode  String @unique
+  supplierId  String
+  orderDate   DateTime
+  itemId      String
+  createdByUserId   String
+  orderPlanId  String
+  quantity      Decimal @db.Decimal(18,2)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  plan        OrderPlan @relation(fields: [orderPlanId], references: [id])
+  item        Item @relation(fields: [itemId], references: [id])
+  createdUser User @relation(fields: [createdByUserId], references: [id])
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+
+
+  @@index([id])
+  @@index([orderCode])
+  @@index([supplierId])
+  @@index([createdByUserId])
+  @@index([orderPlanId])
+}

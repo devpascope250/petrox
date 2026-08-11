@@ -136,7 +136,7 @@ class EmailService {
     resetToken: string,
     metadata?: { ipAddress?: string }
   ): Promise<void> {
-    const resetLink = `${this.config.APP_URL}/reset-password?token=${resetToken}`;
+    const resetLink = `${this.config.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
     const html = await this.renderTemplate<PasswordResetData>('password-reset', {
       userName,
@@ -163,7 +163,7 @@ class EmailService {
       'password-reset-success',
       {
         userName,
-        loginLink: `${this.config.APP_URL}/login`,
+        loginLink: `${this.config.FRONTEND_URL}/login`,
         resetDate: new Date().toLocaleString(),
         location: metadata.location || 'Unknown',
         browserInfo: metadata.browser || 'Unknown',
@@ -188,7 +188,7 @@ class EmailService {
       {
         userName,
         userEmail,
-        dashboardLink: `${this.config.APP_URL}/dashboard`,
+        dashboardLink: `${this.config.FRONTEND_URL}/dashboard`,
         accountType: accountDetails.type || 'Free',
         registrationDate: new Date().toLocaleDateString(),
         socialLinks: {

@@ -21,6 +21,7 @@ const schema = z.object({
   COMPANY_NAME: z.string().min(1).trim(),
   COMPANY_ADDRESS: z.string().default('123 Business St, City, State 12345'),
   APP_URL: z.url(),
+  FRONTEND_URL: z.url(),
   PRIVACY_POLICY_URL: z.url(),
   TERMS_URL: z.url(),
   SUPPORT_URL: z.url(),

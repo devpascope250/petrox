@@ -61,7 +61,7 @@ export class AuthService {
     const expiresAt = new Date(Date.now() + 30 * 60_000);
     await this.repo.createPasswordResetToken(user.id, hashToken(token), expiresAt);
     await emailService.sendPasswordResetEmail(user.email, user.firstName, token);
-    return { token, expiresAt };
+    return { expiresAt };
   }
   async resetPassword(token: string, password: string) {
     const stored = await this.repo.findPasswordResetToken(hashToken(token));

@@ -75,14 +75,14 @@ const routes: FastifyPluginAsync = async (app) => {
       if (!(await app.prisma.role.findUnique({ where: { id: input.id } })))
         throw new NotFoundError(`This Role with ${input.id} does nnot exist`);
       const updated = await app.prisma.$transaction(async (tx) => {
-        // await tx.rolePermission.deleteMany({
-        //   where: {
-        //     roleId: input.id,
-        //     id: {
-        //       notIn: data.permissionIds
-        //     }
-        //   }
-        // })
+        await tx.rolePermission.deleteMany({
+          where: {
+            roleId: input.id,
+            id: {
+              notIn: data.permissionIds
+            }
+          }
+        })
         await tx.role.update({where: {id: input.id}, data: {name: data.name}});
         const permissions = data.permissionIds.map(async (permission) => {
           return await tx.rolePermission.upsert({
@@ -106,6 +106,19 @@ const routes: FastifyPluginAsync = async (app) => {
       });
 
       return success(updated);
+    },
+  );
+
+  // update status
+
+  app.put(
+    "/status/:id",
+    { preHandler: [app.authenticate, app.authorize("roles.manage")] },
+    async (request) => {
+      const input = parseInput(deleteParamSchema, request.params);
+      const role = await app.prisma.role.findUnique({ where: { id: input.id } })
+      if (!role)  throw new NotFoundError(`This Role with ${input.id} does nnot exist`);
+       return success(await app.prisma.role.update({where: {id: input.id}, data: {isActive: !role.isActive}}));
     },
   );
 };
