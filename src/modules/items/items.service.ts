@@ -1,6 +1,4 @@
 import type { AppConfig } from "../../config/env.js";
-import { paginatedData } from "../../shared/pagination/index.js";
-import type { PaginationQuery } from "../../shared/validation/index.js";
 import { buildItemTree } from "./items-tree.js";
 import { ItemsRepository } from "./items.repository.js";
 import { CreateItemSchema, CreateUnitSchema } from "./items.schema.js";

@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../../../generated/prisma/client.js";
+import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { NotFoundError } from "../../utils/errors.js";
 import { CreateSupplierSchema, CreateSupplierTypeSchema } from "./supplier.schema.js";
 

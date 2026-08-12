@@ -10,6 +10,11 @@ import roleRoutes from "./modules/roles/roles.routes.js";
 import ItemsRoutes from "./modules/items/items.routes.js";
 import userRoutes from "./modules/users/users.routes.js";
 import SupplierRoutes from "./modules/supplier/supplier.routes.js";
+import OrdersRoutes from "./modules/orders/orders.routes.js";
+import DeportsRoutes from "./modules/deports/deport.routes.js";
+import TransporterRoutes from "./modules/transporters/transporter.routes.js";
+import VehiclesRoutes from "./modules/vehicles/vehicles.routes.js";
+import DriversRoutes from "./modules/drivers/driver.routes.js";
 import authPlugin from "./plugins/auth.js";
 import jwtPlugin from "./plugins/jwt.js";
 import prismaPlugin from "./plugins/prisma.js";
@@ -35,6 +40,11 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(ItemsRoutes, { prefix: "/api/v1/items" });
   await app.register(moduleRoutes, { prefix: "/api/v1/modules" });
   await app.register(SupplierRoutes, { prefix: "/api/v1/suppliers" });
+  await app.register(OrdersRoutes, { prefix: "/api/v1/orders" });
+  await app.register(DeportsRoutes, { prefix: "/api/v1/deports" });
+  await app.register(TransporterRoutes, { prefix: "/api/v1/transporters" });
+  await app.register(VehiclesRoutes, { prefix: "/api/v1/vehicles" });
+  await app.register(DriversRoutes, { prefix: "/api/v1/drivers" });
   app.setNotFoundHandler((request, reply) => reply.code(404).send({ success: false, error: { statusCode: 404, code: "ROUTE_NOT_FOUND", message: `Route ${request.method} ${request.url} not found`, requestId: request.id } }));
   return app;
 }

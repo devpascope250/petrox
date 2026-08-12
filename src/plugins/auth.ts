@@ -46,9 +46,7 @@ app.decorate(
 
       const permissions = request.contextUser.permissions;
 
-      if (!required.every((permission) =>
-        hasPermission(permissions, permission)
-      )) {
+      if (!required.some((permission) =>  hasPermission(permissions, permission))) {
         throw forbidden();
       }
     }

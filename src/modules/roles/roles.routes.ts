@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { created, success } from "../../shared/http/index.js";
+
 import {
   paginatedData,
   paginationArgs,
@@ -14,6 +15,7 @@ import {
   deleteParamSchema,
 } from "./roles.schema.js";
 import { NotFoundError } from "../../utils/errors.js";
+import { Prisma } from "../../../prisma/generated/prisma/client.js";
 
 const routes: FastifyPluginAsync = async (app) => {
   app.get(
@@ -74,7 +76,8 @@ const routes: FastifyPluginAsync = async (app) => {
       );
       if (!(await app.prisma.role.findUnique({ where: { id: input.id } })))
         throw new NotFoundError(`This Role with ${input.id} does nnot exist`);
-      const updated = await app.prisma.$transaction(async (tx) => {
+      const updated = await app.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
         await tx.rolePermission.deleteMany({
           where: {
             roleId: input.id,

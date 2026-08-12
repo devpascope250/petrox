@@ -34,7 +34,7 @@ export function buildItemTree(rows: ItemsAccessRow[]): ItemsList[] {
         return {
           id: row.id,
           name: row.name,
-          baseUnitId: row.baseUnitId,
+          baseUnitId: row.baseUnitId!,
           descriptions: row.descriptions,
           items: buildChildren(row.id, nextAncestors)
         };

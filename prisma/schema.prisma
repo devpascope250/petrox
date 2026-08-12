@@ -1,6 +1,6 @@
 generator client {
   provider = "prisma-client"
-  output   = "../generated/prisma"
+  output   = "./generated/prisma"
 }
 
 datasource db {
@@ -241,11 +241,177 @@ model Order {
   item        Item @relation(fields: [itemId], references: [id])
   createdUser User @relation(fields: [createdByUserId], references: [id])
   supplier    Supplier @relation(fields: [supplierId], references: [id])
-
+  cargos      Cargo[]
 
   @@index([id])
   @@index([orderCode])
   @@index([supplierId])
   @@index([createdByUserId])
   @@index([orderPlanId])
+
+  @@map("orders")
+}
+
+
+// moving to Deports
+
+model Deport {
+  id     String @id @default(uuid())
+  name   String
+  type   DeportType @default(local)
+  location String
+  status   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime  @updatedAt
+  stocks    Stock[]
+
+  @@index([id])
+  @@index([status])
+}
+
+enum DeportType {
+  local
+  foreign
+  international
+}
+
+model Transporter {
+  id     String @id  @default(uuid())
+  name   String
+  phone String
+  address  String
+  tinNumber String
+  status    StatusType @default(active)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  vehicles  Vehicle[]
+  drivers    Driver[]
+
+  @@index([id])
+}
+
+model Vehicle {
+  id     String @id  @default(uuid())
+  platNumber  String
+  transporterId  String
+  transport    Transporter @relation(fields: [transporterId], references: [id])
+  truckNumber  String
+  trailerNumber String
+  model    String
+  tankCapacity  Decimal @db.Decimal(18,2)
+  status    StatusType @default(active)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  drivers       DriverVehicles[]
+
+  @@index([id])
+  @@index([transporterId])
+}
+
+
+model Driver {
+  id  String  @id @default(uuid())
+  names  String
+  phone  String
+  lisence String
+  passport String
+  transporterId  String
+  transport   Transporter @relation(fields: [transporterId], references: [id])
+  status    StatusType @default(active)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime  @updatedAt
+  vehicles   DriverVehicles[]
+
+  @@index([id])
+  @@index([transporterId])
+}
+
+model DriverVehicles {
+  id   String  @id  @default(uuid())
+  driverId   String
+  driver     Driver @relation(fields: [driverId], references: [id])
+  vehicleId   String
+  vechile     Vehicle @relation(fields: [vehicleId], references: [id])
+  status      StatusType @default(active)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  nominations  Nomination[]
+
+  @@index([driverId])
+  @@index([vehicleId])
+  @@index([driverId, vehicleId])
+}
+
+
+// moving to cargo
+
+model Cargo {
+  id    String @id @default(cuid())
+  orderId  String
+  order   Order @relation(fields: [orderId], references: [id])
+  vesselName   String
+  receivedDate  DateTime
+  expirationDate  DateTime
+  qtyInKg         Decimal @db.Decimal(18,2)
+  qtyInLts        Decimal @db.Decimal(18,2)
+  blRef           String
+  supportingDocUrl  String?
+  tansisRef         String?
+  outurnRef       String?
+  status         CargoStatus @default(pending)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([blRef])
+  @@index([tansisRef])
+  @@index([receivedDate])
+  @@index([status])
+}
+
+model  Stock  {
+  id   String @id  @default(uuid())
+  deportId   String
+  deport Deport @relation(fields: [deportId], references: [id])
+  cargoId   String
+  cargo     Cargo @relation(fields: [cargoId], references: [id])
+  quantity  Decimal @db.Decimal(18,2)
+  receivedDate  DateTime
+  status StockStatus  @default(awaiting)
+  createdAt  DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  nominations Nomination[]
+
+  @@index([deportId])
+  @@index([cargoId])
+  @@index([status])
+}
+
+enum StockStatus {
+  awaiting
+  cancelled
+  returned
+  received
+}
+
+enum CargoStatus {
+  pending
+  approved
+  cancelled
+}
+
+model Nomination {
+  id    String @id @default(uuid())
+  stockId    String
+  stock     Stock @relation(fields: [stockId], references: [id])
+  driverVehicleId String
+  driverVehicle   DriverVehicles @relation(fields: [driverVehicleId], references: [id])
+  quantity     Decimal  @db.Decimal(18,2)
+  destination  String
+  expectedLoadingDate  DateTime
+  createdAt    DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([stockId])
+  @@index([driverVehicleId])
 }

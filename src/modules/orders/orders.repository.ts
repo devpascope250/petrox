@@ -1,17 +1,20 @@
-import type { PrismaClient } from "../../../generated/prisma/client.js";
+import type { PlanStatus, Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { NotFoundError } from "../../utils/errors.js";
+import { CreateOrderPlanSchema, CreateOrderSchema } from "./orders.schema.js";
 
 export class OrderRepository {
   constructor(private db: PrismaClient) {}
 
-  async listBy() {
+  async list() {
     const orders = await this.db.order.findMany({orderBy: { createdAt: "desc" }, select: {
       id: true,
+      orderPlanId: true,
       orderCode: true,
       orderDate: true,
       quantity: true,
       item: {
         select : {
+          id: true,
           name: true,
           baseUnit: true,
           status: true, 
@@ -19,8 +22,15 @@ export class OrderRepository {
       },
        supplier: {
         select: {
+          id: true,
           name: true,
           phone: true
+        }
+       },
+       plan: {
+        select: {
+          id: true,
+          name: true,
         }
        },
       createdUser: {
@@ -33,50 +43,66 @@ export class OrderRepository {
      return orders;
   }
 
-    async listBy() {
-    const orders = await this.db.order.findMany({orderBy: { createdAt: "desc" }, select: {
+   async listByPlanOrSupplier(supplierId?: string, planId?: string) {
+  const orders = await this.db.order.findMany({
+    where: {
+      OR: [
+        ...(planId ? [{ orderPlanId: planId }] : []),
+        ...(supplierId ? [{ supplierId }] : []),
+      ],
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: {
       id: true,
+      orderPlanId: true,
       orderCode: true,
       orderDate: true,
       quantity: true,
       item: {
-        select : {
-          name: true,
-          baseUnit: true,
-          status: true, 
-        }
-      },
-       supplier: {
         select: {
           name: true,
-          phone: true
+          baseUnit: true,
+          status: true,
+        },
+      },
+      supplier: {
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+        },
+      },
+       plan: {
+        select: {
+          id: true,
+          name: true,
         }
        },
       createdUser: {
         select: {
           firstName: true,
-          lastName: true
-        }
-      }
-    } });
-     return orders;
-  }
+          lastName: true,
+        },
+      },
+    },
+  });
 
-  create(data: CreateSupplierSchema) {
-    return this.db.supplier.create({
+  return orders;
+}
+
+  create(data: Prisma.OrderUncheckedCreateInput) {
+    return this.db.order.create({
       data: {
-        name: data.name,
-        address: data.address,
-        phone: data.address,
-        tinNumber: data.tinNumber,
-        supplierTypeId: data.supplierTypeId
+       ...data
       }
     });
   }
 
-  async update(id: string, data: CreateSupplierSchema) {
+  async update(id: string, data: CreateOrderSchema) {
     if(! await this.find(id)) throw new NotFoundError();
-    return await this.db.supplier.update(
+    return await this.db.order.update(
       {
         where: {id: id},
         data: data
@@ -84,46 +110,43 @@ export class OrderRepository {
     )
     }
 
-  async changeSupplierStatus(id: string) {
-    const supplier = await this.find(id);
-    if(!supplier) throw new NotFoundError();
-     await this.db.supplier.update({where: {id}, data: {status: supplier.status === "active" ? "inactive" : "active"}})
-  }
 
   find(id: string) {
-    return this.db.supplier.findUnique({ where: { id }});
+    return this.db.order.findUnique({ where: { id }});
   }
 
   // for Supplier Type
 
-  listSupplierType() {
-    return this.db.supplierType.findMany({orderBy: {createdAt: "desc"}, select: {id: true, type: true, status: true}});
+  listOrderPlan() {
+    return this.db.orderPlan.findMany({orderBy: {createdAt: "desc"}, select: {id: true, name: true, status: true, startDate: true, endDate: true}});
   }
 
-  createSupplierType(data: CreateSupplierTypeSchema) {
-    return this.db.supplierType.create({data});
+  createOrderPlan(data: CreateOrderPlanSchema) {
+    return this.db.orderPlan.create({data});
   }
 
-  findSupplierType(id: string) {
-    return this.db.supplierType.findUnique({where: {id: id}, select: {id: true, type: true, status: true}});
+  findOrderPlan(id: string) {
+    return this.db.orderPlan.findUnique({where: {id: id}, select: {id: true, name: true, status: true}});
   }
 
 
-   async changeSupplierTypeStatus(id: string) {
-    const type = await this.findSupplierType(id);
+   async changeOrderPlanStatus(id: string, status: PlanStatus) {
+    const type = await this.findOrderPlan(id);
     if(!type) throw new NotFoundError();
-    return await this.db.supplierType.update({where: {id}, data: {status: type.status === "active" ? "inactive" : "active"}, select: {id: true, status: true, type: true}})
+    return await this.db.orderPlan.update({where: {id}, data: {status}, select: {id: true, status: true, name: true}})
   }
 
-  async updateSupplierType(id: string, data: CreateSupplierTypeSchema) {
-    if (! await this.findSupplierType(id)) throw new NotFoundError(); 
-    return await this.db.supplierType.update(
+  async updateOrderPlan(id: string, data: CreateOrderPlanSchema) {
+    if (! await this.findOrderPlan(id)) throw new NotFoundError(); 
+    return await this.db.orderPlan.update(
       {
         where: {
           id
         },
         data: {
-          type: data.type
+          name: data.name,
+          startDate: data.startDate,
+          endDate: data.endDate
         }
       }
     )

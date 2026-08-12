@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../generated/prisma/client.js";
+import type { PrismaClient } from "../prisma/generated/prisma/client.js";
 import fp from "fastify-plugin";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";

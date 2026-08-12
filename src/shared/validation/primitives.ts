@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PlanStatus } from "../../../prisma/generated/prisma/enums.js";
 
 export const uuidSchema = z.uuid("Must be a valid UUID");
 export const emailSchema = z.string()
@@ -13,10 +14,21 @@ export const pinSchema = z.string()
 export const opaqueTokenSchema = z.string()
   .min(32, "Token is invalid")
   .max(512, "Token is invalid");
+export const querySearchOrderSupplierPlanSchema = z.object({
+  supplierId: z.uuid().optional(),
+  planId: z.uuid().optional()
+}) 
+
+export const assignDriverVehicleParams = z.object({
+  vehicleId: z.uuid(),
+  driverId: z.uuid()
+});
+
 export const nonEmptyNameSchema = z.string().trim().min(1).max(80);
 export const phoneSchema = z.string().trim().min(3).max(30);
 
 export const idParamsSchema = z.object({ id: uuidSchema });
+export const planStatusParamsSchema = z.object({status: z.enum(PlanStatus) });
 export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20)

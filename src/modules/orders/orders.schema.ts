@@ -5,7 +5,6 @@ export const createOrderSchema = z.object({
     supplierId: uuidSchema,
     orderDate:  z.coerce.date(),
     itemId:  uuidSchema,
-    createdByUserId: uuidSchema,
     orderPlanId:  uuidSchema,
     quantity:   z.coerce.number(),
   });

@@ -1,4 +1,4 @@
-import { PrismaClient } from "../generated/prisma/client.js";
+import { PrismaClient } from "../prisma/generated/prisma/client.js";
 import bcrypt from "bcryptjs";
 import { loadConfig } from "../src/config/env.js";
 import { hashPin } from "../src/utils/crypto.js";

@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "../../../generated/prisma/client.js";
+import type { Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PaginationQuery } from "../../shared/validation/index.js";
 import { NotFoundError } from "../../utils/errors.js";

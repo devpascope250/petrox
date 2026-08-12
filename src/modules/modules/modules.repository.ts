@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../../../generated/prisma/client.js";
+import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { generatingPermissions } from "../../utils/utils.js";
 import { ModuleItemsSchemaBody, ModuleSchemaBody } from "./module.schema.js";
 import type { ModuleAccessRow } from "./modules.types.js";
