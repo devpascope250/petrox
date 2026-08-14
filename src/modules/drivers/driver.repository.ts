@@ -1,5 +1,5 @@
 import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
-import { NotFoundError } from "../../utils/errors.js";
+import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { CreateDriverSchema } from "./deriver.schema.js";
 export class DriverRepository {
   constructor(private db: PrismaClient) {}
@@ -14,7 +14,23 @@ export class DriverRepository {
        passport: true,
        phone: true,
        status: true,
-       createdAt: true
+       createdAt: true,
+       vehicles: {
+         where: {
+          status: "active"
+         },
+         select: {
+          id: true,
+          vechile: {
+            select: {
+              id: true,
+              platNumber: true,
+              model: true,
+              status: true,
+            }
+          }
+         }
+       }
       },
     });
   }
@@ -60,19 +76,22 @@ export class DriverRepository {
   }
 
   async getAllVehiclesByid(id: string) {
-    return await this.db.driverVehicles.findMany({where: {vehicleId: id, status: "active"}});
+    return await this.db.driverVehicles.findMany({where: {driverId: id, status: "active"}});
   }
 
   async assignVehicles(vehicleId: string, driverId: string) {
-    const vehicles = await this.getAllVehiclesByid(vehicleId);
+    const vehicles = await this.getAllVehiclesByid(driverId);
     return await this.db.$transaction( async(tx) => {
       if(vehicles.length > 0) {
         const veh = vehicles.find((vh) => vh.status === "active");
         if(!veh) {
           return vehicles[0]
           }
-          await tx.driverVehicles.update({where: {id: veh.id}, data: {status: "inactive"}})
+          await tx.driverVehicles.updateMany({where: {vehicleId: vehicleId}, data: {status: "inactive"}})
+          await tx.driverVehicles.updateMany({where: {driverId: driverId}, data: {status: "inactive"}})
       }
+
+      if (await tx.vehicle.findFirst({where: {id: vehicleId, status: "inactive"}})) throw new BusinessError("400", "This vehicle is In Inactive mode")
       
      return await tx.driverVehicles.create({
       data: {

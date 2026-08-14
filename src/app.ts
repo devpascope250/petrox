@@ -1,7 +1,10 @@
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
+import multipart from "@fastify/multipart";
 import Fastify, { type FastifyServerOptions } from "fastify";
+import fastifyStatic from "@fastify/static";
+import path from "node:path";
 import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
 import type { AppConfig } from "./config/env.js";
 import authRoutes from "./modules/auth/auth.routes.js";
@@ -15,6 +18,12 @@ import DeportsRoutes from "./modules/deports/deport.routes.js";
 import TransporterRoutes from "./modules/transporters/transporter.routes.js";
 import VehiclesRoutes from "./modules/vehicles/vehicles.routes.js";
 import DriversRoutes from "./modules/drivers/driver.routes.js";
+import StockRoutes from "./modules/stock/stock.routes.js";
+import NominationsRoutes from "./modules/nominations/nominations.routes.js";
+import CargoRoutes from "./modules/cargo/cargo.routes.js";
+import PfiRoutes from "./modules/pfi/pfi.routes.js";
+import T1ValidationRoutes from "./modules/t1 validation/t1-validation.routes.js";
+import CentralStockRoutes from "./modules/central-stock/central-stock.routes.js";
 import authPlugin from "./plugins/auth.js";
 import jwtPlugin from "./plugins/jwt.js";
 import prismaPlugin from "./plugins/prisma.js";
@@ -32,6 +41,16 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(prismaPlugin);
   await app.register(jwtPlugin);
   await app.register(authPlugin);
+  await app.register(multipart, {
+    limits: {
+      fileSize: 10 * 1024 * 1024,
+      files: 1
+    }
+  });
+  await app.register(fastifyStatic, {
+  root: path.join(process.cwd(), "uploads"),
+  prefix: "/uploads/",
+});
   app.setErrorHandler(globalErrorHandler);
   app.get("/health", async () => success({ status: "ok" }));
   await app.register(authRoutes, { prefix: "/api/v1/auth" });
@@ -45,6 +64,12 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(TransporterRoutes, { prefix: "/api/v1/transporters" });
   await app.register(VehiclesRoutes, { prefix: "/api/v1/vehicles" });
   await app.register(DriversRoutes, { prefix: "/api/v1/drivers" });
+  await app.register(CargoRoutes, { prefix: "/api/v1/cargo" });
+  await app.register(StockRoutes, { prefix: "/api/v1/stock" });
+  await app.register(NominationsRoutes, { prefix: "/api/v1/nominations" });
+  await app.register(PfiRoutes, { prefix: "/api/v1/pfi" });
+  await app.register(T1ValidationRoutes, { prefix: "/api/v1/t1-validation" });
+  await app.register(CentralStockRoutes, { prefix: "/api/v1/central-stock" });
   app.setNotFoundHandler((request, reply) => reply.code(404).send({ success: false, error: { statusCode: 404, code: "ROUTE_NOT_FOUND", message: `Route ${request.method} ${request.url} not found`, requestId: request.id } }));
   return app;
 }

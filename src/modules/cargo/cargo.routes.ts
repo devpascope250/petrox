@@ -1,0 +1,200 @@
+import type { FastifyPluginAsync } from "fastify";
+import { created, success } from "../../shared/http/index.js";
+import {
+  cargoReceivedDatePamasSchema,
+  cargoStatusPamasSchema,
+  cuidParamsSchema,
+  idParamsSchema,
+  parseInput,
+} from "../../shared/validation/index.js";
+import { CargoService } from "./cargo.service.js";
+import { CargoRepository } from "./cargo.repository.js";
+import { createCargoSchema, fileSchema } from "./cargo.schema.js";
+import { createWriteStream } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
+
+const routes: FastifyPluginAsync = async (app) => {
+  const service = new CargoService(new CargoRepository(app.prisma), app.config);
+  app.get(
+    "/",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("cargo.read", "cargo.manage"),
+      ],
+    },
+    async (request) => success(await service.list()),
+  );
+  app.get(
+    "/:id",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("cargo.read", "cargo.manage"),
+      ],
+    },
+    async (request) =>
+      success(
+        await service.find(parseInput(cuidParamsSchema, request.params).id),
+      ),
+  );
+
+  app.post(
+    "/",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("cargo.create", "cargo.manage"),
+      ],
+    },
+    async (request, reply) => {
+      const fields: Record<string, unknown> = {};
+
+      let uploadedFile:
+        | {
+            originalName: string;
+            filename: string;
+            mimetype: string;
+            path: string;
+          }
+        | undefined;
+
+      const uploadDir = path.join(process.cwd(), "uploads");
+
+      await mkdir(uploadDir, { recursive: true });
+
+      for await (const part of request.parts()) {
+        if (part.type === "field") {
+          fields[part.fieldname] = part.value;
+          continue;
+        }
+
+        if (part.type === "file") {
+          const originalName = path.basename(part.filename);
+          const extension = path.extname(originalName);
+          const nameWithoutExtension = path.basename(originalName, extension);
+
+          const timestamp = new Date()
+            .toISOString()
+            .replace(/[-:TZ.]/g, "")
+            .slice(0, 17);
+
+          const filename = `${nameWithoutExtension}-${timestamp}${extension}`;
+
+          const filepath = path.join(uploadDir, filename);
+
+          await pipeline(part.file, createWriteStream(filepath));
+
+          uploadedFile = {
+            originalName: part.filename,
+            filename,
+            mimetype: part.mimetype,
+            path: filepath,
+          };
+        }
+      }
+
+      const input = parseInput(createCargoSchema, fields);
+
+      if (uploadedFile) {
+        input.supportingDocUrl = `/uploads/${uploadedFile.filename}`;
+      }
+
+      const cargo = await service.create(input);
+
+      return created(reply, cargo);
+    },
+  );
+  app.put(
+    "/:id",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("cargo.edit", "cargo.manage"),
+      ],
+    },
+    async (request, reply) => {
+      const fields: Record<string, unknown> = {};
+
+      let uploadedFile:
+        | {
+            originalName: string;
+            filename: string;
+            mimetype: string;
+            path: string;
+          }
+        | undefined;
+
+      const uploadDir = path.join(process.cwd(), "uploads");
+
+      await mkdir(uploadDir, { recursive: true });
+
+      for await (const part of request.parts()) {
+        if (part.type === "field") {
+          fields[part.fieldname] = part.value;
+          continue;
+        }
+
+        if (part.type === "file") {
+          const originalName = path.basename(part.filename);
+          const extension = path.extname(originalName);
+          const nameWithoutExtension = path.basename(originalName, extension);
+
+          const timestamp = new Date()
+            .toISOString()
+            .replace(/[-:TZ.]/g, "")
+            .slice(0, 17);
+
+          const filename = `${nameWithoutExtension}-${timestamp}${extension}`;
+
+          const filepath = path.join(uploadDir, filename);
+
+          await pipeline(part.file, createWriteStream(filepath));
+
+          uploadedFile = {
+            originalName: part.filename,
+            filename,
+            mimetype: part.mimetype,
+            path: filepath,
+          };
+        }
+      }
+
+      const input = parseInput(createCargoSchema, fields);
+
+      if (uploadedFile) {
+        input.supportingDocUrl = `/uploads/${uploadedFile.filename}`;
+      }
+
+      const cargo = await service.update(
+        parseInput(cuidParamsSchema, request.params).id,
+        input,
+      );
+
+      return created(reply, cargo);
+    },
+  );
+
+  app.put(
+    "/status/:id/:status/:date",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("cargo.edit", "cargo.manage"),
+      ],
+    },
+    async (request, reply) =>
+      created(
+        reply,
+        await service.updateStatus(
+          parseInput(cuidParamsSchema, request.params).id,
+          parseInput(cargoStatusPamasSchema, request.params).status,
+          parseInput(cargoReceivedDatePamasSchema, request.params).date
+        ),
+      ),
+  );
+};
+
+export default routes;
