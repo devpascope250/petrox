@@ -38,7 +38,7 @@ export class CentralStockRepository {
 
 
 
-  async create(data: CreateCentralStockSchema) {
+  async create(data: CreateCentralStockSchema, userId: string) {
     return await this.db.$transaction(async(tx) => {
       return await tx.centralStock.create({
       data: {
@@ -49,7 +49,8 @@ export class CentralStockRepository {
         transactions: {
           create: {
             quantity: data.quantity,
-            type: "received"
+            type: "received",
+            createdBy: userId
           }
         },
         supportingDocUrl: data.supportingDocUrl
@@ -69,7 +70,7 @@ async recentStock(centralStockId: string) {
 }
 
 
-  async createStockTransaction(data: StockTransactionSchema) {
+  async createStockTransaction(data: StockTransactionSchema, userId: string) {
     if (!await this.db.centralStock.findUnique({where: {id: data.centralStockId}})) throw new NotFoundError();
     const currentStock = await this.recentStock(data.centralStockId);
     if(currentStock < data.quantity && data.type === "saleOut") throw new BusinessError("400", `The Remaining Stock is ${currentStock}  but you're Requesting ${data.quantity}`);
@@ -77,7 +78,8 @@ async recentStock(centralStockId: string) {
      data: {
        quantity: data.quantity,
        type: data.type,
-       centralStockId: data.centralStockId
+       centralStockId: data.centralStockId,
+       createdBy: userId
       },
     });
   }

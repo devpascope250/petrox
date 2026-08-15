@@ -11,11 +11,11 @@ export class CentralStockService {
   }
 
 
-  create(input: CreateCentralStockSchema) {
-    return this.repo.create(input);
+  create(input: CreateCentralStockSchema, userId: string) {
+    return this.repo.create(input, userId);
   }
 
-  async recordStatus (data: StockTransactionSchema) {
-    return await this.repo.createStockTransaction(data);
+  async recordStatus (data: StockTransactionSchema, userId: string) {
+    return await this.repo.createStockTransaction(data, userId);
   }
 }

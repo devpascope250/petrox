@@ -89,6 +89,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   orders              Order[]
   lineLines           NominationTimeLine[]
+  stockTransactions   StockTransaction[]
 
   @@index([roleId])
 }
@@ -535,6 +536,8 @@ model StockTransaction {
   centralStock   CentralStock         @relation(fields: [centralStockId], references: [id])
   quantity       Decimal              @db.Decimal(18, 2)
   type           StockTransactionType
+  createdBy      String
+  user           User @relation(fields: [createdBy], references: [id])
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
 

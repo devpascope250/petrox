@@ -90,7 +90,7 @@ const routes: FastifyPluginAsync = async (app) => {
         input.supportingDocUrl = `/uploads/${uploadedFile.filename}`;
       }
 
-      const cargo = await service.create(input);
+      const cargo = await service.create(input, request.contextUser?.userId ?? "");
 
       return created(reply, cargo);
     },
@@ -107,7 +107,7 @@ const routes: FastifyPluginAsync = async (app) => {
     async (request, reply) =>
       created(
         reply,
-        await service.recordStatus(parseInput(stockTransactionSchema, request.body),
+        await service.recordStatus(parseInput(stockTransactionSchema, request.body),request.contextUser?.userId ?? ""
         ),
       ),
   );

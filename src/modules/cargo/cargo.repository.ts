@@ -100,6 +100,7 @@ export class CargoRepository {
     return this.db.cargo.findUnique({ where: { id }, select: {
       quantity: true,
       deportId: true,
+      supportingDocUrl: true,
       order: {
         select: {
           itemId: true
