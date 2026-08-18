@@ -87,7 +87,7 @@ async recentStock(centralStockId: string) {
 }
 
 
-  function calculatingRemainStock(transactions: StockTransaction[]) {
+  export function calculatingRemainStock(transactions: StockTransaction[]) {
     return transactions.reduce((stock, transaction) => {
     switch (transaction.type) {
       case "received":

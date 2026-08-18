@@ -73,23 +73,26 @@ model RolePermission {
 }
 
 model User {
-  id                  String               @id @default(uuid())
-  email               String               @unique
-  passwordHash        String
-  pinHash             String?
-  firstName           String
-  lastName            String
-  phone               String?
-  roleId              String?
-  role                Role?                @relation(fields: [roleId], references: [id], onDelete: SetNull)
-  isActive            Boolean              @default(true)
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  refreshTokens       RefreshToken[]
-  passwordResetTokens PasswordResetToken[]
-  orders              Order[]
-  lineLines           NominationTimeLine[]
-  stockTransactions   StockTransaction[]
+  id                         String               @id @default(uuid())
+  email                      String               @unique
+  passwordHash               String
+  pinHash                    String?
+  firstName                  String
+  lastName                   String
+  phone                      String?
+  roleId                     String?
+  role                       Role?                @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  isActive                   Boolean              @default(true)
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+  refreshTokens              RefreshToken[]
+  passwordResetTokens        PasswordResetToken[]
+  orders                     Order[]
+  lineLines                  NominationTimeLine[]
+  stockTransactions          StockTransaction[]
+  createdCentralStockOrders  CentralStockOrder[]  @relation("CentralStockOrderCreatedByUser")
+  approvedCentralStockOrders CentralStockOrder[]  @relation("CentralStockOrderApprovedByUser")
+  stockClearances            StockClearance[]
 
   @@index([roleId])
 }
@@ -138,6 +141,7 @@ model Item {
   orders        Order[]
   stock         Stock[]
   centralStocks CentralStock[]
+  cuves         TblCuve[]
 
   @@index([id])
   @@index([parentId])
@@ -381,7 +385,7 @@ model Stock {
   cargoId      String
   cargo        Cargo        @relation(fields: [cargoId], references: [id])
   itemId       String
-  item         Item  @relation(fields: [itemId], references: [id])
+  item         Item         @relation(fields: [itemId], references: [id])
   quantity     Decimal      @db.Decimal(18, 2)
   receivedDate DateTime
   status       StockStatus  @default(awaiting)
@@ -516,7 +520,7 @@ model CentralStock {
   status           CentralStockStatus @default(inStock)
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
-  transactions     StockTransaction[]
+  stockClearances  StockClearance[]
 
   @@index([id])
   @@index([deportId])
@@ -532,21 +536,171 @@ enum CentralStockStatus {
 
 model StockTransaction {
   id             String               @id @default(uuid())
-  centralStockId String
-  centralStock   CentralStock         @relation(fields: [centralStockId], references: [id])
+  stockClearanceId String
+  stockClearance   StockClearance       @relation(fields: [stockClearanceId], references: [id])
   quantity       Decimal              @db.Decimal(18, 2)
   type           StockTransactionType
   createdBy      String
-  user           User @relation(fields: [createdBy], references: [id])
+  user           User                 @relation(fields: [createdBy], references: [id])
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
 
   @@index([id])
+  @@index([stockClearanceId])
+}
+
+model StockClearance {
+  id                 String              @id @default(uuid())
+  centralStockId     String
+  centralStock       CentralStock        @relation(fields: [centralStockId], references: [id])
+  quantity           Decimal             @db.Decimal(18, 2)
+  fees               Decimal             @db.Decimal(18, 2)
+  amount             Decimal             @db.Decimal(18, 2)
+  status             StockStateStatus    @default(uncleared)
+  clearedBy          String?
+  user               User?               @relation(fields: [clearedBy], references: [id])
+  agentId            String?
+  agent              ClearingAgent?      @relation(fields: [agentId], references: [id])
+  supportingDocUrl   String?
+  dmsDocUrl          String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  centralStockOrders CentralStockOrder[]
+  transactions     StockTransaction[]
+
+  @@index([id])
   @@index([centralStockId])
+}
+
+model ClearingAgent {
+  id              String           @id @default(uuid())
+  names           String
+  fees            Decimal          @db.Decimal(18, 2)
+  status          StatusType       @default(active)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  stockClearances StockClearance[]
+}
+
+enum StockStateStatus {
+  cleared
+  uncleared
 }
 
 enum StockTransactionType {
   saleOut
   reconcilliation
   received
+}
+
+model CentralStockOrder {
+  id           String          @id @default(uuid())
+  siteId       String?
+  site         TblSite?        @relation(fields: [siteId], references: [id])
+  clearanceId  String
+  clearance    StockClearance @relation(fields: [clearanceId], references: [id])
+  quantity     Decimal         @db.Decimal(18, 2)
+  unitPrice    Decimal         @db.Decimal(18, 2)
+  totalPrice   Decimal         @db.Decimal(18, 2)
+  createdBy    String
+  user         User            @relation("CentralStockOrderCreatedByUser", fields: [createdBy], references: [id])
+  approvedBy   String?
+  approvedUser User?           @relation("CentralStockOrderApprovedByUser", fields: [approvedBy], references: [id])
+  approvedAt    DateTime?
+  status       CentralOrderStatus @default(pending)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+enum CentralOrderStatus {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+model TblSite {
+  id                 String              @id @default(uuid())
+  name               String
+  phone              String?
+  email              String?
+  address            String?
+  status             StatusType          @default(active)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  pumps              TblPump[]
+  tblCuves           TblCuve[]
+  centralStockOrders CentralStockOrder[]
+
+  @@index([id])
+}
+
+model TblCuve {
+  id        String     @id @default(uuid())
+  name      String
+  siteId    String
+  site      TblSite    @relation(fields: [siteId], references: [id])
+  itemId    String
+  item      Item       @relation(fields: [itemId], references: [id])
+  minimum   Decimal    @db.Decimal(18, 2)
+  maximum   Decimal    @db.Decimal(18, 2)
+  deadStock Decimal    @db.Decimal(18, 2)
+  status    StatusType @default(active)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  nozzles TblNozzle[]
+
+  @@index([id])
+  @@index([siteId])
+}
+
+model TblPump {
+  id        String       @id @default(uuid())
+  name      String
+  siteId    String
+  site      TblSite      @relation(fields: [siteId], references: [id])
+  status    StatusType   @default(active)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  displays  TblDisplay[]
+  nozzles   TblNozzle[]
+
+  @@index([id])
+  @@index([siteId])
+}
+
+model TblDisplay {
+  id        String      @id @default(uuid())
+  name      String
+  code      String
+  pumpId    String
+  pump      TblPump     @relation(fields: [pumpId], references: [id])
+  status    StatusType  @default(active)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  nozzles   TblNozzle[]
+
+  @@index([id])
+  @@index([pumpId])
+}
+
+model TblNozzle {
+  id         String     @id @default(uuid())
+  name       String
+  nozzleCode String
+  pumpId     String
+  pump       TblPump    @relation(fields: [pumpId], references: [id])
+  displayId  String
+  display    TblDisplay @relation(fields: [displayId], references: [id])
+  cuveId     String
+  cuve       TblCuve    @relation(fields: [cuveId], references: [id])
+  status     StatusType @default(active)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@index([id])
+  @@index([pumpId])
+  @@index([displayId])
+  @@index([cuveId])
 }

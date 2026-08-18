@@ -24,6 +24,11 @@ import CargoRoutes from "./modules/cargo/cargo.routes.js";
 import PfiRoutes from "./modules/pfi/pfi.routes.js";
 import T1ValidationRoutes from "./modules/t1 validation/t1-validation.routes.js";
 import CentralStockRoutes from "./modules/central-stock/central-stock.routes.js";
+import PssRoutes from "./modules/sites/sites.routes.js";
+import CuvesRoutes from "./modules/Cuve/cuve.routes.js";
+import PumpRoutes from "./modules/pump/pump.routes.js";
+import DisplayRoutes from "./modules/display/display.routes.js";
+import NozzlesRoutes from "./modules/nozzle/nozzle.routes.js";
 import authPlugin from "./plugins/auth.js";
 import jwtPlugin from "./plugins/jwt.js";
 import prismaPlugin from "./plugins/prisma.js";
@@ -70,6 +75,11 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(PfiRoutes, { prefix: "/api/v1/pfi" });
   await app.register(T1ValidationRoutes, { prefix: "/api/v1/t1-validation" });
   await app.register(CentralStockRoutes, { prefix: "/api/v1/central-stock" });
+  await app.register(PssRoutes, { prefix: "/api/v1/sites" });
+  await app.register(CuvesRoutes, { prefix: "/api/v1/cuves" });
+  await app.register(PumpRoutes, { prefix: "/api/v1/pumps" });
+  await app.register(DisplayRoutes, { prefix: "/api/v1/displays" });
+  await app.register(NozzlesRoutes, { prefix: "/api/v1/nozzles" });
   app.setNotFoundHandler((request, reply) => reply.code(404).send({ success: false, error: { statusCode: 404, code: "ROUTE_NOT_FOUND", message: `Route ${request.method} ${request.url} not found`, requestId: request.id } }));
   return app;
 }
