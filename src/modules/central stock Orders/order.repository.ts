@@ -12,13 +12,13 @@ interface OrderTransaction {
 export class CentralStockOrderRepository {
   constructor(private db: PrismaClient) {}
 
-  async list(startDate: string, endDate: string) {
+  async list(startDate: Date, endDate: Date) {
     return await this.db.centralStockOrder.findMany({
       orderBy: { createdAt: "desc" },
       where: {
         createdAt: {
-          gte: new Date(startDate),
-          lte: new Date(endDate),
+          gte: startDate,
+          lte: endDate,
         },
       },
       select: {
@@ -40,20 +40,20 @@ export class CentralStockOrderRepository {
     transactionData: OrderTransaction[],
   ) {
     return await this.db.$transaction(async (tx) => {
-      return await tx.centralStockOrder.createMany({
+      await tx.centralStockOrder.createMany({
         data: data.map((item) => ({
           siteId: item.siteId,
-          clearanceId: item.clearanceId,
+          clearanceId: item.clearanceId ?? "",
           quantity: item.quantity,
           unitPrice: item.unitPrice,
-          totalPrice: item.totalPrice,
+          totalPrice: item.totalPrice ?? "",
           createdBy: item.createdBy,
           approvedBy: item.approvedBy,
           status: item.status,
         })),
       });
 
-      await tx.stockTransaction.createMany({
+     return await tx.stockTransaction.createMany({
         data: transactionData.map((transaction) => ({
           quantity: transaction.quantity,
           type: "saleOut",
@@ -64,38 +64,46 @@ export class CentralStockOrderRepository {
     });
   }
 
-  async getItemsByItemIdQTYStatus(
-    itemId: string,
-    clearanceStatus: StockStateStatus,
-  ) {
-    return await this.db.centralStock.findMany({
-      where: {
-        itemId: itemId,
-        status: "inStock",
-        ...[
-          clearanceStatus === "cleared"
-            ? { stockClearances: { some: { status: "cleared" } } }
-            : {},
-        ],
-      },
-      select: {
-        id: true,
-        itemId: true,
-        quantity: true,
-        stockClearances: {
-          select: {
-            id: true,
-            quantity: true,
-            transactions: true,
-            createdAt: true,
-          },
+ async getItemsByItemIdQTYStatus(
+  itemId: string,
+  clearanceStatus: StockStateStatus,
+) {
+  return await this.db.centralStock.findMany({
+    where: {
+      itemId,
+      status: "inStock",
+
+      ...(clearanceStatus === "cleared"
+        ? {
+            stockClearances: {
+              some: {
+                status: "cleared",
+              },
+            },
+          }
+        : {}),
+    },
+
+    select: {
+      id: true,
+      itemId: true,
+      quantity: true,
+
+      stockClearances: {
+        select: {
+          id: true,
+          quantity: true,
+          transactions: true,
+          createdAt: true,
         },
       },
-      orderBy: {
-        createdAt: "asc",
-      },
-    });
-  }
+    },
+
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
+}
 
   find(id: string) {
     return this.db.stockClearance.findUnique({ where: { id } });

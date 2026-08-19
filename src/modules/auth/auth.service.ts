@@ -9,7 +9,7 @@ type AuthUser = NonNullable<Awaited<ReturnType<AuthRepository["findUserByEmail"]
 
 export class AuthService {
   constructor(private repo: AuthRepository, private app: FastifyInstance, private config: AppConfig) {}
-  private permissions(user: AuthUser) {
+  permissions(user: AuthUser) {
     return user.role ? user.role.permissions.map((item) => item.permission.code) : null;
   }
   private publicUser(user: AuthUser) {
@@ -19,7 +19,7 @@ export class AuthService {
     const permissions = this.permissions(user);
     if (!user || !user?.role || !user?.roleId || !permissions) throw unauthorized();
     const accessToken = this.app.jwt.sign(
-      { sub: user.id, roleId: user.roleId, role: user.role.name, permissions },
+      { sub: user.id, roleId: user.roleId, role: user.role.name},
       { expiresIn: this.config.ACCESS_TOKEN_TTL }
     );
     const refreshToken = createOpaqueToken();

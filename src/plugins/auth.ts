@@ -1,16 +1,20 @@
 import fp from "fastify-plugin";
 import { forbidden, unauthorized } from "../utils/errors.js";
+import { AuthRepository } from "../modules/auth/auth.repository.js";
 
 export default fp(async (app) => {
   app.decorateRequest("contextUser", null);
+  const authRepo = new AuthRepository(app.prisma)
   app.decorate("authenticate", async function (request) {
     try {
       await request.jwtVerify();
+      const user = await authRepo.findUserById(request.user.sub);
+      const permissions = user?.role ? user.role.permissions.map((item) => item.permission.code) : null;
       request.contextUser = {
         userId: request.user.sub,
         roleId: request.user.roleId,
         role: request.user.role,
-        permissions: request.user.permissions
+        permissions: (permissions as readonly string[])
       };
     } catch {
       throw unauthorized("Invalid or expired access token");

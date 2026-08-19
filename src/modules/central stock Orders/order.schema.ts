@@ -8,13 +8,13 @@ export const createCentralStockOrderSchema = z
 
     siteId: z.uuid().optional(),
 
-    clearanceId: uuidSchema,
+    clearanceId: uuidSchema.optional(),
 
     quantity: z.coerce.number().nonnegative(),
 
     unitPrice: z.coerce.number().nonnegative(),
 
-    totalPrice: z.coerce.number().nonnegative(),
+    totalPrice: z.coerce.number().nonnegative().optional(),
 
     createdBy: z.uuid(),
 

@@ -29,6 +29,7 @@ import CuvesRoutes from "./modules/Cuve/cuve.routes.js";
 import PumpRoutes from "./modules/pump/pump.routes.js";
 import DisplayRoutes from "./modules/display/display.routes.js";
 import NozzlesRoutes from "./modules/nozzle/nozzle.routes.js";
+import StockOutOrdersRoutes from "./modules/central stock Orders/order.routes.js";
 import authPlugin from "./plugins/auth.js";
 import jwtPlugin from "./plugins/jwt.js";
 import prismaPlugin from "./plugins/prisma.js";
@@ -80,6 +81,7 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(PumpRoutes, { prefix: "/api/v1/pumps" });
   await app.register(DisplayRoutes, { prefix: "/api/v1/displays" });
   await app.register(NozzlesRoutes, { prefix: "/api/v1/nozzles" });
+  await app.register(StockOutOrdersRoutes, { prefix: "/api/v1/stock-out-orders" });
   app.setNotFoundHandler((request, reply) => reply.code(404).send({ success: false, error: { statusCode: 404, code: "ROUTE_NOT_FOUND", message: `Route ${request.method} ${request.url} not found`, requestId: request.id } }));
   return app;
 }

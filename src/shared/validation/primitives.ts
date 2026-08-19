@@ -25,6 +25,11 @@ export const assignDriverVehicleParams = z.object({
   driverId: z.uuid()
 });
 
+export const datesQuerySchema = z.object({
+  startDate:  z.coerce.date().optional(),
+  endDate: z.coerce.date().optional()
+})
+
 export const nonEmptyNameSchema = z.string().trim().min(1).max(80);
 export const phoneSchema = z.string().trim().min(3).max(30);
 

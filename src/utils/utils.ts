@@ -33,3 +33,26 @@ export function generatingPermissions(name: string) {
     },
   ];
 }
+
+// two days dates
+
+export function within2DaysPeriod(start?: Date, end?: Date) {
+  const today = new Date();
+
+  const startDate = start
+    ? new Date(start)
+    : new Date(today);
+
+  if (!start) {
+    startDate.setDate(today.getDate() - 2);
+  }
+
+  const endDate = end
+    ? new Date(end)
+    : new Date(today);
+
+  return {
+    startDate,
+    endDate,
+  };
+}

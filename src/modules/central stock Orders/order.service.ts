@@ -1,13 +1,15 @@
 import type { AppConfig } from "../../config/env.js";
 import { NotFoundError } from "../../utils/errors.js";
+import { within2DaysPeriod } from "../../utils/utils.js";
 import { calculatingRemainStock } from "../central-stock/central-stock.repository.js";
 import { CentralStockOrderRepository } from "./order.repository.js";
 import { CreateCentralStockOrderSchema } from "./order.schema.js";
 export class CentralStockOrderService {
   constructor(private repo: CentralStockOrderRepository, private config: AppConfig) {}
 
-  async list() {
-    return await this.repo.list();
+  async list(startDate?: Date, endDate?: Date) {
+    const dates = within2DaysPeriod(startDate, endDate);
+    return await this.repo.list(dates.startDate, dates.endDate);
   }
 
   find(id: string) { return this.repo.find(id); }
@@ -58,7 +60,8 @@ export class CentralStockOrderService {
             createdBy: input.createdBy,
             approvedBy: input.approvedBy,
             status: input.status,
-            orderType: input.orderType
+            orderType: input.orderType,
+            siteId: input.siteId
           }
           return  orderData;
         });
