@@ -15,9 +15,20 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { CentralStockService } from "./central-stock.service.js";
 import { CentralStockRepository } from "./central-stock.repository.js";
-import { createCentralStockSchema, stockTransactionSchema } from "./central-stock.schema.js";
+import { StockClearanceRepository } from "../stock clearance/clearance.repository.js";
+import { StockClearanceService } from "../stock clearance/clearance.service.js";
+import { createStockClearanceSchema } from "../stock clearance/clearance.schema.js";
+import { parseClearanceMultipart } from "../stock clearance/clearance-upload.js";
+import { parseReconciliationMultipart } from "./reconciliation-upload.js";
+import {
+  centralStockReportQuerySchema,
+  createCentralStockSchema,
+  stockReconciliationsBodySchema,
+  stockTransactionSchema,
+} from "./central-stock.schema.js";
 const routes: FastifyPluginAsync = async (app) => {
   const service = new CentralStockService(new CentralStockRepository(app.prisma), app.config);
+  const clearanceService = new StockClearanceService(new StockClearanceRepository(app.prisma), app.config);
   app.get(
     "/",
     {
@@ -26,7 +37,7 @@ const routes: FastifyPluginAsync = async (app) => {
         app.authorize("central.stock.read", "central.stock.manage"),
       ],
     },
-    async (request) => success(await service.list()),
+    async (request) => success(await service.list(parseInput(centralStockReportQuerySchema, request.query))),
   );
 
   app.post(
@@ -84,14 +95,12 @@ const routes: FastifyPluginAsync = async (app) => {
         }
       }
 
-      const input = parseInput(createCentralStockSchema, fields);
-
+      const input = parseInput(createCentralStockSchema, {...fields, createdBy: request.contextUser?.userId});
       if (uploadedFile) {
         input.supportingDocUrl = `/uploads/${uploadedFile.filename}`;
       }
 
-      const cargo = await service.create(input, request.contextUser?.userId ?? "");
-
+      const cargo = await service.create(input);
       return created(reply, cargo);
     },
   );
@@ -110,6 +119,47 @@ const routes: FastifyPluginAsync = async (app) => {
         await service.recordStatus(parseInput(stockTransactionSchema, request.body),request.contextUser?.userId ?? ""
         ),
       ),
+  );
+
+  app.post(
+    "/clearance",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("central.stock.edit", "central.stock.manage"),
+      ],
+    },
+    async (request, reply) => {
+      const fields = await parseClearanceMultipart(request);
+      return created(reply, await clearanceService.create(
+        parseInput(createStockClearanceSchema, {
+          ...fields,
+          clearedBy: request.contextUser?.userId,
+        }),
+      ));
+    },
+  );
+
+    app.post(
+    "/reconciliation",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("central.stock.edit", "central.stock.manage"),
+      ],
+    },
+    async (request, reply) => {
+      const fields = request.isMultipart()
+        ? await parseReconciliationMultipart(request)
+        : (request.body as Record<string, unknown>);
+      return created(
+        reply,
+        await service.createReconsiliation(parseInput(stockReconciliationsBodySchema, {
+          ...fields,
+          createdBy: request.contextUser?.userId,
+        })),
+      );
+    },
   );
 };
 

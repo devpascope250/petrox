@@ -1,0 +1,733 @@
+{
+  "_comment": "Flat module catalogue in breadth-first order so every parent precedes its children, making it safe to bulk-insert in array order. `depth` and `level` are derived from tree position (the live API states neither). `isGroup` is true for nodes that had children; those render as collapsible sections rather than links. Nodes with no `permissions` field are grouping nodes that had none.",
+  "success": true,
+  "data": [
+    {
+      "id": "e805d56d-893b-4e36-8872-29d567a4bc5e",
+      "name": "General Settings",
+      "code": "GENERAL_SETTINGS",
+      "parentId": null,
+      "sorting": 0,
+      "permissionModule": "general.settings",
+      "permissions": [
+        "general.settings.read",
+        "general.settings.create",
+        "general.settings.edit",
+        "general.settings.delete",
+        "general.settings.manage"
+      ],
+      "depth": 0,
+      "level": "module",
+      "isGroup": true,
+      "childCount": 1
+    },
+    {
+      "id": "a3d0a204-7a15-451a-baac-ae78815a16ef",
+      "name": "Supply Chain",
+      "code": "SUPPLY_CHAIN",
+      "parentId": null,
+      "sorting": 1,
+      "depth": 0,
+      "level": "module",
+      "isGroup": true,
+      "childCount": 2
+    },
+    {
+      "id": "1bda9386-4d3a-4069-abf8-b1c6aadffda2",
+      "name": "PSS",
+      "code": "PSS_OPERATION_FORECOURT",
+      "parentId": null,
+      "sorting": 2,
+      "permissionModule": "pss.operation.forecourt",
+      "permissions": [
+        "pss.operation.forecourt.read",
+        "pss.operation.forecourt.create",
+        "pss.operation.forecourt.edit",
+        "pss.operation.forecourt.delete",
+        "pss.operation.forecourt.manage"
+      ],
+      "depth": 0,
+      "level": "module",
+      "isGroup": true,
+      "childCount": 2
+    },
+    {
+      "id": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "name": "System Settings",
+      "code": "SYSTEM_SETTINGS",
+      "parentId": "e805d56d-893b-4e36-8872-29d567a4bc5e",
+      "sorting": 0,
+      "permissionModule": "system.settings",
+      "permissions": [
+        "system.settings.read",
+        "system.settings.create",
+        "system.settings.edit",
+        "system.settings.delete",
+        "system.settings.manage"
+      ],
+      "depth": 1,
+      "level": "service",
+      "isGroup": true,
+      "childCount": 9
+    },
+    {
+      "id": "349089d1-bc1e-49f8-b337-3b0e5470bddd",
+      "name": "Supply Chain Settings",
+      "code": "SUPPLY_CHAIN_SETTINGS",
+      "parentId": "a3d0a204-7a15-451a-baac-ae78815a16ef",
+      "sorting": 6,
+      "permissionModule": "supply.chain.settings",
+      "permissions": [
+        "supply.chain.settings.read",
+        "supply.chain.settings.create",
+        "supply.chain.settings.edit",
+        "supply.chain.settings.delete",
+        "supply.chain.settings.manage"
+      ],
+      "depth": 1,
+      "level": "service",
+      "isGroup": true,
+      "childCount": 6
+    },
+    {
+      "id": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "name": "Import, Transit, Depot and Warehouse",
+      "code": "SUPPLY_CHAIN_IMPORT_TRANSIT_DEPOT_AND_WAREHOUSE",
+      "parentId": "a3d0a204-7a15-451a-baac-ae78815a16ef",
+      "sorting": 13,
+      "permissionModule": "supply.chain.import.transit.depot.and.warehouse",
+      "permissions": [
+        "supply.chain.import.transit.depot.and.warehouse.read",
+        "supply.chain.import.transit.depot.and.warehouse.create",
+        "supply.chain.import.transit.depot.and.warehouse.edit",
+        "supply.chain.import.transit.depot.and.warehouse.delete",
+        "supply.chain.import.transit.depot.and.warehouse.manage"
+      ],
+      "depth": 1,
+      "level": "service",
+      "isGroup": true,
+      "childCount": 9
+    },
+    {
+      "id": "c8003089-02f2-4dc7-aad3-ae7a95437ceb",
+      "name": "Forecourt Service, Bay, Shop and Car Wash",
+      "code": "PSS_OPERATION_FORECOURT_SERVICE_BAY_SHOP_CAR_WASH",
+      "parentId": "1bda9386-4d3a-4069-abf8-b1c6aadffda2",
+      "sorting": 23,
+      "permissionModule": "pss.operation.forecourt.service.bay.shop.car.wash",
+      "permissions": [
+        "pss.operation.forecourt.service.bay.shop.car.wash.read",
+        "pss.operation.forecourt.service.bay.shop.car.wash.create",
+        "pss.operation.forecourt.service.bay.shop.car.wash.edit",
+        "pss.operation.forecourt.service.bay.shop.car.wash.delete",
+        "pss.operation.forecourt.service.bay.shop.car.wash.manage"
+      ],
+      "depth": 1,
+      "level": "service",
+      "isGroup": true,
+      "childCount": 5
+    },
+    {
+      "id": "5ad8d068-de07-42f9-bbf9-73142395eead",
+      "name": "PSS Stock Management",
+      "code": "PSS_STOCK_MANAGEMENT",
+      "parentId": "1bda9386-4d3a-4069-abf8-b1c6aadffda2",
+      "sorting": 29,
+      "permissionModule": "pss.stock.management",
+      "permissions": [
+        "pss.stock.management.read",
+        "pss.stock.management.create",
+        "pss.stock.management.edit",
+        "pss.stock.management.delete",
+        "pss.stock.management.manage"
+      ],
+      "depth": 1,
+      "level": "service",
+      "isGroup": true,
+      "childCount": 1
+    },
+    {
+      "id": "479396de-59be-487e-8210-8d35e44f4b59",
+      "name": "Modules",
+      "code": "MODULES",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 1,
+      "permissionModule": "modules",
+      "permissions": [
+        "modules.read",
+        "modules.create",
+        "modules.edit",
+        "modules.delete",
+        "modules.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "dd8b6546-baca-4f59-aa5f-c4df163bf354",
+      "name": "Roles",
+      "code": "ROLES",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 2,
+      "permissionModule": "roles",
+      "permissions": [
+        "roles.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "099b14e7-d52d-4f8b-b5be-64bbae585ffe",
+      "name": "Users",
+      "code": "USERS",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 3,
+      "permissionModule": "users",
+      "permissions": [
+        "users.read",
+        "users.create",
+        "users.edit",
+        "users.delete",
+        "users.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "61c48621-8852-4ac9-b311-cc5693944409",
+      "name": "Company Accounts",
+      "code": "COMPANY_ACCOUNTS",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 6,
+      "permissionModule": "company.account",
+      "permissions": [
+        "company.account.read",
+        "company.account.create",
+        "company.account.edit",
+        "company.account.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "761593dd-c11d-4cc2-bd80-0357d890282d",
+      "name": "Client Wallets",
+      "code": "CLIENT_WALLETS",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 7,
+      "permissionModule": "client.wallet",
+      "permissions": [
+        "client.wallet.read",
+        "client.wallet.create",
+        "client.wallet.edit",
+        "client.wallet.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "089c52a4-2410-4d20-b28e-928774577699",
+      "name": "Cards",
+      "code": "CARDS",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 8,
+      "permissionModule": "cards",
+      "permissions": [
+        "cards.read",
+        "cards.create",
+        "cards.edit",
+        "cards.delete",
+        "cards.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "24977f79-d7f5-4992-97da-a53e77945375",
+      "name": "Card Assignments",
+      "code": "CARD_COPIES",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 9,
+      "permissionModule": "cards.copy",
+      "permissions": [
+        "cards.copy.read",
+        "cards.copy.create",
+        "cards.copy.edit",
+        "cards.copy.delete",
+        "cards.copy.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "dc9d46aa-34d8-47e1-af13-09337412f428",
+      "name": "Discounts",
+      "code": "DISCOUNTS",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 10,
+      "permissionModule": "discounts",
+      "permissions": [
+        "discounts.read",
+        "discounts.create",
+        "discounts.edit",
+        "discounts.delete",
+        "discounts.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "a5ef8f60-cf84-4b2e-9b66-370f01be08a8",
+      "name": "Items",
+      "code": "ITEMS",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 4,
+      "permissionModule": "items",
+      "permissions": [
+        "items.read",
+        "items.create",
+        "items.edit",
+        "items.delete",
+        "items.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "e201a84e-0df4-4adb-abd0-605f690f4a19",
+      "name": "Units",
+      "code": "UNITS",
+      "parentId": "87280ccc-09e6-4daf-902d-ceae513c0ba9",
+      "sorting": 5,
+      "permissionModule": "units",
+      "permissions": [
+        "units.read",
+        "units.create",
+        "units.edit",
+        "units.delete",
+        "units.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "f4fa5e12-e5d9-4bc1-9102-664d9e2c3066",
+      "name": "Suppliers",
+      "code": "SUPPLIERS",
+      "parentId": "349089d1-bc1e-49f8-b337-3b0e5470bddd",
+      "sorting": 7,
+      "permissionModule": "suppliers",
+      "permissions": [
+        "suppliers.read",
+        "suppliers.create",
+        "suppliers.edit",
+        "suppliers.delete",
+        "suppliers.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "b2edf75e-6219-4947-8cd6-54485efa609e",
+      "name": "Supplier Type",
+      "code": "SUPPLIERS_TYPE",
+      "parentId": "349089d1-bc1e-49f8-b337-3b0e5470bddd",
+      "sorting": 8,
+      "permissionModule": "suppliers.type",
+      "permissions": [
+        "suppliers.type.read",
+        "suppliers.type.create",
+        "suppliers.type.edit",
+        "suppliers.type.delete",
+        "suppliers.type.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "32483c51-caeb-4eda-a9d8-a0891e9c624b",
+      "name": "Transporters",
+      "code": "TRANSPORTERS",
+      "parentId": "349089d1-bc1e-49f8-b337-3b0e5470bddd",
+      "sorting": 9,
+      "permissionModule": "transporters",
+      "permissions": [
+        "transporters.read",
+        "transporters.create",
+        "transporters.edit",
+        "transporters.delete",
+        "transporters.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "3db24ea1-8c54-4947-b607-d88ccffa5c36",
+      "name": "Vehicles",
+      "code": "VEHICLES",
+      "parentId": "349089d1-bc1e-49f8-b337-3b0e5470bddd",
+      "sorting": 10,
+      "permissionModule": "vehicles",
+      "permissions": [
+        "vehicles.read",
+        "vehicles.create",
+        "vehicles.edit",
+        "vehicles.delete",
+        "vehicles.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "f33369c4-bf68-4eee-9a96-0094540c41f8",
+      "name": "Drivers",
+      "code": "DRIVERS",
+      "parentId": "349089d1-bc1e-49f8-b337-3b0e5470bddd",
+      "sorting": 11,
+      "permissionModule": "drivers",
+      "permissions": [
+        "drivers.read",
+        "drivers.create",
+        "drivers.edit",
+        "drivers.delete",
+        "drivers.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "9e7fcf78-a2ac-47f5-bc33-9a1f515662df",
+      "name": "Deports",
+      "code": "DEPORTS",
+      "parentId": "349089d1-bc1e-49f8-b337-3b0e5470bddd",
+      "sorting": 12,
+      "permissionModule": "deports",
+      "permissions": [
+        "deports.read",
+        "deports.create",
+        "deports.edit",
+        "deports.delete",
+        "deports.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "8d2e1f75-6254-4a17-ad5f-9bf77a98a6ab",
+      "name": "Orders",
+      "code": "ORDERS",
+      "parentId": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "sorting": 14,
+      "permissionModule": "orders",
+      "permissions": [
+        "orders.read",
+        "orders.create",
+        "orders.edit",
+        "orders.delete",
+        "orders.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "65fe5578-09c2-44ad-a3d8-3463aea9d092",
+      "name": "Orders Plan",
+      "code": "ORDERS_PLAN",
+      "parentId": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "sorting": 15,
+      "permissionModule": "orders.plan",
+      "permissions": [
+        "orders.plan.read",
+        "orders.plan.create",
+        "orders.plan.edit",
+        "orders.plan.delete",
+        "orders.plan.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "8d6d5d2b-e55e-47f0-910e-18d1943b5c9c",
+      "name": "Cargo",
+      "code": "CARGO",
+      "parentId": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "sorting": 16,
+      "permissionModule": "cargo",
+      "permissions": [
+        "cargo.read",
+        "cargo.create",
+        "cargo.edit",
+        "cargo.delete",
+        "cargo.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "3ad3846a-d0e3-4a8f-a2e8-1f3a191de41e",
+      "name": "Stock",
+      "code": "STOCK",
+      "parentId": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "sorting": 17,
+      "permissionModule": "stock",
+      "permissions": [
+        "stock.read",
+        "stock.create",
+        "stock.edit",
+        "stock.delete",
+        "stock.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "1413952f-3403-4679-aeae-7b725760d755",
+      "name": "Nominations",
+      "code": "NOMINATIONS",
+      "parentId": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "sorting": 18,
+      "permissionModule": "nominations",
+      "permissions": [
+        "nominations.read",
+        "nominations.create",
+        "nominations.edit",
+        "nominations.delete",
+        "nominations.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "50528f20-becc-4071-9e60-8f08ed7c215b",
+      "name": "PFI",
+      "code": "PFI",
+      "parentId": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "sorting": 19,
+      "permissionModule": "pfi",
+      "permissions": [
+        "pfi.read",
+        "pfi.create",
+        "pfi.edit",
+        "pfi.delete",
+        "pfi.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "cb4686eb-ecc7-4109-95d0-00122a02d12a",
+      "name": "T1 Validation",
+      "code": "T1_VALIDATION",
+      "parentId": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "sorting": 20,
+      "permissionModule": "t1.validation",
+      "permissions": [
+        "t1.validation.read",
+        "t1.validation.create",
+        "t1.validation.edit",
+        "t1.validation.delete",
+        "t1.validation.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "ebeb5c15-2f47-4f81-8d5c-f89f4339259b",
+      "name": "Central Stock",
+      "code": "CENTRAL_STOCK",
+      "parentId": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "sorting": 21,
+      "permissionModule": "central.stock",
+      "permissions": [
+        "central.stock.read",
+        "central.stock.create",
+        "central.stock.edit",
+        "central.stock.delete",
+        "central.stock.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "76b0d611-e1d4-4d1f-a09e-de2b7ebda1b0",
+      "name": "Stock Management",
+      "code": "STOCK_MANAGEMENT",
+      "parentId": "9308490d-4f55-4e3f-8eaf-f06b5b7e2597",
+      "sorting": 22,
+      "permissionModule": "stock.management",
+      "permissions": [
+        "stock.management.read",
+        "stock.management.create",
+        "stock.management.edit",
+        "stock.management.delete",
+        "stock.management.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "6f2c7fd8-81d3-46dc-82e0-915d4b133bbb",
+      "name": "Sites",
+      "code": "PSS",
+      "parentId": "c8003089-02f2-4dc7-aad3-ae7a95437ceb",
+      "sorting": 24,
+      "permissionModule": "pss",
+      "permissions": [
+        "pss.read",
+        "pss.create",
+        "pss.edit",
+        "pss.delete",
+        "pss.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "597f165e-7f65-4c26-a9f6-447202187556",
+      "name": "Pumps",
+      "code": "PUMP",
+      "parentId": "c8003089-02f2-4dc7-aad3-ae7a95437ceb",
+      "sorting": 25,
+      "permissionModule": "pump",
+      "permissions": [
+        "pump.read",
+        "pump.create",
+        "pump.edit",
+        "pump.delete",
+        "pump.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "f3656dae-73a7-468c-a45c-5339f976c250",
+      "name": "Displays",
+      "code": "DISPLAY",
+      "parentId": "c8003089-02f2-4dc7-aad3-ae7a95437ceb",
+      "sorting": 26,
+      "permissionModule": "display",
+      "permissions": [
+        "display.read",
+        "display.create",
+        "display.edit",
+        "display.delete",
+        "display.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "e144bc35-8fb4-443f-8beb-52cefffb21c4",
+      "name": "Cuves",
+      "code": "CUVE",
+      "parentId": "c8003089-02f2-4dc7-aad3-ae7a95437ceb",
+      "sorting": 27,
+      "permissionModule": "cuve",
+      "permissions": [
+        "cuve.read",
+        "cuve.create",
+        "cuve.edit",
+        "cuve.delete",
+        "cuve.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "2c6e4e6f-b4e3-4644-a8e6-e613e7253c1b",
+      "name": "Nozzles",
+      "code": "NOZZLE",
+      "parentId": "c8003089-02f2-4dc7-aad3-ae7a95437ceb",
+      "sorting": 28,
+      "permissionModule": "nozzle",
+      "permissions": [
+        "nozzle.read",
+        "nozzle.create",
+        "nozzle.edit",
+        "nozzle.delete",
+        "nozzle.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "24488b2b-ff26-4bac-ae0e-9d39e246bc02",
+      "name": "Stockout Orders",
+      "code": "STOCKOUT_ORDERS",
+      "parentId": "5ad8d068-de07-42f9-bbf9-73142395eead",
+      "sorting": 30,
+      "permissionModule": "stockout.orders",
+      "permissions": [
+        "stockout.orders.read",
+        "stockout.orders.create",
+        "stockout.orders.edit",
+        "stockout.orders.delete",
+        "stockout.orders.manage"
+      ],
+      "depth": 2,
+      "level": "feature",
+      "isGroup": false,
+      "childCount": 0
+    }
+  ]
+}

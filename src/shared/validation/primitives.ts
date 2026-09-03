@@ -30,6 +30,12 @@ export const datesQuerySchema = z.object({
   endDate: z.coerce.date().optional()
 })
 
+export const itemIdQuerySchema = z.object(
+  {
+    itemId: uuidSchema.optional()
+  }
+);
+
 export const nonEmptyNameSchema = z.string().trim().min(1).max(80);
 export const phoneSchema = z.string().trim().min(3).max(30);
 
@@ -47,3 +53,4 @@ export const paginationQuerySchema = z.object({
 });
 
 export type PaginationQuery = z.infer<typeof paginationQuerySchema>;
+export type DatesQuerySchema = z.infer<typeof datesQuerySchema>;

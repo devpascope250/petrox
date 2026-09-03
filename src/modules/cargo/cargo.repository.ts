@@ -12,7 +12,8 @@ export class CargoRepository {
         blRef: true,
         createdAt: true,
         expirationDate: true,
-        quantity: true,
+        ambQuantity: true,
+        quantityAt20C: true,
         outurnRef: true,
         receivedDate: true,
         supportingDocUrl: true,
@@ -36,14 +37,20 @@ export class CargoRepository {
   }
 
   async create(data: CreateCargoSchema) {
-    const order = await this.db.order.findUnique({where: {id: data.orderId}});
-    if(data.quantity > Number(order?.quantity)) throw new BusinessError("400", "The Cargo Quantities must be less than or equal to ordered quanties.");
+    const order = await this.db.order.findUnique({where: {id: data.orderId}, include: {cargos: true}});
+    if(data.quantityAt20C > Number(order?.quantity)) throw new BusinessError("400", "The Cargo Quantities must be less than or equal to ordered quanties.");
+    const cargoStocks = order?.cargos.reduce((total, cargo) => cargo.status !== "cancelled" ? total + Number(cargo.quantityAt20C) : total, 0);
+    if(cargoStocks){
+      if ((data.quantityAt20C + cargoStocks) > Number(order?.quantity)) throw new BusinessError("400", "The Cargo Quantities must be less than or equal to ordered quanties.");
+    }
+    
     return await this.db.cargo.create({
       data: {
         deportId: data.deportId,
         orderId: data.orderId,
         expirationDate: data.expirationDate,
-        quantity: data.quantity,
+        ambQuantity: data.ambQuantity,
+        quantityAt20C: data.quantityAt20C,
         receivedDate: data.receivedDate,
         vesselName: data.vesselName,
         status: "pending",
@@ -57,13 +64,20 @@ export class CargoRepository {
 
   async update(id: string, data: CreateCargoSchema) {
     if (!(await this.find(id))) throw new NotFoundError();
+    const order = await this.db.order.findUnique({where: {id: data.orderId}, include: {cargos: true}});
+    if(data.quantityAt20C > Number(order?.quantity)) throw new BusinessError("400", "The Cargo Quantities must be less than or equal to ordered quanties.");
+    const cargoStocks = order?.cargos.reduce((total, cargo) => cargo.status !== "cancelled" ? total + Number(cargo.quantityAt20C) : total, 0);
+    if(cargoStocks){
+      if ((data.quantityAt20C + cargoStocks) > Number(order?.quantity)) throw new BusinessError("400", "The Cargo Quantities must be less than or equal to ordered quanties.");
+    }
     return await this.db.cargo.update({
       where: { id: id },
      data: {
       deportId: data.deportId,
         orderId: data.orderId,
         expirationDate: data.expirationDate,
-        quantity: data.quantity,
+        ambQuantity: data.ambQuantity,
+        quantityAt20C: data.quantityAt20C,
         receivedDate: data.receivedDate,
         vesselName: data.vesselName,
         tansisRef: data.tansisRef,
@@ -82,14 +96,14 @@ export class CargoRepository {
         data: {
           itemId: cargo.order.itemId,
           cargoId: id,
-          quantity: cargo.quantity,
+          quantity: cargo.quantityAt20C,
           deportId: cargo.deportId,
           receivedDate,
           status: status === "approved" ? "received" : "cancelled"
         }
       })
       return await tx.cargo.update({
-      where: { id },
+      where: { id , status: {equals: "pending"}},
       data: { status },
     });
     })
@@ -98,7 +112,8 @@ export class CargoRepository {
 
   find(id: string) {
     return this.db.cargo.findUnique({ where: { id }, select: {
-      quantity: true,
+      ambQuantity: true,
+      quantityAt20C: true,
       deportId: true,
       supportingDocUrl: true,
       order: {

@@ -13,6 +13,6 @@
     "composite": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "prisma", "generated", "tests", "vitest.config.ts"],
+  "include": ["src", "prisma", "generated", "tests", "vitest.config.ts", "sidebar-flat.json"],
   "exclude": ["dist", "node_modules"]
 }

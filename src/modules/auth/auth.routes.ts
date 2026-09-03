@@ -4,7 +4,7 @@ import { AuthRepository } from "./auth.repository.js";
 import { AuthService } from "./auth.service.js";
 
 const authRoutes: FastifyPluginAsync = async (app) => {
-  const controller = new AuthController(new AuthService(new AuthRepository(app.prisma), app, app.config));
+  const controller = new AuthController(new AuthService(new AuthRepository(app.prisma), app, app.config), app.config);
   const limited = { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } };
   app.post("/login", limited, controller.login);
   app.post("/pin-login", limited, controller.pinLogin);

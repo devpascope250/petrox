@@ -17,7 +17,9 @@ const routes: FastifyPluginAsync = async (app) => {
     created(reply, await service.update(parseInput(idParamsSchema, request.params).id, parseInput(createClearingAgentSchema, request.body))));
 
      app.put("/status/:id", { preHandler: [app.authenticate, app.authorize("clearance.agent.edit", "clearance.agent.manage")] }, async (request, reply) =>
-    created(reply, await service.updateStatus(parseInput(idParamsSchema, request.params).id)));
+     created(reply, await service.updateStatus(parseInput(idParamsSchema, request.params).id)));
+  app.delete("/:id", { preHandler: [app.authenticate, app.authorize("clearance.agent.edit", "clearance.agent.manage")] }, async (request) =>
+    success(await service.delete(parseInput(idParamsSchema, request.params).id)));
 };
 
 export default routes;

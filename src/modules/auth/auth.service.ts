@@ -13,7 +13,7 @@ export class AuthService {
     return user.role ? user.role.permissions.map((item) => item.permission.code) : null;
   }
   private publicUser(user: AuthUser) {
-    return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role?.name };
+    return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role?.name, position: user.position, sites: user.sites };
   }
   private async issue(user: AuthUser) {
     const permissions = this.permissions(user);
@@ -25,7 +25,7 @@ export class AuthService {
     const refreshToken = createOpaqueToken();
     const expiresAt = new Date(Date.now() + this.config.REFRESH_TOKEN_TTL_DAYS * 86_400_000);
     await this.repo.createRefreshToken(user.id, hashToken(refreshToken), expiresAt);
-    return { accessToken, refreshToken, expiresAt, user: this.publicUser(user), permissions };
+    return { accessToken, refreshToken, user: this.publicUser(user), permissions };
   }
   private ensureActive(user: AuthUser | null): asserts user is AuthUser {
     if (!user || !user.isActive || !user.role?.isActive) throw unauthorized("Invalid credentials");

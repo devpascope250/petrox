@@ -7,6 +7,7 @@ export const createT1ValidationsSchema = z.object({
   customOffice:   nonEmptyNameSchema,
   transitNumbering: nonEmptyNameSchema,
   supportingDocUrl: z.string().optional().nullable(),
+  createdBy: z.string().optional()
 });
 
 

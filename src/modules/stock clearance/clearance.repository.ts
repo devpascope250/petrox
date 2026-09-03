@@ -1,5 +1,5 @@
 import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
-import { NotFoundError } from "../../utils/errors.js";
+import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { CreateStockClearanceSchema } from "./clearance.schema.js";
 export class StockClearanceRepository {
   constructor(private db: PrismaClient) {}
@@ -10,6 +10,8 @@ export class StockClearanceRepository {
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
+        quantity: true,
+        centralStock: { select: { id: true, itemId: true, quantity: true, createdAt: true } },
         agentId: true,
         agent: true,
         status: true,
@@ -29,31 +31,79 @@ export class StockClearanceRepository {
   }
 
   async create(data: CreateStockClearanceSchema) {
-    const checkForCentrolStock = await this.db.centralStock.findUnique({ where: { id: data.centralStockId }, select: {quantity: true} });
-    if (!checkForCentrolStock) throw new NotFoundError("Central stock not found");
-    if(data.status === "cleared" && !checkForCentrolStock) throw new NotFoundError("Central stock not found");
-    if (data.status === "cleared") {
-      const getAllClearanceQuantity = await this.db.stockClearance.aggregate({
-        where: { centralStockId: data.centralStockId, status: "cleared" },
-        _sum: { quantity: true }
-      });
-      if (Number(getAllClearanceQuantity._sum.quantity) + data.quantity > Number(checkForCentrolStock.quantity)) {
-        throw new NotFoundError("Clearance quantity exceeds central stock quantity");
+    return this.db.$transaction(async (tx) => {
+      if (data.agentId) {
+        const agent = await tx.clearingAgent.findUnique({ where: { id: data.agentId } });
+        if (!agent) throw new NotFoundError("Clearing agent not found");
+        if (agent.status !== "active") throw new BusinessError("400", "Clearing agent is inactive");
       }
-    }
-    return await this.db.stockClearance.create({
-      data: {
-        amount: data.amount,
-        fees: data.fees,
-        agentId: data.agentId,
-        clearedBy: data.clearedBy,
-        status: data.status,
-        centralStockId: data.centralStockId,
-        supportingDocUrl: data.supportingDocUrl,
-        dmsDocUrl: data.dmsDocUrl,
-        quantity: data.quantity,
-      },
-    });
+      const stockSelect = {
+        id: true, itemId: true, status: true, quantity: true,
+        transactions: { select: { quantity: true, type: true } },
+        stockClearances: { select: { quantity: true, status: true,
+          centralStockOrders: { select: { quantity: true } } } },
+      } as const;
+
+      let stocks;
+      if (data.type === "manual") {
+        const stock = await tx.centralStock.findUnique({
+          where: { id: data.centralStockId! },
+          select: stockSelect,
+        });
+        if (!stock) throw new NotFoundError("Central stock not found");
+        if (stock.itemId !== data.itemId) {
+          throw new BusinessError("400", "Central stock does not belong to the selected item");
+        }
+        if (stock.status !== "inStock") {
+          throw new BusinessError("400", "Central stock is not in stock");
+        }
+        stocks = [stock];
+      } else {
+        stocks = await tx.centralStock.findMany({
+          where: { itemId: data.itemId, status: "inStock" },
+          orderBy: { createdAt: "asc" },
+          select: stockSelect,
+        });
+      }
+
+      let requested = data.quantity;
+      const allocations: Array<{ centralStockId: string; quantity: number }> = [];
+      for (const stock of stocks) {
+        if (requested <= 0) break;
+        const allocated = stock.stockClearances.reduce((sum, row) => sum + Number(row.quantity), 0);
+        const physicalRemaining = stock.transactions.reduce((balance, transaction) => {
+          const quantity = Number(transaction.quantity);
+          return transaction.type === "received" || transaction.type === "reconcilliationIn"
+            ? balance + quantity : balance - quantity;
+        }, 0);
+        const clearedRemaining = stock.stockClearances
+          .filter((row) => row.status === "cleared")
+          .reduce((balance, row) => balance + Number(row.quantity)
+            - row.centralStockOrders.reduce((sold, order) => sold + Number(order.quantity), 0), 0);
+        const legalUncleared = Number(stock.quantity) - allocated;
+        const physicalUncleared = physicalRemaining - Math.max(0, clearedRemaining);
+        const available = Math.max(0, Math.min(legalUncleared, physicalUncleared));
+        const quantity = Math.min(available, requested);
+        if (quantity > 0) allocations.push({ centralStockId: stock.id, quantity });
+        requested -= quantity;
+      }
+      if (requested > 0) {
+        throw new BusinessError("400", `Only ${data.quantity - requested} uncleared stock is available`);
+      }
+
+      const rows = [];
+      for (const allocation of allocations) {
+        const ratio = allocation.quantity / data.quantity;
+        rows.push(await tx.stockClearance.create({ data: {
+          ...allocation, status: "cleared",
+          fees: data.fees === undefined ? undefined : data.fees * ratio,
+          amount: data.amount === undefined ? undefined : data.amount * ratio,
+          agentId: data.agentId, clearedBy: data.clearedBy,
+          dmsDocUrl: data.dmsDocUrl,
+        }}));
+      }
+      return rows;
+    }, { isolationLevel: "Serializable" });
   }
 
   find(id: string) {

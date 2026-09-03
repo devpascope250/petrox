@@ -4,8 +4,10 @@ export const createNominationsSchema = z.object({
     stockId: uuidSchema,
     driverVehicleId: uuidSchema,
     destination: nonEmptyNameSchema,
-    quantity: z.coerce.number(),
+    quantityAt20C: z.coerce.number(),
+    ambQuantity: z.coerce.number().optional(),
     expectedLoadingedDate: z.coerce.date("Please provide expected date."),
+    createdBy: z.string().optional()
   });
 
 export type CreateNominationsSchema = z.infer<typeof createNominationsSchema>;

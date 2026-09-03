@@ -1,6 +1,8 @@
 import { NotFoundError } from "../../utils/errors.js";
+import { paginatedData } from "../../shared/pagination/index.js";
+import type { PaginationQuery } from "../../shared/validation/index.js";
 import { buildModuleTree } from "./module-tree.js";
-import { ModuleItemsSchemaBody, ModuleSchemaBody } from "./module.schema.js";
+import { ModuleItemsSchemaBody, ModuleSchemaBody, ModuleSortingSchema, UpdateModuleSchemaBody } from "./module.schema.js";
 import { ModulesRepository } from "./modules.repository.js";
 
 export class ModulesService {
@@ -27,8 +29,12 @@ export class ModulesService {
     return await this.repository.delete(id);
   }
 
-   async updateModule (id: string, data: ModuleItemsSchemaBody) {
-    if(!await this.findOne(id)) throw new NotFoundError();
-    return await this.repository.update(id, data);
+   async updateModule (data: UpdateModuleSchemaBody) {
+    if(!await this.findOne(data.id)) throw new NotFoundError();
+    return await this.repository.update(data.id, data);
+  }
+
+  async updateSorting(data: ModuleSortingSchema) {
+    return await this.repository.updateSorting(data);
   }
 }

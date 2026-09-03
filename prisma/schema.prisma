@@ -17,6 +17,7 @@ model Role {
   updatedAt   DateTime         @updatedAt
   users       User[]
   permissions RolePermission[]
+  authorizers Authorizers[]
 }
 
 model CompanySettings {
@@ -73,28 +74,66 @@ model RolePermission {
 }
 
 model User {
-  id                         String               @id @default(uuid())
-  email                      String               @unique
+  id                         String                   @id @default(uuid())
+  email                      String                   @unique
   passwordHash               String
   pinHash                    String?
   firstName                  String
   lastName                   String
   phone                      String?
   roleId                     String?
-  role                       Role?                @relation(fields: [roleId], references: [id], onDelete: SetNull)
-  isActive                   Boolean              @default(true)
-  createdAt                  DateTime             @default(now())
-  updatedAt                  DateTime             @updatedAt
+  role                       Role?                    @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  isActive                   Boolean                  @default(true)
+  createdAt                  DateTime                 @default(now())
+  updatedAt                  DateTime                 @updatedAt
+  clientId                   String?
+  siteId                     String?
+  position                   UserPositions            @default(siteManager)
   refreshTokens              RefreshToken[]
   passwordResetTokens        PasswordResetToken[]
   orders                     Order[]
   lineLines                  NominationTimeLine[]
   stockTransactions          StockTransaction[]
-  createdCentralStockOrders  CentralStockOrder[]  @relation("CentralStockOrderCreatedByUser")
-  approvedCentralStockOrders CentralStockOrder[]  @relation("CentralStockOrderApprovedByUser")
+  createdCentralStockOrders  CentralStockOrder[]      @relation("CentralStockOrderCreatedByUser")
+  approvedCentralStockOrders CentralStockOrder[]      @relation("CentralStockOrderApprovedByUser")
   stockClearances            StockClearance[]
+  client                     Client?                  @relation(fields: [clientId], references: [id])
+  sites                      UserSites[]
+  loadingOrderAuthorizers    LoadingOrderAuthorizer[]
+  companyAccounts            CompanyAccount[]
+  clientWallets              ClientWallet[]
+  orderReceptions            OrderReception[]
+  discounts                  Discount[]
 
   @@index([roleId])
+}
+
+enum UserPositions {
+  superAdmin
+  siteManager
+  clientAdmin
+  clientUser
+}
+
+model Client {
+  id               String         @id @default(uuid())
+  clientCode       String         @unique
+  name             String?
+  phone            String?
+  email            String?
+  idTino           String?
+  province         String?
+  proviceLocation  Location?      @relation("ProviceLocationsRef", fields: [province], references: [id], onDelete: SetNull)
+  district         String?
+  districtLocation Location?      @relation("DistrictLocationRef", fields: [district], references: [id], onDelete: SetNull)
+  sector           String?
+  sectorLocation   Location?      @relation("SectorLocationRef", fields: [sector], references: [id], onDelete: SetNull)
+  status           Boolean        @default(true)
+  subsidyAllowed   Boolean        @default(false)
+  users            User[]
+  clientWallets    ClientWallet[]
+  cardCopies       CardCopy[]
+  discounts        Discount[]
 }
 
 model RefreshToken {
@@ -335,19 +374,123 @@ model Driver {
 }
 
 model DriverVehicles {
-  id          String       @id @default(uuid())
-  driverId    String
-  driver      Driver       @relation(fields: [driverId], references: [id])
-  vehicleId   String
-  vechile     Vehicle      @relation(fields: [vehicleId], references: [id])
-  status      StatusType   @default(active)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  nominations Nomination[]
+  id            String              @id @default(uuid())
+  driverId      String
+  driver        Driver              @relation(fields: [driverId], references: [id])
+  vehicleId     String
+  vechile       Vehicle             @relation(fields: [vehicleId], references: [id])
+  status        DriverVehicleStatus @default(active)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  nominations   Nomination[]
+  loadingOrders LoadingOrder[]
 
   @@index([driverId])
   @@index([vehicleId])
   @@index([driverId, vehicleId])
+}
+
+// driverVehicle status
+
+enum DriverVehicleStatus {
+  active
+  inactive
+  occupied
+}
+
+model LoadingOrder {
+  id                  String                          @id @default(uuid())
+  driverVehicleId     String
+  totalQuantity       Decimal                         @db.Decimal(18, 2)
+  authoriserCount     Int                             @default(1)
+  status              LoadingOrderStatus              @default(pending)
+  authorizationStatus LoadingOrderAuthorizationStatus @default(pending)
+  dVehicle            DriverVehicles                  @relation(fields: [driverVehicleId], references: [id])
+  authorizers         LoadingOrderAuthorizer[]
+  createdAt           DateTime                        @default(now())
+  updatedAt           DateTime                        @updatedAt
+  orderReceptions     OrderReception[]
+  loadedOrders        LoadedOrder[]
+
+  @@index([driverVehicleId])
+}
+
+model LoadedOrder {
+  id             String            @id @default(uuid())
+  orderId        String
+  order          CentralStockOrder @relation(fields: [orderId], references: [id])
+  loadingOrderId String
+  loadingOrder   LoadingOrder      @relation(fields: [loadingOrderId], references: [id])
+  quantity       Decimal           @db.Decimal(18, 2)
+  createdAt      DateTime          @default(now())
+
+  @@unique([loadingOrderId, orderId])
+  @@index([orderId])
+  @@index([loadingOrderId])
+}
+
+model OrderReception {
+  id             String             @id @default(uuid())
+  loadingOrderId String
+  loadingOrder   LoadingOrder       @relation(fields: [loadingOrderId], references: [id])
+  cuveId         String
+  cuve           TblCuve            @relation(fields: [cuveId], references: [id])
+  expectedQty    Decimal            @db.Decimal
+  receivedQty    Decimal            @db.Decimal
+  receivedBy     String
+  status         LoadingOrderStatus @default(pending)
+  user           User               @relation(fields: [receivedBy], references: [id])
+  createdAt      DateTime           @default(now())
+
+  @@index([loadingOrderId])
+  @@index([cuveId])
+}
+
+enum LoadingOrderStatus {
+  pending
+  received
+  cancelled
+}
+
+enum LoadingOrderAuthorizationStatus {
+  pending
+  approved
+}
+
+model LoadingOrderAuthorizer {
+  id             String       @id @default(uuid())
+  loadingOrderId String
+  loadingOrder   LoadingOrder @relation(fields: [loadingOrderId], references: [id])
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], map: "fk_loading_order_authorizer_user")
+  authorizerId   String
+  authorizer     Authorizers  @relation(fields: [authorizerId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@unique([loadingOrderId, userId])
+  @@unique([loadingOrderId, authorizerId])
+  @@index([loadingOrderId])
+  @@index([userId])
+  @@index([authorizerId])
+}
+
+model Authorizers {
+  id        String                   @id @default(uuid())
+  type      AuthoriserType
+  levels    Int                      @default(1)
+  roleId    String
+  status    StatusType               @default(active)
+  createdAt DateTime                 @default(now())
+  updatedAt DateTime                 @updatedAt
+  role      Role                     @relation(fields: [roleId], references: [id])
+  approvals LoadingOrderAuthorizer[]
+
+  @@unique([type, roleId])
+  @@index([roleId])
+}
+
+enum AuthoriserType {
+  LOADING_ORDER
 }
 
 // moving to cargo
@@ -361,7 +504,8 @@ model Cargo {
   vesselName       String
   receivedDate     DateTime
   expirationDate   DateTime
-  quantity         Decimal     @default(0.0) @db.Decimal(18, 2)
+  ambQuantity         Decimal    @db.Decimal(18, 2)  @default(0.0)
+  quantityAt20C        Decimal   @db.Decimal(18, 2)   @default(0.0)
   blRef            String
   supportingDocUrl String?
   tansisRef        String?
@@ -417,7 +561,8 @@ model Nomination {
   stock               Stock                @relation(fields: [stockId], references: [id])
   driverVehicleId     String
   driverVehicle       DriverVehicles       @relation(fields: [driverVehicleId], references: [id])
-  quantity            Decimal              @db.Decimal(18, 2)
+  ambQuantity            Decimal              @db.Decimal(18, 2)  @default(0.0)
+  quantityAt20C            Decimal              @db.Decimal(18, 2) @default(0.0)
   destination         String
   expectedLoadingDate DateTime
   createdAt           DateTime             @default(now())
@@ -447,8 +592,9 @@ model Pfi {
   nominationId String
   nomination   Nomination @relation(fields: [nominationId], references: [id])
   currancyCode String
-  rate         Decimal    @db.Decimal(12, 2)
+  unitPrice         Decimal    @db.Decimal(12, 2)
   amount       Decimal    @db.Decimal(18, 2)
+  supportingDocUrl String?
   pifCode      String     @unique
   pfiReference String     @unique
   createdAt    DateTime   @default(now())
@@ -459,21 +605,43 @@ model Pfi {
 }
 
 model NominationTimeLine {
-  id           String     @id @default(uuid())
-  nominationId String
-  nomination   Nomination @relation(fields: [nominationId], references: [id])
-  status       String
-  changedBy    String?
-  user         User?      @relation(fields: [changedBy], references: [id])
-  descriptions String?
-  createdAt    DateTime   @default(now())
+  id               String                   @id @default(uuid())
+  nominationId     String
+  nomination       Nomination               @relation(fields: [nominationId], references: [id])
+  timeLineStatusId String
+  timeLineStatus   NominationTimeLineStatus @relation(fields: [timeLineStatusId], references: [id])
+  changedBy        String?
+  user             User?                    @relation(fields: [changedBy], references: [id])
+  descriptions     String?
+  createdAt        DateTime                 @default(now())
 
   @@index([nominationId])
+  @@index([timeLineStatusId])
+}
+
+model NominationTimeLineStatus {
+  id           String               @id @default(uuid())
+  status       TimeLineStatus       @unique
+  level        Int
+  descriptions String
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  timeLines    NominationTimeLine[]
+
+  @@index([status])
+}
+
+enum TimeLineStatus {
+  awaiting
+  underLoading
+  t1Pending
+  t1Confirmed
+  stockReceived
 }
 
 model T1Validation {
   id               String     @id @default(uuid())
-  nominationId     String
+  nominationId     String     @unique
   nomination       Nomination @relation(fields: [nominationId], references: [id])
   exportingCountry String
   supportingDocUrl String?
@@ -508,19 +676,21 @@ enum ExtraT1ValidationStatus {
 }
 
 model CentralStock {
-  id               String             @id @default(uuid())
-  deportId         String
-  deport           Deport             @relation(fields: [deportId], references: [id])
-  itemId           String
-  item             Item               @relation(fields: [itemId], references: [id])
-  quantity         Decimal            @db.Decimal(18, 2)
-  supportingDocUrl String?
-  t1ValidationId   String
-  t1Validation     T1Validation       @relation(fields: [t1ValidationId], references: [id])
-  status           CentralStockStatus @default(inStock)
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  stockClearances  StockClearance[]
+  id                 String              @id @default(uuid())
+  deportId           String
+  deport             Deport              @relation(fields: [deportId], references: [id])
+  itemId             String
+  item               Item                @relation(fields: [itemId], references: [id])
+  quantity           Decimal             @db.Decimal(18, 2)
+  supportingDocUrl   String?
+  t1ValidationId     String
+  t1Validation       T1Validation        @relation(fields: [t1ValidationId], references: [id])
+  status             CentralStockStatus  @default(inStock)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  stockClearances    StockClearance[]
+  transactions       StockTransaction[]
+  centralStockOrders CentralStockOrder[]
 
   @@index([id])
   @@index([deportId])
@@ -536,9 +706,11 @@ enum CentralStockStatus {
 
 model StockTransaction {
   id             String               @id @default(uuid())
-  stockClearanceId String
-  stockClearance   StockClearance       @relation(fields: [stockClearanceId], references: [id])
+  centralStockId String
+  centralStock   CentralStock         @relation(fields: [centralStockId], references: [id])
   quantity       Decimal              @db.Decimal(18, 2)
+  note           String?
+  supportingDocUrl String?
   type           StockTransactionType
   createdBy      String
   user           User                 @relation(fields: [createdBy], references: [id])
@@ -546,7 +718,7 @@ model StockTransaction {
   updatedAt      DateTime             @updatedAt
 
   @@index([id])
-  @@index([stockClearanceId])
+  @@index([centralStockId])
 }
 
 model StockClearance {
@@ -554,8 +726,8 @@ model StockClearance {
   centralStockId     String
   centralStock       CentralStock        @relation(fields: [centralStockId], references: [id])
   quantity           Decimal             @db.Decimal(18, 2)
-  fees               Decimal             @db.Decimal(18, 2)
-  amount             Decimal             @db.Decimal(18, 2)
+  fees               Decimal?            @db.Decimal(18, 2)
+  amount             Decimal?            @db.Decimal(18, 2)
   status             StockStateStatus    @default(uncleared)
   clearedBy          String?
   user               User?               @relation(fields: [clearedBy], references: [id])
@@ -566,7 +738,6 @@ model StockClearance {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   centralStockOrders CentralStockOrder[]
-  transactions     StockTransaction[]
 
   @@index([id])
   @@index([centralStockId])
@@ -589,27 +760,40 @@ enum StockStateStatus {
 
 enum StockTransactionType {
   saleOut
-  reconcilliation
+  reconcilliationIn
+  reconcilliationOut
   received
 }
 
 model CentralStockOrder {
-  id           String          @id @default(uuid())
-  siteId       String?
-  site         TblSite?        @relation(fields: [siteId], references: [id])
-  clearanceId  String
-  clearance    StockClearance @relation(fields: [clearanceId], references: [id])
-  quantity     Decimal         @db.Decimal(18, 2)
-  unitPrice    Decimal         @db.Decimal(18, 2)
-  totalPrice   Decimal         @db.Decimal(18, 2)
-  createdBy    String
-  user         User            @relation("CentralStockOrderCreatedByUser", fields: [createdBy], references: [id])
-  approvedBy   String?
-  approvedUser User?           @relation("CentralStockOrderApprovedByUser", fields: [approvedBy], references: [id])
-  approvedAt    DateTime?
-  status       CentralOrderStatus @default(pending)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  id             String                @id @default(uuid())
+  siteId         String?
+  site           TblSite?              @relation(fields: [siteId], references: [id])
+  clearanceId    String
+  clearance      StockClearance        @relation(fields: [clearanceId], references: [id])
+  centralStockId String
+  centralStock   CentralStock          @relation(fields: [centralStockId], references: [id])
+  orderType      CentralStockOrderType
+  quantity       Decimal               @db.Decimal(18, 2)
+  unitPrice      Decimal               @db.Decimal(18, 2)
+  totalPrice     Decimal               @db.Decimal(18, 2)
+  createdBy      String
+  user           User                  @relation("CentralStockOrderCreatedByUser", fields: [createdBy], references: [id])
+  approvedBy     String?
+  approvedUser   User?                 @relation("CentralStockOrderApprovedByUser", fields: [approvedBy], references: [id])
+  approvedAt     DateTime?
+  status         CentralOrderStatus    @default(pending)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  loadedOrders   LoadedOrder[]
+
+  @@index([centralStockId])
+  @@index([clearanceId])
+}
+
+enum CentralStockOrderType {
+  internal
+  b2b
 }
 
 enum CentralOrderStatus {
@@ -631,8 +815,25 @@ model TblSite {
   pumps              TblPump[]
   tblCuves           TblCuve[]
   centralStockOrders CentralStockOrder[]
+  users              UserSites[]
+  discounts          Discount[]
+  rangingDiscounts   RangingDiscount[]
 
   @@index([id])
+}
+
+model UserSites {
+  id        String     @id @default(uuid())
+  userId    String
+  siteId    String
+  status    StatusType @default(active)
+  createdAt DateTime   @default(now())
+  updated   DateTime   @updatedAt
+
+  user User    @relation(fields: [userId], references: [id])
+  site TblSite @relation(fields: [siteId], references: [id])
+
+  @@unique([userId, siteId])
 }
 
 model TblCuve {
@@ -649,7 +850,8 @@ model TblCuve {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  nozzles TblNozzle[]
+  nozzles         TblNozzle[]
+  orderReceptions OrderReception[]
 
   @@index([id])
   @@index([siteId])
@@ -703,4 +905,161 @@ model TblNozzle {
   @@index([pumpId])
   @@index([displayId])
   @@index([cuveId])
+}
+
+model Location {
+  id   String @id @default(uuid())
+  name String
+
+  parentId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent          Location?  @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children        Location[] @relation("LocationHierarchy")
+  clientProvinces Client[]   @relation("ProviceLocationsRef")
+  clientDistricts Client[]   @relation("DistrictLocationRef")
+  clientSectors   Client[]   @relation("SectorLocationRef")
+
+  @@index([parentId])
+}
+
+model CompanyAccount {
+  id          String     @id @default(cuid())
+  code        String     @unique
+  name        String
+  status      StatusType @default(active)
+  createdAtBy String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  user               User                @relation(fields: [createdAtBy], references: [id])
+  walletTransactions walletTransaction[]
+}
+
+model ClientWallet {
+  id                 String              @id @default(cuid())
+  amount             Decimal             @default(0.0) @db.Decimal(18, 2)
+  clientId           String
+  client             Client              @relation(fields: [clientId], references: [id])
+  createdAtBy        String
+  status             StatusType          @default(active)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  user               User                @relation(fields: [createdAtBy], references: [id])
+  walletTransactions walletTransaction[]
+}
+
+model walletTransaction {
+  id               String                         @id @default(uuid())
+  clientWalletId   String
+  wallet           ClientWallet                   @relation(fields: [clientWalletId], references: [id])
+  accountId        String?
+  account          CompanyAccount?                @relation(fields: [accountId], references: [id])
+  referenceId      String?
+  type             WalletTransactionType
+  direction        WalletTransactionDirectionType
+  supportingDocUrl String?
+  amount           Decimal                        @db.Decimal(18, 2)
+  createdAt        DateTime                       @default(now())
+}
+
+enum WalletTransactionDirectionType {
+  IN
+  OUT
+}
+
+enum WalletTransactionType {
+  DEPOSIT
+  PAYMENT
+  REFUND
+  LOAN
+  WITHDRAWAL
+  TRANSFER
+  ADJUSTMENT
+}
+
+model Card {
+  id BigInt @id @default(autoincrement())
+  // `security_category` int(255) DEFAULT NULL COMMENT '1=Ordinary 2=Specific',
+  // `state` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = ready,\r\n0 = busy,\r\n2="card is Blocked"',
+  // `swap_status` int(11) DEFAULT NULL COMMENT '1=used for swap',
+  // `inventory_status` int(255) DEFAULT NULL COMMENT '1="in stock",2="sent to the site" 3="assignrd to the client"',
+  // `updatedAt` date DEFAULT NULL COMMENT 'when we block card this will help to know when ',
+
+  cardNumber       String?   @unique
+  serialNumber     String?   @unique
+  cardCode         String?
+  balance          Decimal   @default(0.0) @db.Decimal(18, 2)
+  availability     Boolean   @default(true)
+  type             CardType?
+  // COMMENT '1=Ordinary 2=Specific',
+  securityCategory Int?
+  state            Int       @default(1)
+  swapStatus       Int?
+  inventoryStatus  Int?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  originalCards CardCopy[] @relation("originalCards")
+  copyCards     CardCopy[] @relation("copyCardFromCard")
+}
+
+enum CardType {
+  prePaid
+  postPaid
+  master
+  royalty
+}
+
+model CardCopy {
+  id         BigInt   @id @default(autoincrement())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id])
+  cardId     BigInt
+  card       Card     @relation("originalCards", fields: [cardId], references: [id])
+  cardCopyId BigInt?
+  copyCard   Card?    @relation("copyCardFromCard", fields: [cardCopyId], references: [id])
+  lastIndex  Int      @default(1)
+  pin        String
+  status     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Discount {
+  id        String       @id @default(uuid())
+  type      DiscountType
+  value     Decimal      @db.Decimal(12, 1)
+  status    StatusType   @default(active)
+  clientId  String?
+  client    Client?      @relation(fields: [clientId], references: [id])
+  siteId    String?
+  site      TblSite?     @relation(fields: [siteId], references: [id])
+  validFrom DateTime
+  validTo   DateTime
+  createdBy String
+  user      User         @relation(fields: [createdBy], references: [id])
+  createdAt DateTime     @default(now())
+
+  rangingDiscounts RangingDiscount[]
+}
+
+enum DiscountType {
+  fixed
+  ranging
+}
+
+model RangingDiscount {
+  id         String     @id @default(uuid())
+  from       Decimal    @db.Decimal(12, 1)
+  to         Decimal    @db.Decimal(12, 1)
+  amount     Decimal    @db.Decimal(12, 1)
+  discountId String
+  discount   Discount   @relation(fields: [discountId], references: [id])
+  siteId     String
+  site       TblSite    @relation(fields: [siteId], references: [id])
+  status     StatusType
+  createdAt  DateTime   @default(now())
 }

@@ -1,11 +1,17 @@
 import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
-import { NotFoundError } from "../../utils/errors.js";
+import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { generatePfiCode } from "../../utils/randomCodegen.js";
 import { CreateCurrancySchema, CreatePfiSchema } from "./pfi.schema.js";
 export class PfiRepository {
   constructor(private db: PrismaClient) {}
-  async list() {
+  async list(startDate: Date, endDate: Date) {
     return await this.db.pfi.findMany({
+      where: {
+        createdAt: {
+          gte: startDate,
+          lte: endDate
+        }
+      },
       orderBy: { createdAt: "desc" },
       select: {
       id: true,
@@ -15,14 +21,23 @@ export class PfiRepository {
       pifCode: true,
       pfiReference: true,
       nominationId: true,
-      rate: true
+      unitPrice: true,
+      supportingDocUrl: true,
+      nomination: true
       },
     });
   }
 
   async create(data: CreatePfiSchema) {
       const pfiCode = generatePfiCode();
-    return await this.db.pfi.create({
+      const existd = await this.findByNomination(data.nominationId);
+      if (existd) throw new BusinessError("400", `The Pfi is Already Created on ${existd.pifCode}`)
+        return await this.db.$transaction(async(tx) => {
+      const status = await tx.nominationTimeLineStatus.findFirst({where: {status: "underLoading"}});
+      if(status){
+        await tx.nominationTimeLine.create({data: { nominationId: data.nominationId, timeLineStatusId: status.id, changedBy: data.createdBy }})
+      }
+      return await tx.pfi.create({
       data: {
         amount: data.amount,
         currancyCode: data.currancyCode,
@@ -30,9 +45,12 @@ export class PfiRepository {
         pifCode: pfiCode,
         currencyId: data.currencyId,
         nominationId: data.nominationId,
-        rate: data.rate
+        unitPrice: data.unitPrice,
+        supportingDocUrl: data.supportingDocUrl
       },
     });
+      });
+
   }
 
   async update(id: string, data: CreatePfiSchema) {
@@ -45,7 +63,8 @@ export class PfiRepository {
         pfiReference: data.pfiReference,
         currencyId: data.currencyId,
         nominationId: data.nominationId,
-        rate: data.rate
+        unitPrice: data.unitPrice,
+        supportingDocUrl: data.supportingDocUrl
       }
     });
   }
@@ -53,6 +72,9 @@ export class PfiRepository {
 
   find(id: string) {
     return this.db.pfi.findUnique({ where: { id } });
+  }
+    findByNomination(nominationId: string) {
+    return this.db.pfi.findFirst({ where: { nominationId } });
   }
 
   async createCurrency(data: CreateCurrancySchema) {

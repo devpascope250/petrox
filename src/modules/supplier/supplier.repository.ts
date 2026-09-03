@@ -1,4 +1,6 @@
 import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { paginationArgs } from "../../shared/pagination/index.js";
+import type { PaginationQuery } from "../../shared/validation/index.js";
 import { NotFoundError } from "../../utils/errors.js";
 import { CreateSupplierSchema, CreateSupplierTypeSchema } from "./supplier.schema.js";
 
@@ -6,8 +8,8 @@ import { CreateSupplierSchema, CreateSupplierTypeSchema } from "./supplier.schem
 export class SupplerRepository {
   constructor(private db: PrismaClient) {}
 
-  async list() {
-    const suppliers = await this.db.supplier.findMany({orderBy: { createdAt: "desc" }, select: {
+  list(query: PaginationQuery) {
+    return  this.db.supplier.findMany({orderBy: { createdAt: "desc" }, select: {
       id: true,
       address: true,
       name: true,
@@ -21,8 +23,7 @@ export class SupplerRepository {
           type: true
         }
       }
-    } });
-     return suppliers;
+      } })
   }
 
   create(data: CreateSupplierSchema) {
@@ -59,8 +60,11 @@ export class SupplerRepository {
 
   // for Supplier Type
 
-  listSupplierType() {
-    return this.db.supplierType.findMany({orderBy: {createdAt: "desc"}, select: {id: true, type: true, status: true}});
+  listSupplierType(query: PaginationQuery) {
+    return this.db.$transaction([
+      this.db.supplierType.findMany({...paginationArgs(query), orderBy: {createdAt: "desc"}, select: {id: true, type: true, status: true}}),
+      this.db.supplierType.count()
+    ]);
   }
 
   createSupplierType(data: CreateSupplierTypeSchema) {

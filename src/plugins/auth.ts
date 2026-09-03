@@ -9,12 +9,17 @@ export default fp(async (app) => {
     try {
       await request.jwtVerify();
       const user = await authRepo.findUserById(request.user.sub);
+      if(!user) throw unauthorized();
       const permissions = user?.role ? user.role.permissions.map((item) => item.permission.code) : null;
+      const siteId = (user?.sites && user?.sites?.length > 0) ? user.sites[0].siteId : null;
       request.contextUser = {
         userId: request.user.sub,
         roleId: request.user.roleId,
         role: request.user.role,
-        permissions: (permissions as readonly string[])
+        permissions: (permissions as readonly string[]),
+        position: user.position,
+        clientId: user?.clientId,
+        siteId: siteId
       };
     } catch {
       throw unauthorized("Invalid or expired access token");

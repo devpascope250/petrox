@@ -1,21 +1,37 @@
 import type { AppConfig } from "../../config/env.js";
+import { DatesQuerySchema } from "../../shared/validation/primitives.js";
+import { within2DaysPeriod } from "../../utils/utils.js";
 import { PfiRepository } from "./pfi.repository.js";
 import { CreateCurrancySchema, CreatePfiSchema } from "./pfi.schema.js";
 export class PfiService {
   constructor(private repo: PfiRepository, private config: AppConfig) {
   }
 
-  async list() {
-    return await this.repo.list();
+  async list(date: DatesQuerySchema) {
+    const dates = within2DaysPeriod(date.startDate, date.endDate);
+    const pfis = await this.repo.list(dates.startDate, dates.endDate);
+    return pfis.map((pfi) => this.withDocumentUrl(pfi));
   }
-  find(id: string) { return this.repo.find(id); }
+  async find(id: string) {
+    const pfi = await this.repo.find(id);
+    return pfi ? this.withDocumentUrl(pfi) : pfi;
+  }
 
   async create(input: CreatePfiSchema) {
-    return this.repo.create(input);
+    return this.withDocumentUrl(await this.repo.create(input));
   }
 
   async update(id: string, input: CreatePfiSchema) {
-    return await this.repo.update(id, input);
+    return this.withDocumentUrl(await this.repo.update(id, input));
+  }
+
+  private withDocumentUrl<T extends { supportingDocUrl: string | null }>(pfi: T): T {
+    return {
+      ...pfi,
+      supportingDocUrl: pfi.supportingDocUrl
+        ? new URL(pfi.supportingDocUrl, this.config.APP_URL).toString()
+        : null,
+    };
   }
 
   async updateCurrency(id: string, input: CreateCurrancySchema) {

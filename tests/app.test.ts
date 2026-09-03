@@ -4,7 +4,15 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/plugins/prisma.js", () => ({
-  default: fp(async (app) => { app.decorate("prisma", {} as PrismaClient); }, { name: "prisma" })
+  default: fp(async (app) => {
+    app.decorate("prisma", {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          role: { permissions: [{ permission: { code: "users.read" } }] }
+        })
+      }
+    } as unknown as PrismaClient);
+  }, { name: "prisma" })
 }));
 
 import { buildApp } from "../src/app.js";
@@ -91,11 +99,11 @@ describe("HTTP API", () => {
       sub: "user-id",
       roleId: "role-id",
       role: "Manager",
-      permissions: ["users.read"]
+      // permissions: ["users.read"]
     });
     const response = await request(app.server)
       .get("/__test/context-user")
-      .set("authorization", `Bearer ${token}`);
+      .set("Cookie", `access_token=${token}`);
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       success: true,
@@ -103,6 +111,4 @@ describe("HTTP API", () => {
     });
   });
 });
-
-
 

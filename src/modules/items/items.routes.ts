@@ -7,7 +7,7 @@ import { createItemSchema, createUnitSchema } from "./items.schema.js";
 
 const routes: FastifyPluginAsync = async (app) => {
   const service = new ItemsService(new ItemsRepository(app.prisma), app.config);
-  app.get("/", { preHandler: [app.authenticate, app.authorize("items.read", "items.manage")] }, async (request) =>
+  app.get("/", { preHandler: [app.authenticate, app.authorize("items.read","stockout.orders.create", "items.manage")] }, async (request) =>
     success(await service.list()));
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("items.read", "items.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));

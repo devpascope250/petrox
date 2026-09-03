@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { moduleSeeds } from "../prisma/seed-data.js";
+import { moduleSeeds, validateModuleSeeds } from "../prisma/seed-data.js";
 
 describe("module seed catalogue", () => {
   it("uses unique module and permission codes", () => {
@@ -10,13 +10,15 @@ describe("module seed catalogue", () => {
   });
 
   it("references existing parent modules", () => {
-    const moduleCodes = new Set(moduleSeeds.map((module) => module.code));
+    const moduleIds = new Set(moduleSeeds.map((module) => module.id));
     for (const module of moduleSeeds) {
-      if (module.parentCode) expect(moduleCodes.has(module.parentCode)).toBe(true);
+      if (module.parentId) expect(moduleIds.has(module.parentId)).toBe(true);
     }
   });
 
-  it("provides permissions for every sidebar module", () => {
-    expect(moduleSeeds.every((module) => module.permissions.length > 0)).toBe(true);
+  it("matches the validated 39-node sidebar catalogue", () => {
+    expect(() => validateModuleSeeds()).not.toThrow();
+    expect(moduleSeeds).toHaveLength(39);
+    expect(moduleSeeds.flatMap((module) => module.permissions)).toHaveLength(184);
   });
 });

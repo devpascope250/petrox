@@ -1,13 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { created, success } from "../../shared/http/index.js";
-import { idParamsSchema, parseInput } from "../../shared/validation/index.js";
+import { idParamsSchema, paginationQuerySchema, parseInput } from "../../shared/validation/index.js";
 import { SupplierService } from "./supplier.service.js";
 import { SupplerRepository } from "./supplier.repository.js";
 import { createSupplierSchema, createSupplierTypeSchema } from "./supplier.schema.js";
 const routes: FastifyPluginAsync = async (app) => {
   const service = new SupplierService(new SupplerRepository(app.prisma), app.config);
   app.get("/", { preHandler: [app.authenticate, app.authorize("suppliers.read", "suppliers.manage")] }, async (request) =>
-    success(await service.list()));
+    success(await service.list(parseInput(paginationQuerySchema, request.query))));
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("suppliers.read", "suppliers.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));
   app.post("/", { preHandler: [app.authenticate, app.authorize("suppliers.create", "suppliers.manage")] }, async (request, reply) =>
@@ -20,7 +20,7 @@ const routes: FastifyPluginAsync = async (app) => {
     created(reply, await service.updateSupplierStatus(parseInput(idParamsSchema, request.params).id)));
 
     app.get("/supplier-type", { preHandler: [app.authenticate, app.authorize("suppliers.type.read", "suppliers.type.manage")] }, async (request, reply) =>
-      success(await service.listSupplierType()));
+      success(await service.listSupplierType(parseInput(paginationQuerySchema, request.query))));
 
     app.get("/supplier-type/:id", { preHandler: [app.authenticate, app.authorize("suppliers.type.read", "suppliers.type.manage")] }, async (request, reply) =>
       success(await service.findSupplierType(parseInput(idParamsSchema, request.params).id)));

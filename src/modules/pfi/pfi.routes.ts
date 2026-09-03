@@ -1,15 +1,16 @@
 import type { FastifyPluginAsync } from "fastify";
 import { created, success } from "../../shared/http/index.js";
-import { idParamsSchema, parseInput } from "../../shared/validation/index.js";
+import { datesQuerySchema, idParamsSchema, parseInput } from "../../shared/validation/index.js";
 import { PfiService } from "./pfi.service.js";
 import { PfiRepository } from "./pfi.repository.js";
 import { createCurrancySchema, createPfiSchema } from "./pfi.schema.js";
+import { parsePfiMultipart } from "./pfi-upload.js";
 const routes: FastifyPluginAsync = async (app) => {
   const service = new PfiService(new PfiRepository(app.prisma), app.config);
   app.get(
     "/",
     { preHandler: [app.authenticate, app.authorize("pfi.read", "pfi.manage")] },
-    async (request) => success(await service.list()),
+    async (request) => success(await service.list(parseInput(datesQuerySchema, request.query))),
   );
   app.get(
     "/:id",
@@ -24,23 +25,31 @@ const routes: FastifyPluginAsync = async (app) => {
     {
       preHandler: [app.authenticate, app.authorize("pfi.create", "pfi.manage")],
     },
-    async (request, reply) =>
-      created(
+    async (request, reply) => {
+      const body = request.isMultipart()
+        ? await parsePfiMultipart(request)
+        : request.body;
+      return created(
         reply,
-        await service.create(parseInput(createPfiSchema, request.body)),
-      ),
+        await service.create(parseInput(createPfiSchema, {...(body) as object, createdBy: request.contextUser?.userId})),
+      );
+    },
   );
   app.put(
     "/:id",
     { preHandler: [app.authenticate, app.authorize("pfi.edit", "pfi.manage")] },
-    async (request, reply) =>
-      created(
+    async (request, reply) => {
+      const body = request.isMultipart()
+        ? await parsePfiMultipart(request)
+        : request.body;
+      return created(
         reply,
         await service.update(
           parseInput(idParamsSchema, request.params).id,
-          parseInput(createPfiSchema, request.body),
+          parseInput(createPfiSchema, body),
         ),
-      ),
+      );
+    },
   );
 
   app.get(

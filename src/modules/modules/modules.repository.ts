@@ -1,6 +1,8 @@
 import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { paginationArgs } from "../../shared/pagination/index.js";
+import type { PaginationQuery } from "../../shared/validation/index.js";
 import { generatingPermissions } from "../../utils/utils.js";
-import { ModuleItemsSchemaBody, ModuleSchemaBody } from "./module.schema.js";
+import { ModuleItemsSchemaBody, ModuleSchemaBody, ModuleSortingSchema, UpdateModuleSchemaBody } from "./module.schema.js";
 import type { ModuleAccessRow } from "./modules.types.js";
 
 export class ModulesRepository {
@@ -53,25 +55,37 @@ export class ModulesRepository {
     return await this.db.module.findUnique({ where: { id } });
   }
 
-  async findAll() {
-    return await this.db.module.findMany({
-      include: {
-        permissions: true,
-        children: {
-          include: {
-            permissions: true,
-          }
-        }
-      },
-    });
+  async updateSorting(data: ModuleSortingSchema) {
+    return await this.db.$transaction(async(tx) => {
+      for (const md of data) {
+        await tx.module.update({where: {id: md.categoryId}, data: {sorting: md.sortingNumber}})
+      }
+    })
   }
 
-  async update(id: string, data: ModuleItemsSchemaBody) {
+  async findAll() {
+    return await this.db.module.findMany({
+        orderBy: { sorting: "asc" },
+        include: {
+          permissions: true,
+          children: {
+            include: {
+              permissions: true,
+            }
+          }
+        },
+      })
+  }
+
+  async update(id: string, data: UpdateModuleSchemaBody) {
     return await this.db.module.update({
       where: {
         id,
       },
-      data: data,
+      data: {
+        name: data.name,
+        icon: data.icon
+      },
     });
   }
 }

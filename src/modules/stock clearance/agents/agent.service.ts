@@ -23,4 +23,6 @@ export class ClearanceAgentService {
     return await this.repo.changeStatus(id);
   }
 
+  delete(id: string) { return this.repo.delete(id); }
+
 }

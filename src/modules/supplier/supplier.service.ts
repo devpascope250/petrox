@@ -1,12 +1,14 @@
 import type { AppConfig } from "../../config/env.js";
+import { paginatedData } from "../../shared/pagination/index.js";
+import type { PaginationQuery } from "../../shared/validation/index.js";
 import { SupplerRepository } from "./supplier.repository.js";
 import { CreateSupplierSchema, CreateSupplierTypeSchema } from "./supplier.schema.js";
 
 export class SupplierService {
   constructor(private repo: SupplerRepository, private config: AppConfig) {}
 
-  async list() {
-    return await this.repo.list();
+  async list(query: PaginationQuery) {
+    return await this.repo.list(query);
   }
 
   find(id: string) { return this.repo.find(id); }
@@ -20,8 +22,9 @@ export class SupplierService {
   }
 
 
-  listSupplierType() {
-    return this.repo.listSupplierType();
+  async listSupplierType(query: PaginationQuery) {
+    const [items, total] = await this.repo.listSupplierType(query);
+    return paginatedData(items, total, query);
   }
 
   findSupplierType(id: string){

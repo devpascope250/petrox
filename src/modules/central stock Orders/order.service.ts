@@ -1,72 +1,67 @@
+import { CentralOrderStatus } from "../../../prisma/generated/prisma/enums.js";
 import type { AppConfig } from "../../config/env.js";
-import { NotFoundError } from "../../utils/errors.js";
+import type { AuthUser } from "../../shared/auth/context-user.js";
+import { paginatedData } from "../../shared/pagination/index.js";
+import { forbidden } from "../../utils/errors.js";
 import { within2DaysPeriod } from "../../utils/utils.js";
-import { calculatingRemainStock } from "../central-stock/central-stock.repository.js";
 import { CentralStockOrderRepository } from "./order.repository.js";
-import { CreateCentralStockOrderSchema } from "./order.schema.js";
+import { CentralStockOrderReportQuerySchema, CreateCentralStockOrderSchema, CreateLoadingOrderSchema, LoadingOrderStatusSchema, ReceptionOrdersQuerySchema, ReceiveLoadingOrderSchema } from "./order.schema.js";
+
 export class CentralStockOrderService {
   constructor(private repo: CentralStockOrderRepository, private config: AppConfig) {}
-
-  async list(startDate?: Date, endDate?: Date) {
-    const dates = within2DaysPeriod(startDate, endDate);
-    return await this.repo.list(dates.startDate, dates.endDate);
+  async list(query: CentralStockOrderReportQuerySchema) {
+    const dates = within2DaysPeriod(query.startDate, query.endDate);
+    const report = await this.repo.list({ ...query, ...dates });
+    return {
+      ...report,
+      orders: report.orders.map((order) => ({
+        ...order,
+        clearance: {
+          ...order.clearance,
+          supportingDocUrl: this.documentUrl(order.clearance.supportingDocUrl),
+          dmsDocUrl: this.documentUrl(order.clearance.dmsDocUrl),
+        },
+      })),
+    };
+  }
+  find(id: string) { return this.repo.find(id); }
+  create(input: CreateCentralStockOrderSchema) { return this.repo.create(input); }
+  listLoadingOrders() { return this.repo.listLoadingOrders(); }
+  createLoadingOrders(input: CreateLoadingOrderSchema) { return this.repo.createLoadingOrders(input); }
+  updateLoadingOrderStatus(id: string, input: LoadingOrderStatusSchema) {
+    return this.repo.updateLoadingOrderStatus(id, input);
   }
 
-  find(id: string) { return this.repo.find(id); }
+  async listReceptionOrders(query: ReceptionOrdersQuerySchema, actor: AuthUser) {
+    this.assertReceptionAccess(actor);
+    const siteId = actor.position === "siteManager" ? this.requireSite(actor) : undefined;
+    const [items, total] = await this.repo.listReceptionOrders(query, siteId);
+    return paginatedData(items, total, query);
+  }
 
+  async receiveLoadingOrder(id: string, input: ReceiveLoadingOrderSchema, actor: AuthUser) {
+    if (actor.position !== "siteManager") {
+      throw forbidden("Only site managers can receive loading orders into a cuve");
+    }
+    return this.repo.receiveLoadingOrder(id, input, this.requireSite(actor), actor.userId);
+  }
 
-  async create(input: CreateCentralStockOrderSchema) {
-    const item = await this.repo.getItemsByItemIdQTYStatus(input.itemId, input.orderType === "internal" ? "cleared" : "uncleared");
-        if (!item || item.length === 0) {
-          throw new NotFoundError("No stock available for the specified item.");
-        }
-        let remainingQuantity = input.quantity;
-        const removedStock: { centralStockId: string, clearanceId: string, quantity: number}[] = [];
-    
-        for (const s of item) {
-          if (remainingQuantity <= 0) break;
-          // sort the stockClearances by createdAt in ascending order
-          const sortedClearances = s.stockClearances.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-           for (const clearance of sortedClearances) {
-            const transactions = clearance.transactions;
-            const stock = calculatingRemainStock(transactions);
-            if (stock >= remainingQuantity) {
-              removedStock.push({ centralStockId: s.id, clearanceId: clearance.id, quantity: remainingQuantity});
-              remainingQuantity = 0;
-              break; // exit the inner loop if the order is fulfilled
-            } else {
-              removedStock.push({ centralStockId: s.id, clearanceId: clearance.id, quantity: remainingQuantity -= stock});
-              remainingQuantity -= stock;
-            }
-          }
-        }
-    
-        if (remainingQuantity > 0) {
-          throw new NotFoundError("Not enough stock available to fulfill the order.");
-        }
-        const transaction = removedStock.map((stock) => {
-          return  {
-            quantity: stock.quantity,
-            clearanceId: stock.clearanceId,
-            createdBy: input.createdBy,
-          }
-        });
-        const orders = removedStock.map((stock) => {
-          const orderData: Omit<CreateCentralStockOrderSchema, 'itemId'> = {
-            clearanceId: stock.clearanceId,
-            quantity: stock.quantity,
-            unitPrice: input.unitPrice,
-            totalPrice: stock.quantity * input.unitPrice,
-            createdBy: input.createdBy,
-            approvedBy: input.approvedBy,
-            status: input.status,
-            orderType: input.orderType,
-            siteId: input.siteId
-          }
-          return  orderData;
-        });
+  private documentUrl(path: string | null) {
+    return path ? `${this.config.APP_URL}${path}` : null;
+  }
 
-        return await this.repo.create(orders, transaction);
-      }
+  private assertReceptionAccess(actor: AuthUser) {
+    if (actor.position !== "superAdmin" && actor.position !== "siteManager") {
+      throw forbidden("Only super administrators and site managers can view reception orders");
+    }
+  }
 
+  private requireSite(actor: AuthUser) {
+    if (!actor.siteId) throw forbidden("Your user account is not assigned to an active site");
+    return actor.siteId;
+  }
+
+  changeOrderStatus(id: string, status: CentralOrderStatus) {
+    return this.repo.changeOrderStatus(id, status);
+  }
 }

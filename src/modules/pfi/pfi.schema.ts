@@ -9,13 +9,15 @@ export const createPfiSchema = z.object({
   currancyCode: nonEmptyNameSchema,
   amount: z.coerce.number(),
   pfiReference: nonEmptyNameSchema,
-  rate: z.coerce.number()
+  unitPrice: z.coerce.number(),
+  supportingDocUrl: z.string().optional(),
+  createdBy: z.string().optional()
 });
 
 export const createCurrancySchema = z.object({
   code: nonEmptyNameSchema,
   name: nonEmptyNameSchema,
-  rate: z.coerce.number()
+  rate: z.coerce.number(),
 });
 
 export type CreateCurrancySchema = z.infer<typeof createCurrancySchema>;

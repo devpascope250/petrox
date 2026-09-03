@@ -1,5 +1,5 @@
 import type { PrismaClient } from "../../../../prisma/generated/prisma/client.js";
-import { NotFoundError } from "../../../utils/errors.js";
+import { BusinessError, NotFoundError } from "../../../utils/errors.js";
 import { CreateClearingAgentSchema } from "./agent.schema.js";
 export class ClearanceAgentRepository {
   constructor(private db: PrismaClient) {}
@@ -50,5 +50,16 @@ export class ClearanceAgentRepository {
 
   find(id: string) {
     return this.db.clearingAgent.findUnique({ where: { id } });
+  }
+
+  async delete(id: string) {
+    const agent = await this.db.clearingAgent.findUnique({
+      where: { id }, select: { _count: { select: { stockClearances: true } } },
+    });
+    if (!agent) throw new NotFoundError("Clearing agent not found");
+    if (agent._count.stockClearances > 0) {
+      throw new BusinessError("400", "An agent used by a clearance cannot be deleted; deactivate it instead");
+    }
+    return this.db.clearingAgent.delete({ where: { id } });
   }
 }

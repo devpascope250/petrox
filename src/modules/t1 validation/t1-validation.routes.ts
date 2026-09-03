@@ -4,6 +4,7 @@ import {
   cargoReceivedDatePamasSchema,
   cargoStatusPamasSchema,
   cuidParamsSchema,
+  datesQuerySchema,
   id2ParamsSchema,
   idParamsSchema,
   parseInput,
@@ -27,7 +28,18 @@ const routes: FastifyPluginAsync = async (app) => {
         app.authorize("t1.validation.read", "t1.validation.manage"),
       ],
     },
-    async (request) => success(await service.list()),
+    async (request) => success(await service.list(parseInput(datesQuerySchema, request.query))),
+  );
+
+    app.get(
+    "/confirmed/validations",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("t1.validation.read", "t1.validation.manage"),
+      ],
+    },
+    async () => success(await service.listByCompleted()),
   );
   app.get(
     "/:id",
@@ -98,7 +110,7 @@ const routes: FastifyPluginAsync = async (app) => {
         }
       }
 
-      const input = parseInput(createT1ValidationsSchema, fields);
+      const input = parseInput(createT1ValidationsSchema, {...fields, createdBy: request?.contextUser?.userId });
 
       if (uploadedFile) {
         input.supportingDocUrl = `/uploads/${uploadedFile.filename}`;

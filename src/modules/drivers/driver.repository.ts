@@ -1,11 +1,15 @@
 import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { paginationArgs } from "../../shared/pagination/index.js";
+import type { PaginationQuery } from "../../shared/validation/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { CreateDriverSchema } from "./deriver.schema.js";
 export class DriverRepository {
   constructor(private db: PrismaClient) {}
 
-  async list() {
-    return await this.db.driver.findMany({
+  list(query: PaginationQuery) {
+    return this.db.$transaction([
+      this.db.driver.findMany({
+      ...paginationArgs(query),
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -32,7 +36,9 @@ export class DriverRepository {
          }
        }
       },
-    });
+      }),
+      this.db.driver.count()
+    ]);
   }
 
   create(data: CreateDriverSchema) {
