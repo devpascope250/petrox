@@ -18,17 +18,11 @@ export const createCentralStockOrderSchema = z
   .object({
     itemId: uuidSchema,
     orderType: z.enum(["internal", "b2b"]).default("internal"),
-
     siteId: z.uuid().optional(),
-
     quantity: z.coerce.number().positive(),
-
     unitPrice: z.coerce.number().nonnegative(),
-
     totalPrice: z.coerce.number().nonnegative().optional(),
-
     createdBy: z.uuid(),
-
     approvedBy: z.uuid().optional(),
 
     status: z

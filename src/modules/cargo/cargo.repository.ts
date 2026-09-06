@@ -1,6 +1,6 @@
 import type { CargoStatus, PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { CreateCargoSchema, FileSchema } from "./cargo.schema.js";
+import { CreateCargoSchema } from "./cargo.schema.js";
 export class CargoRepository {
   constructor(private db: PrismaClient) {}
   async list() {
@@ -31,7 +31,7 @@ export class CargoRepository {
             itemId: true
           }
         },
-
+        cargoInvoices: true
       },
     });
   }

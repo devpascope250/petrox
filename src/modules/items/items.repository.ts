@@ -9,7 +9,7 @@ export class ItemsRepository {
   constructor(private db: PrismaClient) {}
 
   async list() {
-    const items = await this.db.item.findMany({orderBy: { createdAt: "desc" } });
+    const items = await this.db.item.findMany({orderBy: { createdAt: "desc" }, include: {toleranceRates: {where: {status: "active"}}} });
      return items;
   }
 

@@ -1,4 +1,4 @@
-import type { PrismaClient, StockTransaction } from "../../../prisma/generated/prisma/client.js";
+import type { Prisma, PrismaClient, StockTransaction } from "../../../prisma/generated/prisma/client.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import {
   CentralStockReportQuerySchema,
@@ -27,15 +27,23 @@ export class CentralStockRepository {
         ...(itemId && { itemId }),
       },
       select: {
-        id: true, quantity: true, supportingDocUrl: true, status: true, createdAt: true, updatedAt: true,
+        id: true, 
+        ambQuantity: true, 
+        quantityAt20C: true, 
+        status: true, 
+        createdAt: true, 
+        updatedAt: true,
+        gainQty: true, 
+        lossQty: true,
+        toleranceRate: true,
         item: { select: {
-          id: true, name: true, descriptions: true, status: true,
+          id: true, name: true, descriptions: true, status: true, toleranceRates: true,
           baseUnit: { select: { id: true, name: true, code: true } },
         } },
         deport: { select: { id: true, name: true, location: true, type: true, status: true } },
         t1Validation: { select: {
           id: true, exportingCountry: true, supportingDocUrl: true, createdAt: true,
-          nomination: { select: { id: true, quantity: true, destination: true, expectedLoadingDate: true } },
+          nomination: { select: { id: true, ambQuantity: true, quantityAt20C: true, destination: true, expectedLoadingDate: true } },
         } },
         transactions: {
           orderBy: { createdAt: "desc" },
@@ -59,6 +67,14 @@ export class CentralStockRepository {
     });
 
     const report = new Map<string, {
+      id: string;
+      ambQuantity: Prisma.Decimal;
+      quantityAt20C: Prisma.Decimal;
+      supportingDocUrl: string | null;
+      status: string;
+      gainQty: Prisma.Decimal | null;
+      lossQty: Prisma.Decimal | null;
+      toleranceRate: Prisma.Decimal | null;
       item: typeof centralStocks[number]["item"];
       summary: {
         totalQuantity: number;
@@ -99,6 +115,13 @@ export class CentralStockRepository {
       let itemReport = report.get(stock.item.id);
       if (!itemReport) {
         itemReport = {
+          id: stock.id, 
+          ambQuantity: stock.ambQuantity, 
+          quantityAt20C: stock.quantityAt20C, 
+          status: stock.status, 
+        gainQty: stock.gainQty, 
+        lossQty: stock.lossQty,
+        toleranceRate: stock.toleranceRate,
           item: stock.item,
           summary: {
             totalQuantity: 0,
@@ -143,7 +166,7 @@ export class CentralStockRepository {
         };
       });
 
-      const quantity = Number(stock.quantity);
+      const quantity = Number(stock.quantityAt20C);
       const remainingQuantity = (receivedQuantity + reconciledInQuantity) - (soldOutQuantity + reconciledOutQuantity);
       const availableCleared = Math.max(0, stock.stockClearances
         .filter((clearance) => clearance.status === "cleared")
@@ -178,6 +201,7 @@ export class CentralStockRepository {
   async create(data: CreateCentralStockSchema) {
     const stock = await this.db.centralStock.findFirst({ where: { t1ValidationId: data.t1ValidationId } });
     if (stock) throw new BusinessError("400", "Can not Restock This T1 Validation");
+    // const existed
     return await this.db.$transaction(async (tx) => {
       const nomination = await this.db.t1Validation.findFirst({ where: { id: data.t1ValidationId }, select: {nominationId: true} });
       const status = await tx.nominationTimeLineStatus.findFirst({where: {status: "stockReceived"}});
@@ -187,9 +211,21 @@ export class CentralStockRepository {
 
       return await tx.centralStock.create({
       data: {
-        quantity: data.quantity, deportId: data.deportId, t1ValidationId: data.t1ValidationId, itemId: data.itemId,
-        transactions: { create: { quantity: data.quantity, type: "received", createdBy: data.createdBy } },
+        ambQuantity: data.ambQuantity, 
+        quantityAt20C: data.quantityAt20C,
+        deportId: data.deportId, 
+        t1ValidationId: data.t1ValidationId, 
+        itemId: data.itemId,
+        transactions: { 
+          create: { 
+            quantity: data.quantityAt20C, 
+            type: "received", 
+            createdBy: data.createdBy 
+          } },
         supportingDocUrl: data.supportingDocUrl,
+        gainQty: data.gainQty,
+        lossQty: data.lossQty,
+        toleranceRate: data.toleranceRate
       },
     })});
   }
@@ -217,7 +253,7 @@ export class CentralStockRepository {
   return await this.db.$transaction(async(tx) => {
     const stock = await tx.centralStock.findUnique({
       where: { id: data.centralStockId },
-      select: { quantity: true, transactions: { select: { quantity: true, type: true } },
+      select: { quantityAt20C: true, transactions: { select: { quantity: true, type: true } },
         stockClearances: { select: { quantity: true } } },
     });
     if (!stock) throw new NotFoundError("Central stock not found");
@@ -227,7 +263,7 @@ export class CentralStockRepository {
         throw new BusinessError("400", `The Remaining Stock is ${remaining} but you're Reconciling ${data.quantity}`);
       }
       const allocated = stock.stockClearances.reduce((sum, row) => sum + Number(row.quantity), 0);
-      if (Number(stock.quantity) - data.quantity < allocated) {
+      if (Number(stock.quantityAt20C) - data.quantity < allocated) {
         throw new BusinessError("400", "Reconciliation would reduce stock below cleared or sold allocations");
       }
     }
@@ -241,7 +277,7 @@ export class CentralStockRepository {
           id: data.centralStockId,
         },
         data: {
-          quantity: {
+          quantityAt20C: {
           ...(data.reconciliationType === "reconcilliationIn" ? {
             increment: data.quantity
           }: {decrement: data.quantity})}
@@ -250,9 +286,12 @@ export class CentralStockRepository {
     );
 
     return await tx.stockTransaction.create({ data: {
-      centralStockId: data.centralStockId, quantity: data.quantity,
-      type: data.reconciliationType, createdBy: data.createdBy,
-      note: data.note, supportingDocUrl: data.supportingDocUrl
+      centralStockId: data.centralStockId, 
+      quantity: data.quantity,
+      type: data.reconciliationType, 
+      createdBy: data.createdBy,
+      note: data.note, 
+      supportingDocUrl: data.supportingDocUrl
     }})
   })
 }

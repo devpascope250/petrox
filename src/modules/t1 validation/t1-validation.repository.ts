@@ -47,7 +47,8 @@ export class T1ValidationRepository {
         nomination: {
           select: {
             id: true,
-            quantity: true,
+            ambQuantity: true,
+            quantityAt20C: true,
             stockId: true,
             timeLine: true,
             stock: {

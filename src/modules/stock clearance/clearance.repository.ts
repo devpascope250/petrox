@@ -11,7 +11,18 @@ export class StockClearanceRepository {
       select: {
         id: true,
         quantity: true,
-        centralStock: { select: { id: true, itemId: true, quantity: true, createdAt: true } },
+        centralStock: { 
+          select: { 
+            id: true, 
+            itemId: true, 
+            ambQuantity: true, 
+            quantityAt20C: true,
+            gainQty: true,
+            lossQty: true,
+            toleranceRate: true,
+            createdAt: true 
+          }, 
+        },
         agentId: true,
         agent: true,
         status: true,
@@ -38,7 +49,7 @@ export class StockClearanceRepository {
         if (agent.status !== "active") throw new BusinessError("400", "Clearing agent is inactive");
       }
       const stockSelect = {
-        id: true, itemId: true, status: true, quantity: true,
+        id: true, itemId: true, status: true,  ambQuantity: true, quantityAt20C: true,
         transactions: { select: { quantity: true, type: true } },
         stockClearances: { select: { quantity: true, status: true,
           centralStockOrders: { select: { quantity: true } } } },
@@ -80,7 +91,7 @@ export class StockClearanceRepository {
           .filter((row) => row.status === "cleared")
           .reduce((balance, row) => balance + Number(row.quantity)
             - row.centralStockOrders.reduce((sold, order) => sold + Number(order.quantity), 0), 0);
-        const legalUncleared = Number(stock.quantity) - allocated;
+        const legalUncleared = Number(stock.quantityAt20C) - allocated;
         const physicalUncleared = physicalRemaining - Math.max(0, clearedRemaining);
         const available = Math.max(0, Math.min(legalUncleared, physicalUncleared));
         const quantity = Math.min(available, requested);

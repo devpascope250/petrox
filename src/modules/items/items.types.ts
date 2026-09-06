@@ -1,3 +1,6 @@
+import { Prisma } from "../../../prisma/generated/prisma/client.js";
+import { StatusType } from "../../../prisma/generated/prisma/enums.js";
+
 export interface ItemsAccessRow {
   id: string;
   name: string;
@@ -12,4 +15,11 @@ export interface ItemsList {
   descriptions?: string;
   baseUnitId?: string;
   items: ItemsList[];
+  tolerance?: {
+    id: string;
+    createdAt: Date;
+    updatedAt: Date;
+    status: StatusType;
+    maxRate: Prisma.Decimal;
+  } | null;
 }

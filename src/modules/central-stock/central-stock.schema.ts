@@ -23,11 +23,16 @@ export type CentralStockReportQuerySchema = z.infer<typeof centralStockReportQue
 export const createCentralStockSchema = z.object({
   deportId: uuidSchema,
   itemId:  uuidSchema,
-  quantity: z.coerce.number(),
+  ambQuantity: z.coerce.number(),
+  quantityAt20C: z.coerce.number(),
   supportingDocUrl: z.string().optional().nullable(),
   t1ValidationId: uuidSchema,
   status:  z.enum(CentralStockStatus).default("inStock").optional(),
-  createdBy: uuidSchema
+  createdBy: uuidSchema,
+  toleranceRate: z.coerce.number().optional(),
+  lossQty: z.coerce.number().optional(),
+  gainQty: z.coerce.number().optional()
+
 });
 
 export const stockTransactionSchema = z.object({
