@@ -4,6 +4,8 @@ import { paginationQuerySchema, parseInput } from "../../shared/validation/index
 import { ClientWalletRepository } from "./client-wallet.repository.js";
 import {
   clientWalletParamsSchema,
+  transferWalletToCardSchema,
+  buyWalletCouponsSchema,
   createClientWalletSchema,
   createWalletMovementSchema,
   walletMovementQuerySchema
@@ -13,6 +15,26 @@ import { parseWalletMovementMultipart } from "./client-wallet-upload.js";
 
 const routes: FastifyPluginAsync = async (app) => {
   const service = new ClientWalletService(new ClientWalletRepository(app.prisma));
+
+  app.post(
+    "/:id/transfer-to-card",
+    { preHandler: [app.authenticate, app.authorize("client.wallets.edit")] },
+    async (request, reply) => created(reply, await service.transferToCard(
+      parseInput(clientWalletParamsSchema, request.params).id,
+      parseInput(transferWalletToCardSchema, request.body),
+      request.contextUser!
+    ))
+  );
+
+  app.post(
+    "/:id/buy-coupons",
+    { preHandler: [app.authenticate, app.authorize("client.wallets.edit")] },
+    async (request, reply) => created(reply, await service.buyCoupons(
+      parseInput(clientWalletParamsSchema, request.params).id,
+      parseInput(buyWalletCouponsSchema, request.body),
+      request.contextUser!
+    ))
+  );
 
   app.get(
     "/",
@@ -67,7 +89,7 @@ const routes: FastifyPluginAsync = async (app) => {
     async (request, reply) => {
       const body = request.isMultipart()
         ? await parseWalletMovementMultipart(request)
-        : { ...(request.body as Record<string, unknown>), supportingDocUrl: undefined };
+        : request.body;
       return created(reply, await service.createMovement(
         parseInput(clientWalletParamsSchema, request.params).id,
         parseInput(createWalletMovementSchema, body),

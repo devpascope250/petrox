@@ -41,6 +41,8 @@ import ClientWalletRoutes from "./modules/client-wallets/client-wallet.routes.js
 import CardsRoutes from "./modules/cards/cards.routes.js";
 import ClientsRoutes from "./modules/clients/clients.routes.js";
 import DiscountRoutes from "./modules/discounts/discount.routes.js";
+import CouponPlanRoutes from "./modules/coupon-plans/coupon-plan.routes.js";
+import ClientCouponRoutes from "./modules/client-coupons/client-coupon.routes.js";
 import authPlugin from "./plugins/auth.js";
 import jwtPlugin from "./plugins/jwt.js";
 import prismaPlugin from "./plugins/prisma.js";
@@ -104,6 +106,8 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(CardsRoutes, { prefix: "/api/v1/cards" });
   await app.register(ClientsRoutes, { prefix: "/api/v1/clients" });
   await app.register(DiscountRoutes, { prefix: "/api/v1/discounts" });
+  await app.register(CouponPlanRoutes, { prefix: "/api/v1/coupon-plans" });
+  await app.register(ClientCouponRoutes, { prefix: "/api/v1/client-coupons" });
   app.setNotFoundHandler((request, reply) => reply.code(404).send({ success: false, error: { statusCode: 404, code: "ROUTE_NOT_FOUND", message: `Route ${request.method} ${request.url} not found`, requestId: request.id } }));
   return app;
 }

@@ -96,9 +96,10 @@ export class AuthorizerRepository {
           ...loadedOrder,
           quantity: Number(loadedOrder.quantity),
           order: { ...loadedOrder.order, quantity: Number(loadedOrder.order.quantity),
-            unitPrice: Number(loadedOrder.order.unitPrice), totalPrice: Number(loadedOrder.order.totalPrice),
+            unitPrice: Number(loadedOrder.order.unitPrice), 
+            totalPrice: Number(loadedOrder.order.totalPrice),
             centralStock: { ...loadedOrder.order.centralStock,
-              quantity: Number(loadedOrder.order.centralStock.quantity) } },
+              quantity: Number(loadedOrder.order.centralStock.quantityAt20C) } },
         })),
       }));
     return { configuration, orders };

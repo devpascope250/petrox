@@ -69,7 +69,20 @@ describe("wallet movement validation", () => {
     }
   });
 
-  it("requires an uploaded supporting document for deposits", () => {
+  it.each(["https://example.com/deposit.pdf", "http://example.com/deposit.pdf"])(
+    "accepts a frontend supporting document URL: %s",
+    (supportingDocUrl) => {
+      expect(createWalletMovementSchema.parse({
+        type: "DEPOSIT",
+        amount: "10",
+        accountId: "cjld2cjxh0000qzrmn831i7rn",
+        referenceId: "DEP-003",
+        supportingDocUrl
+      }).supportingDocUrl).toBe(supportingDocUrl);
+    }
+  );
+
+  it("requires a supporting document for deposits", () => {
     expect(createWalletMovementSchema.safeParse({
       type: "DEPOSIT",
       amount: "10",

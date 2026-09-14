@@ -16,9 +16,9 @@ describe("module seed catalogue", () => {
     }
   });
 
-  it("matches the validated 39-node sidebar catalogue", () => {
+  it("matches the validated 41-node sidebar catalogue", () => {
     expect(() => validateModuleSeeds()).not.toThrow();
-    expect(moduleSeeds).toHaveLength(39);
-    expect(moduleSeeds.flatMap((module) => module.permissions)).toHaveLength(184);
+    expect(moduleSeeds).toHaveLength(41);
+    expect(moduleSeeds.flatMap((module) => module.permissions)).toHaveLength(194);
   });
 });

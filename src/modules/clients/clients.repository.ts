@@ -27,8 +27,9 @@ export class ClientRepository {
 
   list(query: PaginationQuery, actor: AuthUser) {
     const whereClause = {
-      ...(actor.position === "clientAdmin" ?  {clientId: actor.clientId} : {}),
-      id: {not: {equals: actor.userId}}
+      ...(actor.position === "clientAdmin" ?  {clientId: actor.clientId} : {clientId : {not: { equals: null}}}),
+      // id: {not: {equals: actor.userId}},
+      
     }
     return this.db.$transaction([
       this.db.user.findMany({ ...paginationArgs(query), where: whereClause, orderBy: { createdAt: "desc" }, select: publicUserSelect }),

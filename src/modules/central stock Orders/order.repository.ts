@@ -28,7 +28,7 @@ export class CentralStockOrderRepository {
           agent: { select: { id: true, names: true, fees: true, status: true } },
         } },
         centralStock: { select: {
-          id: true, quantity: true, status: true, createdAt: true,
+          id: true, ambQuantity: true, quantityAt20C: true, gainQty: true, lossQty: true,  status: true, createdAt: true,
           item: { select: { id: true, name: true, descriptions: true,
             baseUnit: { select: { id: true, name: true, code: true } } } },
           deport: { select: { id: true, name: true, location: true, type: true, status: true } },
@@ -98,7 +98,7 @@ export class CentralStockOrderRepository {
           fees: order.clearance.fees === null ? null : Number(order.clearance.fees),
           amount: order.clearance.amount === null ? null : Number(order.clearance.amount),
           agent: order.clearance.agent ? { ...order.clearance.agent, fees: Number(order.clearance.agent.fees) } : null },
-        centralStock: { ...order.centralStock, quantity: Number(order.centralStock.quantity) },
+        centralStock: { ...order.centralStock, quantity: Number(order.centralStock.quantityAt20C) },
         loadedOrders: order.loadedOrders.map((loadedOrder) => ({
           ...loadedOrder, quantity: Number(loadedOrder.quantity),
           loadingOrder: { ...loadedOrder.loadingOrder,
@@ -218,10 +218,11 @@ export class CentralStockOrderRepository {
         where: { id: loadingOrderId, loadedOrders: { some: { order: { siteId } } } },
         select: {
           id: true, totalQuantity: true, status: true, authorizationStatus: true, driverVehicleId: true,
-          loadedOrders: { select: {
+          loadedOrders: { where: { order: { siteId } }, select: {
+            quantity: true,
             order: { select: { siteId: true, centralStock: { select: { itemId: true } } } },
           } },
-          orderReceptions: { select: { receivedQty: true } },
+          orderReceptions: { select: { receivedQty: true, cuve: { select: { siteId: true } } } },
         },
       });
       if (!loadingOrder) throw new NotFoundError("Loading order for this site");
@@ -237,32 +238,30 @@ export class CentralStockOrderRepository {
 
       const cuve = await tx.tblCuve.findFirst({
         where: { id: input.cuveId, siteId, status: "active" },
-        select: { id: true, itemId: true, maximum: true,
-          orderReceptions: { select: { receivedQty: true } } },
+        select: { id: true, itemId: true, maximum: true, balance: true },
       });
       if (!cuve) throw new NotFoundError("Active cuve for this site");
-      if (loadingOrder.loadedOrders.some(({ order }) => order.siteId !== siteId)) {
-        throw new BusinessError("LOADING_ORDER_SITE_MISMATCH", "All orders in a loading order must belong to this site");
-      }
       const itemIds = new Set(loadingOrder.loadedOrders.map(({ order }) => order.centralStock.itemId));
       if (itemIds.size !== 1 || !itemIds.has(cuve.itemId)) {
         throw new BusinessError("CUVE_ITEM_MISMATCH", "The cuve item does not match the loading-order item");
       }
 
-      const received = loadingOrder.orderReceptions.reduce(
+      const received = loadingOrder.orderReceptions.filter((reception) => reception.cuve.siteId === siteId).reduce(
         (sum, reception) => sum.plus(reception.receivedQty), new Prisma.Decimal(0));
       const quantity = new Prisma.Decimal(input.receivedQty);
-      const expected = loadingOrder.totalQuantity;
+      const expected = loadingOrder.loadedOrders.reduce(
+        (sum, loadedOrder) => sum.plus(loadedOrder.quantity), new Prisma.Decimal(0));
       if (received.plus(quantity).greaterThan(expected)) {
         throw new BusinessError("RECEPTION_QUANTITY_EXCEEDED", `Only ${expected.minus(received).toString()} remains to receive`);
       }
-      const cuveQuantity = cuve.orderReceptions.reduce(
-        (sum, reception) => sum.plus(reception.receivedQty), new Prisma.Decimal(0));
+      const cuveQuantity = cuve.balance;
       if (cuveQuantity.plus(quantity).greaterThan(cuve.maximum)) {
         throw new BusinessError("CUVE_CAPACITY_EXCEEDED", `Cuve has capacity for only ${cuve.maximum.minus(cuveQuantity).toString()}`);
       }
 
-      const fullyReceived = received.plus(quantity).equals(expected);
+      const totalReceived = loadingOrder.orderReceptions.reduce(
+        (sum, reception) => sum.plus(reception.receivedQty), new Prisma.Decimal(0));
+      const fullyReceived = totalReceived.plus(quantity).equals(loadingOrder.totalQuantity);
       const reception = await tx.orderReception.create({
         data: {
           loadingOrderId,
@@ -275,6 +274,19 @@ export class CentralStockOrderRepository {
         include: {
           cuve: { select: { id: true, name: true, siteId: true } },
           user: { select: { id: true, firstName: true, lastName: true } },
+        },
+      });
+      await tx.tblCuve.update({
+        where: { id: cuve.id },
+        data: { balance: { increment: quantity } },
+      });
+      await tx.cuveTransaction.create({
+        data: {
+          cuveId: cuve.id,
+          quantity,
+          type: "received",
+          direction: "IN",
+          note: `Loading order ${loadingOrderId}; reception ${reception.id}`,
         },
       });
       await tx.loadingOrder.update({
@@ -409,7 +421,7 @@ export class CentralStockOrderRepository {
     return this.db.$transaction(async (tx) => {
       const stocks = await tx.centralStock.findMany({
         where: { itemId: input.itemId, status: "inStock" }, orderBy: { createdAt: "asc" },
-        select: { id: true, quantity: true,
+        select: { id: true, quantityAt20C: true, status: true,
           transactions: { select: { quantity: true, type: true } }, stockClearances: {
           orderBy: { createdAt: "asc" }, select: { id: true, status: true, quantity: true,
             centralStockOrders: { select: { quantity: true } } } } },
@@ -441,7 +453,7 @@ export class CentralStockOrderRepository {
             .reduce((balance, row) => balance + Number(row.quantity)
               - row.centralStockOrders.reduce((sold, order) => sold + Number(order.quantity), 0), 0);
           const available = Math.max(0, Math.min(
-            Number(stock.quantity) - allocated,
+            Number(stock.quantityAt20C) - allocated,
             physicalAvailable - Math.max(0, clearedRemaining),
           ));
           const quantity = Math.min(available, requested);

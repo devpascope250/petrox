@@ -6,13 +6,13 @@ export class AuthRepository {
   findUserByEmail(email: string) {
     return this.db.user.findUnique({
       where: { email },
-      include: { role: { include: { permissions: { include: { permission: true } } } }, sites: true }
+      include: { role: { include: { permissions: { include: { permission: true } } } }, sites: {where: {status: "active"}} }
     });
   }
   findUserById(id: string) {
     return this.db.user.findUnique({
       where: { id },
-      include: { role: { include: { permissions: { include: { permission: true } } } }, sites: true }
+      include: { role: { include: { permissions: { include: { permission: true } } } }, sites: {where: {status: "active"}} }
     });
   }
   createRefreshToken(userId: string, tokenHash: string, expiresAt: Date) {

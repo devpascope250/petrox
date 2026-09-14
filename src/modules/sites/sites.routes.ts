@@ -7,7 +7,7 @@ import { SitesService } from "./sites.service.js";
 const routes: FastifyPluginAsync = async (app) => {
   const service = new SitesService(new SiteRepository(app.prisma), app.config);
   app.get("/", { preHandler: [app.authenticate, app.authorize("pss.read", "pss.manage")] }, async (request) =>
-    success(await service.list()));
+    success(await service.list(request.contextUser!)));
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("pss.read", "pss.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));
   app.post("/", { preHandler: [app.authenticate, app.authorize("pss.create", "pss.manage")] }, async (request, reply) =>

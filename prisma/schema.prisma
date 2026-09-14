@@ -104,6 +104,7 @@ model User {
   clientWallets              ClientWallet[]
   orderReceptions            OrderReception[]
   discounts                  Discount[]
+  cardCopyTransactions       CardCopyTransaction[]
 
   @@index([roleId])
 }
@@ -134,6 +135,7 @@ model Client {
   clientWallets    ClientWallet[]
   cardCopies       CardCopy[]
   discounts        Discount[]
+  clientCoupons    ClientCoupon[]
 }
 
 model RefreshToken {
@@ -175,12 +177,12 @@ model Item {
   baseUnit  Unit?      @relation(fields: [baseUnitId], references: [id], onDelete: SetNull)
   itemUnits ItemUnit[]
 
-  itemClass     Item?          @relation("ItemHierarchy", fields: [parentId], references: [id])
-  items         Item[]         @relation("ItemHierarchy")
-  orders        Order[]
-  stock         Stock[]
-  centralStocks CentralStock[]
-  cuves         TblCuve[]
+  itemClass      Item?               @relation("ItemHierarchy", fields: [parentId], references: [id])
+  items          Item[]              @relation("ItemHierarchy")
+  orders         Order[]
+  stock          Stock[]
+  centralStocks  CentralStock[]
+  cuves          TblCuve[]
   toleranceRates ItemToleranceRate[]
 
   @@index([id])
@@ -436,8 +438,8 @@ model OrderReception {
   loadingOrder   LoadingOrder       @relation(fields: [loadingOrderId], references: [id])
   cuveId         String
   cuve           TblCuve            @relation(fields: [cuveId], references: [id])
-  expectedQty    Decimal            @db.Decimal
-  receivedQty    Decimal            @db.Decimal
+  expectedQty    Decimal            @db.Decimal(18,2)
+  receivedQty    Decimal            @db.Decimal(18,2)
   receivedBy     String
   status         LoadingOrderStatus @default(pending)
   user           User               @relation(fields: [receivedBy], references: [id])
@@ -683,15 +685,15 @@ model CentralStock {
   deport             Deport              @relation(fields: [deportId], references: [id])
   itemId             String
   item               Item                @relation(fields: [itemId], references: [id])
-  ambQuantity      Decimal        @default(0.0) @db.Decimal(18, 2)
-  quantityAt20C    Decimal        @default(0.0) @db.Decimal(18, 2)
+  ambQuantity        Decimal             @default(0.0) @db.Decimal(18, 2)
+  quantityAt20C      Decimal             @default(0.0) @db.Decimal(18, 2)
   supportingDocUrl   String?
   t1ValidationId     String
   t1Validation       T1Validation        @relation(fields: [t1ValidationId], references: [id])
   status             CentralStockStatus  @default(inStock)
-  toleranceRate      Decimal?             @db.Decimal(12, 2)
-  lossQty            Decimal?             @db.Decimal(18, 2)
-  gainQty            Decimal?             @db.Decimal(18, 2)
+  toleranceRate      Decimal?            @db.Decimal(12, 2)
+  lossQty            Decimal?            @db.Decimal(18, 2)
+  gainQty            Decimal?            @db.Decimal(18, 2)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   stockClearances    StockClearance[]
@@ -852,15 +854,41 @@ model TblCuve {
   minimum   Decimal    @db.Decimal(18, 2)
   maximum   Decimal    @db.Decimal(18, 2)
   deadStock Decimal    @db.Decimal(18, 2)
+  balance   Decimal    @default(0.0) @db.Decimal(18, 2)
   status    StatusType @default(active)
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  nozzles         TblNozzle[]
-  orderReceptions OrderReception[]
+  nozzles          TblNozzle[]
+  orderReceptions  OrderReception[]
+  cuveTransactions CuveTransaction[]
 
   @@index([id])
   @@index([siteId])
+}
+
+model CuveTransaction {
+  id        String                   @id @default(uuid())
+  cuveId    String
+  cuve      TblCuve                  @relation(fields: [cuveId], references: [id])
+  quantity  Decimal                  @db.Decimal(18, 2)
+  type      CuveTransactionType      @default(received)
+  direction CuveTransactionDirection @default(IN)
+  note      String?
+  createdAt DateTime                 @default(now())
+  updatedAt DateTime                 @updatedAt
+
+  @@index([cuveId])
+}
+
+enum CuveTransactionDirection {
+  IN
+  OUT
+}
+
+enum CuveTransactionType {
+  received
+  sold
 }
 
 model TblPump {
@@ -955,6 +983,8 @@ model ClientWallet {
   updatedAt          DateTime            @updatedAt
   user               User                @relation(fields: [createdAtBy], references: [id])
   walletTransactions walletTransaction[]
+
+  @@index([clientId])
 }
 
 model walletTransaction {
@@ -969,6 +999,10 @@ model walletTransaction {
   supportingDocUrl String?
   amount           Decimal                        @db.Decimal(18, 2)
   createdAt        DateTime                       @default(now())
+
+  @@index([clientWalletId])
+  @@index([accountId])
+  @@index([referenceId])
 }
 
 enum WalletTransactionDirectionType {
@@ -987,13 +1021,7 @@ enum WalletTransactionType {
 }
 
 model Card {
-  id BigInt @id @default(autoincrement())
-  // `security_category` int(255) DEFAULT NULL COMMENT '1=Ordinary 2=Specific',
-  // `state` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1 = ready,\r\n0 = busy,\r\n2="card is Blocked"',
-  // `swap_status` int(11) DEFAULT NULL COMMENT '1=used for swap',
-  // `inventory_status` int(255) DEFAULT NULL COMMENT '1="in stock",2="sent to the site" 3="assignrd to the client"',
-  // `updatedAt` date DEFAULT NULL COMMENT 'when we block card this will help to know when ',
-
+  id               BigInt    @id @default(autoincrement())
   cardNumber       String?   @unique
   serialNumber     String?   @unique
   cardCode         String?
@@ -1010,6 +1038,8 @@ model Card {
 
   originalCards CardCopy[] @relation("originalCards")
   copyCards     CardCopy[] @relation("copyCardFromCard")
+
+  @@index([cardNumber])
 }
 
 enum CardType {
@@ -1020,18 +1050,54 @@ enum CardType {
 }
 
 model CardCopy {
-  id         BigInt   @id @default(autoincrement())
-  clientId   String
-  client     Client   @relation(fields: [clientId], references: [id])
-  cardId     BigInt
-  card       Card     @relation("originalCards", fields: [cardId], references: [id])
-  cardCopyId BigInt?
-  copyCard   Card?    @relation("copyCardFromCard", fields: [cardCopyId], references: [id])
-  lastIndex  Int      @default(1)
-  pin        String
-  status     Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id                   BigInt                @id @default(autoincrement())
+  clientId             String
+  client               Client                @relation(fields: [clientId], references: [id])
+  cardId               BigInt
+  card                 Card                  @relation("originalCards", fields: [cardId], references: [id])
+  cardCopyId           BigInt?
+  copyCard             Card?                 @relation("copyCardFromCard", fields: [cardCopyId], references: [id])
+  lastIndex            Int                   @default(1)
+  pin                  String
+  status               Boolean               @default(true)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  cardCopyTransactions CardCopyTransaction[]
+
+  @@index([clientId])
+  @@index([cardId])
+  @@index([cardCopyId])
+}
+
+model CardCopyTransaction {
+  id          BigInt                           @id @default(autoincrement())
+  carfdCopyId BigInt
+  cardCopy    CardCopy                         @relation(fields: [carfdCopyId], references: [id])
+  type        CardTransactionType
+  direction   CardCopyTransactionDirectionType
+  amount      Decimal                          @default(0.0) @db.Decimal
+  createdById String
+  user        User                             @relation(fields: [createdById], references: [id])
+  createdAt   DateTime                         @default(now())
+
+  @@index([carfdCopyId])
+  @@index([carfdCopyId, type])
+  @@index([carfdCopyId, direction])
+}
+
+enum CardCopyTransactionDirectionType {
+  IN
+  OUT
+}
+
+enum CardTransactionType {
+  DEPOSIT
+  PAYMENT
+  REFUND
+  LOAN
+  WITHDRAWAL
+  TRANSFER
+  ADJUSTMENT
 }
 
 model Discount {
@@ -1050,6 +1116,9 @@ model Discount {
   createdAt DateTime     @default(now())
 
   rangingDiscounts RangingDiscount[]
+
+  @@index([clientId])
+  @@index([siteId])
 }
 
 enum DiscountType {
@@ -1068,6 +1137,11 @@ model RangingDiscount {
   site       TblSite    @relation(fields: [siteId], references: [id])
   status     StatusType
   createdAt  DateTime   @default(now())
+
+  updatedAt DateTime? @updatedAt
+
+  @@index([discountId])
+  @@index([siteId])
 }
 
 model CargoInvoice {
@@ -1083,15 +1157,64 @@ model CargoInvoice {
   invoiceReference String   @unique
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
+  @@index([cargoId])
 }
 
 model ItemToleranceRate {
-  id       String   @id @default(uuid())
-  maxRate     Decimal  @db.Decimal(12, 2)
-  itemId     String
-  item       Item     @relation(fields: [itemId], references: [id])
+  id        String     @id @default(uuid())
+  maxRate   Decimal    @db.Decimal(12, 2)
+  itemId    String
+  item      Item       @relation(fields: [itemId], references: [id])
   status    StatusType @default(active)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([itemId])
+}
+
+model CouponPlan {
+  id            String         @id @default(uuid())
+  name          String
+  number        Int
+  amount        Decimal        @db.Decimal(18, 2)
+  status        StatusType     @default(active)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  clientCoupons ClientCoupon[]
+
+  @@index([id])
+}
+
+model ClientCoupon {
+  id           String             @id @default(uuid())
+  couponPlanId String
+  couponPlan   CouponPlan         @relation(fields: [couponPlanId], references: [id])
+  clientId     String
+  client       Client             @relation(fields: [clientId], references: [id])
+  code         String             @unique
+  token        String
+  export       Boolean            @default(false)
+  amount       Decimal            @db.Decimal(18, 2)
+  generatedAt  DateTime           @default(now())
+  printedAt    DateTime?
+  scannedAt    DateTime?
+  status       ClientCouponStatus @default(available)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([couponPlanId])
+  @@index([clientId])
+  @@index([code])
+}
+
+enum ClientCouponStatus {
+  available
+  printed
+  scanned
+  expired
+  used
+  called
+  cancelled
 }

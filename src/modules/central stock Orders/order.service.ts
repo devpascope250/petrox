@@ -9,9 +9,10 @@ import { CentralStockOrderReportQuerySchema, CreateCentralStockOrderSchema, Crea
 
 export class CentralStockOrderService {
   constructor(private repo: CentralStockOrderRepository, private config: AppConfig) {}
-  async list(query: CentralStockOrderReportQuerySchema) {
+  async list(query: CentralStockOrderReportQuerySchema, actor: AuthUser) {
     const dates = within2DaysPeriod(query.startDate, query.endDate);
-    const report = await this.repo.list({ ...query, ...dates });
+
+    const report = await this.repo.list({ ...query, ...dates, siteId:  actor.position === "siteManager" ? this.requireSite(actor) : undefined });
     return {
       ...report,
       orders: report.orders.map((order) => ({

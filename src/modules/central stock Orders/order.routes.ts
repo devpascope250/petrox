@@ -11,7 +11,7 @@ const routes: FastifyPluginAsync = async (app) => {
   const service = new CentralStockOrderService(new CentralStockOrderRepository(app.prisma), app.config);
   const authorizerService = new AuthorizerService(new AuthorizerRepository(app.prisma));
   app.get("/", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] }, async (request) =>
-    success(await service.list(parseInput(centralStockOrderReportQuerySchema, request.query))));
+    success(await service.list(parseInput(centralStockOrderReportQuerySchema, request.query), request.contextUser!)));
   app.get("/loading-orders", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] }, async () =>
     success(await service.listLoadingOrders()));
   app.post("/loading-orders", { preHandler: [app.authenticate, app.authorize("stockout.orders.create", "stockout.orders.manage")] }, async (request, reply) =>
@@ -61,7 +61,7 @@ const routes: FastifyPluginAsync = async (app) => {
     success(await authorizerService.delete(parseInput(idParamsSchema, request.params).id)));
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("authorizers.read", "authorizers.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));
-  app.post("/", { preHandler: [app.authenticate, app.authorize("authorizers.create", "authorizers.manage")] }, async (request, reply) => {
+  app.post("/", { preHandler: [app.authenticate, app.authorize("stockout.orders.create", "authorizers.manage")] }, async (request, reply) => {
     const userId = request.contextUser?.userId;
     const payload = {
       ...(request.body as object),

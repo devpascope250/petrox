@@ -7,17 +7,17 @@ import { pipeline } from "node:stream/promises";
 
 export async function parseWalletMovementMultipart(request: FastifyRequest) {
   const fields: Record<string, unknown> = {};
+  let uploadedDocUrl: string | undefined;
   const uploadDirectory = path.join(process.cwd(), "uploads");
   await mkdir(uploadDirectory, { recursive: true });
 
   for await (const part of request.parts()) {
     if (part.type === "field") {
-      // The URL is server-owned and cannot be supplied as a text field.
-      if (part.fieldname !== "supportingDocUrl") fields[part.fieldname] = part.value;
+      fields[part.fieldname] = part.value;
       continue;
     }
 
-    if (part.fieldname !== "supportingDoc" && part.fieldname !== "supportingDocument") {
+    if (!["supportingDocUrl", "supportingDoc", "supportingDocument"].includes(part.fieldname)) {
       part.file.resume();
       continue;
     }
@@ -27,8 +27,8 @@ export async function parseWalletMovementMultipart(request: FastifyRequest) {
     const baseName = path.basename(originalName, extension) || "supporting-document";
     const filename = `${baseName}-${Date.now()}-${randomUUID()}${extension}`;
     await pipeline(part.file, createWriteStream(path.join(uploadDirectory, filename)));
-    fields.supportingDocUrl = `/uploads/${filename}`;
+    uploadedDocUrl = `/uploads/${filename}`;
   }
 
-  return fields;
+  return uploadedDocUrl ? { ...fields, supportingDocUrl: uploadedDocUrl } : fields;
 }

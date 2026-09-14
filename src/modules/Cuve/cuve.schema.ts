@@ -1,5 +1,22 @@
 import { z } from "zod";
-import { nonEmptyNameSchema, uuidSchema} from "../../shared/validation/index.js";
+import { nonEmptyNameSchema, paginationQuerySchema, uuidSchema} from "../../shared/validation/index.js";
+
+export const cuveStockQuerySchema = z.object({
+  siteId: uuidSchema.optional(),
+});
+
+const reportDate = z.union([z.iso.date(), z.iso.datetime({ offset: true })]);
+export const cuveTransactionsQuerySchema = paginationQuerySchema.extend({
+  startDate: reportDate.transform((value) => new Date(value)).optional(),
+  endDate: reportDate.transform((value) => new Date(
+    value.length === 10 ? `${value}T23:59:59.999Z` : value,
+  )).optional(),
+}).refine(({ startDate, endDate }) => !startDate || !endDate || startDate <= endDate, {
+  message: "startDate must be before or equal to endDate", path: ["endDate"],
+});
+
+export type CuveStockQuery = z.infer<typeof cuveStockQuerySchema>;
+export type CuveTransactionsQuery = z.infer<typeof cuveTransactionsQuerySchema>;
 
 export const createCuveSchema = z.object({
     name: nonEmptyNameSchema,

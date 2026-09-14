@@ -1,11 +1,12 @@
 import type { AppConfig } from "../../config/env.js";
+import { AuthUser } from "../../shared/auth/context-user.js";
 import { SiteRepository } from "./sites.repository.js";
 import { CreateSiteSchema } from "./sites.schema.js";
 export class SitesService {
   constructor(private repo: SiteRepository, private config: AppConfig) {}
 
-  async list() {
-    return await this.repo.list();
+  async list(actor: AuthUser) {
+    return await this.repo.list(actor);
   }
 
   find(id: string) { return this.repo.find(id); }

@@ -33,12 +33,25 @@ const walletAmountSchema = z.union([z.string(), z.number()])
   ))
   .refine((value) => !/^0(?:\.0{1,2})?$/.test(value), "Amount must be greater than zero");
 
+export const transferWalletToCardSchema = z.object({
+  cardId: z.string().regex(/^[1-9]\d*$/, "Card id must be a positive integer").transform(BigInt),
+  amount: walletAmountSchema
+}).strict();
+
+export const buyWalletCouponsSchema = z.object({
+  couponPlanId: uuidSchema,
+  quantity: z.number().int().min(1).max(100).default(1)
+}).strict();
+
+export type TransferWalletToCardInput = z.infer<typeof transferWalletToCardSchema>;
+export type BuyWalletCouponsInput = z.infer<typeof buyWalletCouponsSchema>;
+
 export const createWalletMovementSchema = z.object({
   type: z.enum(WalletTransactionType),
   amount: walletAmountSchema,
-  accountId: z.cuid("Company account id must be a valid CUID").optional(),
+  accountId: z.cuid2("Company account id must be a valid CUID").optional(),
   referenceId: z.string().trim().min(1).max(100).optional(),
-  supportingDocUrl: z.string().startsWith("/uploads/").optional()
+  supportingDocUrl: z.string().optional()
 }).strict().superRefine((input, context) => {
   if (input.type === WalletTransactionType.DEPOSIT) {
     if (!input.accountId) {

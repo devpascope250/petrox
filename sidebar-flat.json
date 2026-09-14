@@ -728,6 +728,44 @@
       "level": "feature",
       "isGroup": false,
       "childCount": 0
+    },
+    {
+      "id": "7e9e820a-3b87-45ca-8b9d-2b9f8382b3b9",
+      "name": "Coupon Plans",
+      "code": "COUPON_PLANS",
+      "parentId": null,
+      "sorting": 39,
+      "permissionModule": "coupon.plans",
+      "permissions": [
+        "coupon.plans.read",
+        "coupon.plans.create",
+        "coupon.plans.edit",
+        "coupon.plans.delete",
+        "coupon.plans.manage"
+      ],
+      "depth": 0,
+      "level": "module",
+      "isGroup": false,
+      "childCount": 0
+    },
+    {
+      "id": "7f49a972-e3bb-4c7d-a6a8-ed61678d9f60",
+      "name": "Client Coupons",
+      "code": "CLIENT_COUPONS",
+      "parentId": null,
+      "sorting": 40,
+      "permissionModule": "client.coupons",
+      "permissions": [
+        "client.coupons.read",
+        "client.coupons.create",
+        "client.coupons.edit",
+        "client.coupons.delete",
+        "client.coupons.manage"
+      ],
+      "depth": 0,
+      "level": "module",
+      "isGroup": false,
+      "childCount": 0
     }
   ]
 }

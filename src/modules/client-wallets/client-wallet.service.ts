@@ -5,6 +5,8 @@ import { BusinessError, NotFoundError, forbidden } from "../../utils/errors.js";
 import { ClientWalletRepository } from "./client-wallet.repository.js";
 import type {
   CreateClientWalletInput,
+  TransferWalletToCardInput,
+  BuyWalletCouponsInput,
   CreateWalletMovementInput,
   UpdateClientWalletInput,
   WalletMovementQuery
@@ -58,6 +60,14 @@ export class ClientWalletService {
       throw new BusinessError("WALLET_INACTIVE", "Movements cannot be made on an inactive wallet");
     }
     return this.repo.createMovement(id, input, this.clientScope(actor));
+  }
+
+  transferToCard(id: string, input: TransferWalletToCardInput, actor: AuthUser) {
+    return this.repo.transferToCard(id, input, actor.userId, this.clientScope(actor));
+  }
+
+  buyCoupons(id: string, input: BuyWalletCouponsInput, actor: AuthUser) {
+    return this.repo.buyCoupons(id, input, this.clientScope(actor));
   }
 
   private async ensureClientExists(clientId: string) {
