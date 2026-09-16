@@ -202,18 +202,4 @@ export class StockRepository {
   find(id: string) {
     return this.db.stock.findUnique({ where: { id } });
   }
-  async update(id: string, data: CreateStockSchema) {
-    if (!(await this.find(id))) throw new NotFoundError();
-    return await this.db.stock.update({
-      where: { id: id },
-      data: {
-        cargoId: data.cargoId,
-        deportId: data.deportId,
-        quantity: data.quantity,
-        receivedDate: data.receivedDate,
-        status: data.status    
-      }
-    });
-  }
-
 }

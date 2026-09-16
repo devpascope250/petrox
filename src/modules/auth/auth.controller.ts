@@ -9,16 +9,26 @@ import { unauthorized } from "../../utils/errors.js";
 const accessTokenCookie = "access_token";
 const refreshTokenCookie = "refresh_token";
 
+export function sessionCookieOptions(config: AppConfig) {
+  const apiUrl = new URL(config.APP_URL);
+  const frontendUrl = new URL(config.FRONTEND_URL);
+  const crossSite = apiUrl.hostname !== frontendUrl.hostname;
+  const secure = config.NODE_ENV === "production" || apiUrl.protocol === "https:";
+
+  return {
+    path: "/",
+    httpOnly: true,
+    secure,
+    // Cross-site cookies must be SameSite=None and Secure or browsers will not send them.
+    sameSite: crossSite && secure ? "none" as const : "lax" as const,
+  };
+}
+
 export class AuthController {
   constructor(private service: AuthService, private config: AppConfig) {}
 
   private cookieOptions() {
-    return {
-      path: "/",
-      httpOnly: true,
-      secure: this.config.NODE_ENV === "production",
-      sameSite: "lax" as const
-    };
+    return sessionCookieOptions(this.config);
   }
 
   private setSessionCookies(reply: FastifyReply, session: Awaited<ReturnType<AuthService["login"]>>) {
