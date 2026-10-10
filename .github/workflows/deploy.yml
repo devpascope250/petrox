@@ -1,0 +1,59 @@
+name: 🚀 Production Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📦 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🚀 Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.IKWIM_SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+
+            echo "🚀 Starting deployment..."
+
+            cd /home/ikwim-api/htdocs/api.ikwim.com
+
+            echo "🧠 Ensuring pnpm is available..."
+            export PATH=$PATH:$(npm config get prefix)/bin
+            corepack enable || true
+            corepack prepare pnpm@latest --activate || true
+
+            echo "📡 Fetching latest code..."
+            git fetch origin main
+
+            echo "🧹 Resetting tracked files..."
+            git reset --hard origin/main
+
+            echo "📦 Installing dependencies with pnpm..."
+            pnpm install --frozen-lockfile
+
+            echo "🗄️ Generating Prisma client..."
+            pnpm prisma generate
+
+            echo "🏗 Building project..."
+            pnpm build
+
+            echo "🔄 Reloading PM2..."
+            pm2 reload ecosystem.config.js --env production || pm2 restart all
+
+            echo "🧹 Cleaning backup..."
+            rm -rf /tmp/ikwim-backup
+
+            echo "✅ Deployment completed successfully!"

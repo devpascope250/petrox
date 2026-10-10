@@ -31,7 +31,7 @@ const CONFIRM_LIMIT = {
 const routes: FastifyPluginAsync = async (app) => {
   app.decorateRequest("device", null);
   const authenticateDevice = deviceAuthenticator(app, app.prisma);
-  const repo = new MobileTransactionsRepository(app.prisma, app.config.PIN_HMAC_SECRET, app.config.MOBILE_SALE_TIMEOUT_MINUTES);
+  const repo = new MobileTransactionsRepository(app.prisma, app.config.PIN_HMAC_SECRET, app.config.MOBILE_SALE_TIMEOUT_MINUTES, app.config.STATIC_URL);
   const service = new MobileTransactionsService(repo);
 
   // Every minute, sales left initiated past the timeout are cancelled and their cards freed.

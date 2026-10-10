@@ -1,6 +1,7 @@
 import { Prisma, type GeneralTransactionStatus, type PrismaClient } from "../../../../prisma/generated/prisma/client.js";
 import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js";
 import { verifyPin } from "../../../utils/crypto.js";
+import { staticUrl } from "../../../utils/static-url.js";
 import type { ConfirmTransactionInput, InitiateTransactionInput } from "./transactions.schema.js";
 
 const money = (value: number | Prisma.Decimal) => new Prisma.Decimal(value).toDecimalPlaces(2);
@@ -69,17 +70,18 @@ const transactionSelect = {
   reason: true, comments: true, printStatus: true, appVersion: true, deviceId: true,
   createdAt: true, confirmedAt: true, updatedAt: true,
   item: { select: { id: true, name: true } },
-  cuve: { select: { id: true, name: true } },
-  pump: { select: { id: true, name: true } },
+  // cuve: { select: { id: true, name: true } },
+  // pump: { select: { id: true, name: true } },
   nozzle: { select: { id: true, name: true, nozzleCode: true, display: { select: { id: true, name: true } } } },
-  site: { select: { id: true, name: true } },
+  // site: { select: { id: true, name: true } },
   /** The POS that recorded it. */
-  device: { select: { id: true, deviceName: true } },
+  // device: { select: { id: true, deviceName: true } },
   cardCopyId: true,
-  cardCopy: { select: { card: { select: { cardNumber: true, serialNumber: true } }, copyCard: { select: { cardNumber: true, serialNumber: true } } } },
+  cardCopy: { select: {
+     card: { select: { cardNumber: true, serialNumber: true , cardType: { select: { name: true, status: true}}} }, copyCard: { select: { cardNumber: true, serialNumber: true } } } },
   client: { select: { id: true, clientCode: true, name: true, phone: true } },
-  shift: { select: { id: true, shift: { select: { id: true, name: true } } } },
-  user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+  // shift: { select: { id: true, shift: { select: { id: true, name: true } } } },
+  // user: { select: { id: true, firstName: true, lastName: true, phone: true } },
   generalTransactionPayments: {
     select: { id: true, amount: true, reference: true, referenceDocUrl: true,
       account: { select: { id: true, code: true, name: true, type: true } } },
@@ -89,23 +91,23 @@ const transactionSelect = {
 
 type TransactionRow = Prisma.GeneralTransactionGetPayload<{ select: typeof transactionSelect }>;
 
-function presentRow({ cardCopy, user, generalTransactionPayments, shift, ...row }: TransactionRow) {
+function presentRow({  generalTransactionPayments, ...row }: TransactionRow) {
   return {
     ...row,
     cardCopyId: row.cardCopyId?.toString() ?? null,
     /** Who the sale was for: the card holder's name; `null` for a sale without a card. */
     clientName: row.client?.name ?? null,
     /** The physical card used: the copy card for a copy, the main card otherwise. */
-    card: cardCopy ? (cardCopy.copyCard ?? cardCopy.card) : null,
+    // card: cardCopy ? (cardCopy.copyCard ?? cardCopy.card) : null,
     quantity: Number(row.quantity),
     unitPrice: Number(row.unitPrice),
     amount: Number(row.amount),
     discountAmount: Number(row.discountAmount),
     subsidyRate: Number(row.subsidyRate),
     subsidyAmount: Number(row.subsidyAmount),
-    shift: shift ? { id: shift.id, name: shift.shift.name } : null,
+    // shift: shift ? { id: shift.id, name: shift.shift.name } : null,
     /** The attendant who confirmed it. */
-    doneBy: user,
+    // doneBy: user,
     payments: generalTransactionPayments.map((payment) => ({ ...payment, amount: Number(payment.amount) })),
   };
 }
@@ -122,14 +124,20 @@ export class MobileTransactionsRepository {
   private timeoutMs: number;
 
   /** `timeoutMinutes`: how long a sale may stay initiated before it is cancelled. */
-  constructor(private db: PrismaClient, private pinSecret: string, timeoutMinutes = 10) {
+  /** `staticBase` is `STATIC_URL`: picture and document paths are returned as full URLs under it. */
+  constructor(private db: PrismaClient, private pinSecret: string, timeoutMinutes = 10, private staticBase?: string) {
     this.timeoutMs = timeoutMinutes * 60_000;
   }
 
   /** A sale as returned, with `expiresAt`: when an initiated sale will be cancelled if not confirmed. */
   private present(row: TransactionRow): PresentedTransaction {
+    const sale = presentRow(row);
+    const url = (path: string | null) => staticUrl(this.staticBase, path);
     return {
-      ...presentRow(row),
+      ...sale,
+      platePictureUrl: url(sale.platePictureUrl),
+      displayPictureUrl: url(sale.displayPictureUrl),
+      payments: sale.payments.map((payment) => ({ ...payment, referenceDocUrl: url(payment.referenceDocUrl) })),
       expiresAt: row.status === "initiated" ? new Date(row.createdAt.getTime() + this.timeoutMs) : null,
     };
   }

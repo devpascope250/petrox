@@ -18,6 +18,8 @@ const schema = z.object({
   /** A POS sale still initiated after this many minutes is cancelled, and its card freed. */
   MOBILE_SALE_TIMEOUT_MINUTES: z.coerce.number().int().positive().max(1440).default(10),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
+  /** Public base address of the server, put in front of `/uploads/…` paths sent to the POS. */
+  STATIC_URL: z.url().optional().transform((value) => value?.replace(/\/+$/, "")),
 
   SMTP_HOST: z.string().min(5),
   SMTP_PORT: z.coerce.number().int().positive().default(465),
