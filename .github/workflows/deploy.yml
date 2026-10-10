@@ -28,7 +28,7 @@ jobs:
 
             echo "🚀 Starting deployment..."
 
-            cd /home/ikwim-api/htdocs/api.ikwim.com
+            cd /home/ikwim-api/htdocs/api.ikwim.com/petrox || { echo "❌ Failed to change directory to /home/ikwim-api/htdocs/api.ikwim.com/petrox"; exit 1; }
 
             echo "🧠 Loading Node, pnpm and pm2..."
             # An SSH deploy runs a non-interactive shell, which skips ~/.bashrc,
