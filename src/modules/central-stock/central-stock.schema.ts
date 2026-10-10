@@ -25,6 +25,7 @@ export const createCentralStockSchema = z.object({
   itemId:  uuidSchema,
   ambQuantity: z.coerce.number(),
   quantityAt20C: z.coerce.number(),
+  receiptNumber: z.string(),
   supportingDocUrl: z.string().optional().nullable(),
   t1ValidationId: uuidSchema,
   status:  z.enum(CentralStockStatus).default("inStock").optional(),

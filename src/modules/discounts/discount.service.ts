@@ -1,4 +1,4 @@
-import type { AuthUser } from "../../shared/auth/context-user.js";
+import { isSiteBound, type AuthUser } from "../../shared/auth/context-user.js";
 import { paginatedData } from "../../shared/pagination/index.js";
 import type { PaginationQuery } from "../../shared/validation/index.js";
 import { NotFoundError, forbidden } from "../../utils/errors.js";
@@ -52,7 +52,7 @@ export class DiscountService {
       ...(input.siteId ? [input.siteId] : []),
       ...(input.type === "ranging" ? input.rangingDiscounts.map((range) => range.siteId) : [])
     ])];
-    if (actor.position === "siteManager" && siteIds.some((id) => id !== actor.siteId)) {
+    if (isSiteBound(actor) && siteIds.some((id) => id !== actor.siteId)) {
       throw forbidden("You can only manage discounts for your own site");
     }
     if (siteIds.length && (await this.repo.findSites(siteIds)).length !== siteIds.length) {

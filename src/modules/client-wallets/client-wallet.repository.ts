@@ -1,10 +1,12 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { generateCouponCode } from "../../utils/randomCodegen.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PaginationQuery } from "../../shared/validation/index.js";
 import type {
   CreateClientWalletInput,
   TransferWalletToCardInput,
+  WalletCardTransferInput,
   BuyWalletCouponsInput,
   CreateWalletMovementInput,
   UpdateClientWalletInput,
@@ -110,10 +112,12 @@ export class ClientWalletRepository {
     });
   }
 
-  listMovements(walletId: string, query: WalletMovementQuery & { startDate: Date; endDate: Date }) {
+  listMovements(walletId: string, query: WalletMovementQuery) {
     const where = {
       clientWalletId: walletId,
-      createdAt: { gte: query.startDate, lte: query.endDate }
+      ...(query.startDate || query.endDate
+        ? { createdAt: { ...(query.startDate ? { gte: query.startDate } : {}), ...(query.endDate ? { lte: query.endDate } : {}) } }
+        : {})
     };
     return this.db.$transaction([
       this.db.walletTransaction.findMany({
@@ -210,6 +214,101 @@ export class ClientWalletRepository {
     }
   }
 
+  /**
+   * The cards a client holds as main cards — copies are left out — with their
+   * balances. A card is a main card of every active assignment built on it.
+   */
+  async listMainCards(clientId: string) {
+    const assignments = await this.db.cardCopy.findMany({
+      where: { clientId, status: true },
+      distinct: ["cardId"],
+      orderBy: { cardId: "asc" },
+      select: {
+        card: { select: { id: true, cardNumber: true, serialNumber: true, balance: true, state: true,
+          cardType: { select: { id: true, name: true } } } }
+      }
+    });
+    return assignments.map(({ card }) => ({ ...card, id: card.id.toString(), balance: card.balance.toFixed(2) }));
+  }
+
+  /**
+   * Moves money between a wallet and one of its client's main cards, in the
+   * direction asked. Both sides are recorded — a wallet transaction and a card
+   * transaction — and either both balances change or neither does.
+   */
+  cardTransfer(walletId: string, input: WalletCardTransferInput, createdById: string, clientId?: string) {
+    return this.db.$transaction(async tx => {
+      const wallet = await this.activeWallet(tx, walletId, clientId);
+      // The main card's own assignment when it has one, else any active one on it.
+      const assignment = await tx.cardCopy.findFirst({
+        where: { clientId: wallet.clientId, status: true, cardId: input.cardId },
+        orderBy: [{ cardCopyId: { sort: "asc", nulls: "first" } }, { id: "asc" }],
+        select: { id: true }
+      });
+      if (!assignment) throw new NotFoundError("Main card assigned to this client");
+
+      const amount = new Prisma.Decimal(input.amount);
+      const toCard = input.direction === "TO_CARD";
+      if (toCard) {
+        await this.debitWallet(tx, walletId, wallet.clientId, amount);
+        const credited = await tx.card.updateMany({
+          where: {
+            id: input.cardId,
+            state: 1,
+            balance: { lte: new Prisma.Decimal("9999999999999999.99").minus(amount) }
+          },
+          data: { balance: { increment: amount } }
+        });
+        if (credited.count !== 1) {
+          throw new BusinessError("CARD_TRANSFER_FAILED", "Card is inactive, unavailable, or its balance limit would be exceeded");
+        }
+      } else {
+        const debited = await tx.card.updateMany({
+          where: { id: input.cardId, state: 1, balance: { gte: amount } },
+          data: { balance: { decrement: amount } }
+        });
+        if (debited.count !== 1) {
+          throw new BusinessError("CARD_TRANSFER_FAILED", "Card is inactive or its balance is insufficient");
+        }
+        const credited = await tx.clientWallet.updateMany({
+          where: {
+            id: walletId,
+            status: "active",
+            amount: { lte: new Prisma.Decimal("9999999999999999.99").minus(amount) }
+          },
+          data: { amount: { increment: amount } }
+        });
+        if (credited.count !== 1) {
+          throw new BusinessError("WALLET_MOVEMENT_FAILED", "Wallet is inactive or its balance limit would be exceeded");
+        }
+      }
+
+      const cardTransaction = await tx.cardCopyTransaction.create({
+        data: {
+          carfdCopyId: assignment.id, type: "TRANSFER", direction: toCard ? "IN" : "OUT", amount, createdById
+        }
+      });
+      const transaction = await tx.walletTransaction.create({
+        data: {
+          clientWalletId: walletId, type: "TRANSFER", direction: toCard ? "OUT" : "IN", amount,
+          referenceId: cardTransaction.id.toString()
+        },
+        select: walletTransactionSelect
+      });
+      const card = await tx.card.findUniqueOrThrow({
+        where: { id: input.cardId }, select: { id: true, cardNumber: true, balance: true }
+      });
+      return {
+        wallet: await tx.clientWallet.findUniqueOrThrow({ where: { id: walletId }, select: clientWalletSelect }),
+        transaction,
+        card: { ...card, id: card.id.toString() },
+        cardTransaction: {
+          ...cardTransaction, id: cardTransaction.id.toString(), carfdCopyId: cardTransaction.carfdCopyId.toString()
+        }
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
   transferToCard(walletId: string, input: TransferWalletToCardInput, createdById: string, clientId?: string) {
     return this.db.$transaction(async tx => {
       const wallet = await this.activeWallet(tx, walletId, clientId);
@@ -260,33 +359,58 @@ export class ClientWalletRepository {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
+  /**
+   * Sells coupons from one or more plans, paid from the wallet in one debit.
+   *
+   * Refused as a whole when a plan is inactive, when a line asks for more
+   * coupons than its plan has left — a plan issues at most `number` coupons —
+   * or when the total exceeds the wallet balance.
+   */
   buyCoupons(walletId: string, input: BuyWalletCouponsInput, clientId?: string) {
     return this.db.$transaction(async tx => {
       const wallet = await this.activeWallet(tx, walletId, clientId);
-      const plan = await tx.couponPlan.findFirst({
-        where: { id: input.couponPlanId, status: "active" },
-        select: { id: true, amount: true }
+      const planIds = input.items.map((item) => item.couponPlanId);
+      const plans = await tx.couponPlan.findMany({
+        where: { id: { in: planIds }, status: "active" },
+        select: { id: true, name: true, number: true, amount: true, _count: { select: { clientCoupons: true } } }
       });
-      if (!plan) throw new NotFoundError("Active coupon plan");
-      const amount = plan.amount.mul(input.quantity);
+      const planById = new Map(plans.map((plan) => [plan.id, plan]));
+      let amount = new Prisma.Decimal(0);
+      for (const item of input.items) {
+        const plan = planById.get(item.couponPlanId);
+        if (!plan) throw new NotFoundError("Active coupon plan");
+        const remaining = Math.max(plan.number - plan._count.clientCoupons, 0);
+        if (item.quantity > remaining) {
+          throw new BusinessError(
+            "COUPON_PLAN_EXHAUSTED",
+            `${plan.name} has ${remaining} coupon${remaining === 1 ? "" : "s"} left; ${item.quantity} requested`,
+            422,
+            { couponPlanId: plan.id, remaining, requested: item.quantity }
+          );
+        }
+        amount = amount.add(plan.amount.mul(item.quantity));
+      }
       await this.debitWallet(tx, walletId, wallet.clientId, amount);
       const coupons = [];
       const transactions = [];
-      for (let index = 0; index < input.quantity; index++) {
-        const coupon = await tx.clientCoupon.create({
-          data: {
-            couponPlanId: plan.id, clientId: wallet.clientId, amount: plan.amount,
-            code: randomUUID(), token: randomBytes(32).toString("hex"), status: "available"
-          }
-        });
-        coupons.push(coupon);
-        transactions.push(await tx.walletTransaction.create({
-          data: {
-            clientWalletId: walletId, type: "PAYMENT", direction: "OUT",
-            amount: plan.amount, referenceId: coupon.id
-          },
-          select: walletTransactionSelect
-        }));
+      for (const item of input.items) {
+        const plan = planById.get(item.couponPlanId)!;
+        for (let index = 0; index < item.quantity; index++) {
+          const coupon = await tx.clientCoupon.create({
+            data: {
+              couponPlanId: plan.id, clientId: wallet.clientId, amount: plan.amount,
+              code: generateCouponCode(), token: randomBytes(32).toString("hex"), status: "available"
+            }
+          });
+          coupons.push(coupon);
+          transactions.push(await tx.walletTransaction.create({
+            data: {
+              clientWalletId: walletId, type: "PAYMENT", direction: "OUT",
+              amount: plan.amount, referenceId: coupon.id
+            },
+            select: walletTransactionSelect
+          }));
+        }
       }
       return {
         wallet: await tx.clientWallet.findUniqueOrThrow({ where: { id: walletId }, select: clientWalletSelect }),

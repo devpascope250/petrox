@@ -5,20 +5,24 @@ import { CentralStockOrderRepository } from "../src/modules/central stock Orders
 const decimal = (value: number) => new Prisma.Decimal(value);
 
 function setup(siteReceived = 0, otherReceived = 0, balance = 0) {
+  // One load, two requesters: "user" asked for 40 at site-a, "other" for 60 at site-b.
   const allocations = [
-    { quantity: decimal(40), order: { siteId: "site-a", centralStock: { itemId: "fuel" } } },
-    { quantity: decimal(60), order: { siteId: "site-b", centralStock: { itemId: "other-fuel" } } },
+    { quantity: decimal(40), order: { siteId: "site-a", createdBy: "user", centralStock: { itemId: "fuel" } } },
+    { quantity: decimal(60), order: { siteId: "site-b", createdBy: "other", centralStock: { itemId: "other-fuel" } } },
   ];
   const tx = {
     loadingOrder: {
       findFirst: vi.fn().mockImplementation(async (query) => ({
         id: "load", totalQuantity: decimal(100), status: "pending", authorizationStatus: "approved",
         driverVehicleId: "vehicle",
-        loadedOrders: allocations.filter(({ order }) =>
-          !query.select.loadedOrders.where || order.siteId === query.select.loadedOrders.where.order.siteId),
+        // Only the lines this person requested, at their own site.
+        loadedOrders: allocations.filter(({ order }) => {
+          const where = query.select.loadedOrders.where?.order;
+          return !where || (order.siteId === where.siteId && order.createdBy === where.createdBy);
+        }),
         orderReceptions: [
-          { receivedQty: decimal(siteReceived), cuve: { siteId: "site-a" } },
-          { receivedQty: decimal(otherReceived), cuve: { siteId: "site-b" } },
+          { receivedQty: decimal(siteReceived), receivedBy: "user" },
+          { receivedQty: decimal(otherReceived), receivedBy: "other" },
         ],
       })),
       update: vi.fn(), count: vi.fn().mockResolvedValue(0),
@@ -33,12 +37,13 @@ function setup(siteReceived = 0, otherReceived = 0, balance = 0) {
   const repo = new CentralStockOrderRepository({
     $transaction: async (callback: (transaction: typeof tx) => unknown) => callback(tx),
   } as never);
-  return { tx, receive: (receivedQty: number) => repo.receiveLoadingOrder(
-    "load", { cuveId: "cuve", receivedQty }, "site-a", "user",
+  // A shortfall must be explained, so partial receipts carry a comment.
+  return { tx, receive: (receivedQty: number, comment?: string) => repo.receiveLoadingOrder(
+    "load", { cuveId: "cuve", receivedQty, comment }, { siteId: "site-a", requesterId: "user" },
   ) };
 }
 
-describe("mixed-site loading order reception", () => {
+describe("mixed-site, mixed-requester loading order reception", () => {
   it("increments existing stock and records an inbound receipt", async () => {
     const { tx, receive } = setup(0, 0, 960);
     await receive(40);
@@ -48,18 +53,19 @@ describe("mixed-site loading order reception", () => {
     expect(tx.cuveTransaction.create).toHaveBeenCalledWith({ data: {
       cuveId: "cuve", quantity: decimal(40), type: "received", direction: "IN",
       note: "Loading order load; reception reception",
+      createdBy: "user", orderReceptionId: "reception",
     } });
   });
 
   it("rejects receipts exceeding the current balance capacity without writing stock", async () => {
     const { tx, receive } = setup(0, 0, 980);
-    await expect(receive(21)).rejects.toThrow("Cuve has capacity for only 20");
+    await expect(receive(21, "Tank nearly full")).rejects.toThrow("Cuve has capacity for only 20");
     expect(tx.orderReception.create).not.toHaveBeenCalled();
     expect(tx.tblCuve.update).not.toHaveBeenCalled();
     expect(tx.cuveTransaction.create).not.toHaveBeenCalled();
   });
 
-  it("receives only the site's allocation and keeps the load pending for other sites", async () => {
+  it("receives only the requester's own allocation and keeps the load pending for others", async () => {
     const { tx, receive } = setup();
     await expect(receive(40)).resolves.toMatchObject({
       expectedQty: 40, remainingQuantity: 0, loadingOrderStatus: "pending",
@@ -67,20 +73,31 @@ describe("mixed-site loading order reception", () => {
     expect(tx.driverVehicles.update).not.toHaveBeenCalled();
   });
 
-  it("does not count another site's receipts against this site's remaining quantity", async () => {
+  it("does not count another requester's receipts against this requester's remaining quantity", async () => {
     const { receive } = setup(10, 60);
-    await expect(receive(20)).resolves.toMatchObject({
+    await expect(receive(20, "Rest arrives on the next trip")).resolves.toMatchObject({
       expectedQty: 40, remainingQuantity: 10, loadingOrderStatus: "pending",
     });
   });
 
-  it("rejects receiving more than the site's remaining allocation", async () => {
+  it("requires a comment when the total received falls short of what was sent", async () => {
+    const { tx, receive } = setup(0);
+    await expect(receive(25)).rejects.toThrow("explain the difference in a comment");
+    expect(tx.orderReception.create).not.toHaveBeenCalled();
+  });
+
+  it("accepts an exact final receipt without a comment", async () => {
+    const { receive } = setup(15);
+    await expect(receive(25)).resolves.toMatchObject({ remainingQuantity: 0 });
+  });
+
+  it("rejects receiving more than the requester's remaining allocation", async () => {
     const { tx, receive } = setup(10);
     await expect(receive(31)).rejects.toThrow("Only 30 remains to receive");
     expect(tx.orderReception.create).not.toHaveBeenCalled();
   });
 
-  it("completes the load and releases the vehicle only after all sites receive", async () => {
+  it("completes the load and releases the vehicle only after everyone receives", async () => {
     const { tx, receive } = setup(10, 60);
     await expect(receive(30)).resolves.toMatchObject({ loadingOrderStatus: "received", remainingQuantity: 0 });
     expect(tx.loadingOrder.update).toHaveBeenCalledWith({ where: { id: "load" }, data: { status: "received" } });

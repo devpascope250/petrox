@@ -766,6 +766,23 @@
       "level": "module",
       "isGroup": false,
       "childCount": 0
+    },
+    {
+      "id": "cd3af1b2-3506-4269-9534-ff5da96a7431",
+      "name": "Sell Coupons",
+      "code": "COUPON_SALES",
+      "parentId": null,
+      "sorting": 41,
+      "permissionModule": "coupon.sales",
+      "permissions": [
+        "coupon.sales.read",
+        "coupon.sales.create",
+        "coupon.sales.manage"
+      ],
+      "depth": 0,
+      "level": "module",
+      "isGroup": false,
+      "childCount": 0
     }
   ]
 }

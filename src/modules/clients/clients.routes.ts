@@ -15,7 +15,7 @@ const routes: FastifyPluginAsync = async (app) => {
     success(await service.list(parseInput(paginationQuerySchema, request.query), request.contextUser!)));
 
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("clients.read")] }, async (request) =>
-    success(await service.find(parseInput(idParamsSchema, request.params).id)));
+    success(await service.get(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
 
   app.post("/", { preHandler: [app.authenticate, app.authorize("clients.create")] }, async (request, reply) =>
     created(reply, await service.create(
@@ -26,11 +26,15 @@ const routes: FastifyPluginAsync = async (app) => {
   app.put("/:id", { preHandler: [app.authenticate, app.authorize("clients.edit")] }, async (request) =>
     success(await service.update(
       parseInput(idParamsSchema, request.params).id,
-      parseInput(updateUserSchema, request.body)
+      parseInput(updateUserSchema, request.body),
+      request.contextUser!
     )));
 
   app.patch("/:id/status", { preHandler: [app.authenticate, app.authorize("clients.edit")] }, async (request) =>
-    success(await service.changeStatus(parseInput(idParamsSchema, request.params).id)));
+    success(await service.changeStatus(
+      parseInput(idParamsSchema, request.params).id,
+      request.contextUser!
+    )));
 
   app.delete("/:id", { preHandler: [app.authenticate, app.authorize("clients.delete")] }, async (request) =>
     success(await service.delete(

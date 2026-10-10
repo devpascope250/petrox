@@ -15,6 +15,13 @@
         "prisma:migrate": "prisma migrate dev",
         "prisma:deploy": "prisma migrate deploy",
         "prisma:seed": "tsx prisma/seed.ts",
+    "prisma:seed:client-roles": "tsx prisma/seed-client-roles.ts",
+    "prisma:seed:shifts": "tsx prisma/seed-shifts-module.ts",
+    "prisma:seed:fuel-sales": "tsx prisma/seed-fuel-sales-modules.ts",
+    "prisma:seed:item-units": "tsx prisma/seed-item-units-module.ts",
+    "prisma:seed:card-types": "tsx prisma/seed-card-types-module.ts",
+    "prisma:seed:mobile-devices": "tsx prisma/seed-mobile-devices-module.ts",
+    "prisma:seed:client-cars": "tsx prisma/seed-client-cars-module.ts",
         "postinstall": "prisma generate"
     },
     "engines": {

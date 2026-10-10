@@ -44,9 +44,21 @@ export const centralStockTransactionReportSchema = paginationQuerySchema.extend(
   message: "startDate must be before or equal to endDate", path: ["endDate"],
 });
 
+/** Inventory movement per item: no pagination, the item list is short. */
+export const centralStockInventorySchema = z.object({
+  startDate: fromDate.optional(),
+  endDate: toDate.optional(),
+  itemId: uuidSchema.optional(),
+  depotId: uuidSchema.optional(),
+}).refine(({ startDate, endDate }) => !startDate || !endDate || startDate <= endDate, {
+  message: "startDate must be before or equal to endDate", path: ["endDate"],
+});
+
 export type ReportOrderSchema = z.infer<typeof reportOrderSchema>;
 export type CentralStockReportSchema = z.infer<typeof centralStockReportSchema>;
 export type CentralStockTransactionReportSchema = z.infer<typeof centralStockTransactionReportSchema>;
 export type ReportOrderQuery = Omit<ReportOrderSchema, "startDate" | "endDate"> & { startDate: Date; endDate: Date };
 export type CentralStockReportQuery = Omit<CentralStockReportSchema, "startDate" | "endDate"> & { startDate: Date; endDate: Date };
 export type CentralStockTransactionReportQuery = Omit<CentralStockTransactionReportSchema, "startDate" | "endDate"> & { startDate: Date; endDate: Date };
+export type CentralStockInventorySchema = z.infer<typeof centralStockInventorySchema>;
+export type CentralStockInventoryQuery = Omit<CentralStockInventorySchema, "startDate" | "endDate"> & { startDate: Date; endDate: Date };

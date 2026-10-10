@@ -43,7 +43,9 @@ export class UsersRepository {
       } else if (input.position === "clientUser") {
         clientId = input.clientId;
       }
-      const siteId = input.position === "siteManager" ? input.siteId : undefined;
+      // Site managers and other site staff are attached to a site on creation.
+      const siteId =
+        input.position === "siteManager" || input.position === "others" ? input.siteId : undefined;
       return tx.user.create({
         data: {
           email: input.email,
@@ -108,5 +110,24 @@ export class UsersRepository {
 
   delete(id: string) {
     return this.db.user.delete({ where: { id }, select: publicUserSelect });
+  }
+
+  /**
+   * The active sites and clients a create-user form needs for its dependent
+   * selects. `clientId` narrows the clients to one, for a client administrator.
+   */
+  formOptions(clientId?: string) {
+    return this.db.$transaction([
+      this.db.tblSite.findMany({
+        where: { status: "active" },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true }
+      }),
+      this.db.client.findMany({
+        where: { status: true, ...(clientId && { id: clientId }) },
+        orderBy: { clientCode: "asc" },
+        select: { id: true, clientCode: true, name: true }
+      })
+    ]);
   }
 }

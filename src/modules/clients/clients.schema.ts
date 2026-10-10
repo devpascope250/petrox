@@ -8,6 +8,7 @@ import {
   pinSchema,
   uuidSchema
 } from "../../shared/validation/index.js";
+import { carFieldsSchema } from "../client-cars/client-car.schema.js";
 
 const clientDetailsSchema = z.object({
   name: nonEmptyNameSchema.optional(),
@@ -33,12 +34,15 @@ const userProfileSchema = z.object({
 const clientAdminUserSchema = userProfileSchema.extend({
   position: z.literal(UserPositions.clientAdmin),
   clientDetails: clientDetailsSchema,
+  /** Cars registered with the new client, in the same go. */
+  cars: z.array(carFieldsSchema).max(50, "Add at most 50 cars at once").optional(),
   clientId: z.never().optional(),
   siteId: z.never().optional()
 });
 
 const clientUserSchema = userProfileSchema.extend({
   position: z.literal(UserPositions.clientUser),
+  cars: z.never().optional(),
   clientId: uuidSchema,
   clientDetails: z.never().optional(),
   siteId: z.never().optional()
@@ -46,6 +50,7 @@ const clientUserSchema = userProfileSchema.extend({
 
 const siteManagerUserSchema = userProfileSchema.extend({
   position: z.literal(UserPositions.siteManager),
+  cars: z.never().optional(),
   siteId: uuidSchema,
   clientDetails: z.never().optional(),
   clientId: z.never().optional()
@@ -53,6 +58,7 @@ const siteManagerUserSchema = userProfileSchema.extend({
 
 const superAdminUserSchema = userProfileSchema.extend({
   position: z.literal(UserPositions.superAdmin),
+  cars: z.never().optional(),
   clientDetails: z.never().optional(),
   clientId: z.never().optional(),
   siteId: z.never().optional()
@@ -77,6 +83,23 @@ export const createUserSchema = z.discriminatedUnion("position", [
   superAdminUserSchema
 ]);
 
+/**
+ * The client company's own details when editing. Every field is optional and
+ * none carries a default, so a partial edit cannot silently reset a field the
+ * caller left out — unlike the create schema, where `subsidyAllowed` defaults.
+ */
+const updateClientDetailsSchema = z.object({
+  name: nonEmptyNameSchema.optional(),
+  phone: phoneSchema.optional(),
+  email: emailSchema.optional(),
+  idTino: z.string().trim().min(1).max(50).optional(),
+  province: uuidSchema.optional(),
+  district: uuidSchema.optional(),
+  sector: uuidSchema.optional(),
+  subsidyAllowed: z.boolean().optional(),
+  status: z.boolean().optional()
+}).refine((data) => Object.keys(data).length > 0, "At least one client detail is required");
+
 export const updateUserSchema = z.object({
   email: emailSchema.optional(),
   password: passwordSchema.optional(),
@@ -84,7 +107,8 @@ export const updateUserSchema = z.object({
   firstName: nonEmptyNameSchema.optional(),
   lastName: nonEmptyNameSchema.optional(),
   phone: phoneSchema.nullable().optional(),
-  roleId: uuidSchema.nullable().optional()
+  roleId: uuidSchema.nullable().optional(),
+  clientDetails: updateClientDetailsSchema.optional()
 }).refine((data) => Object.keys(data).length > 0, "At least one field is required");
 
 export const assignUserSiteSchema = z.object({
@@ -93,4 +117,5 @@ export const assignUserSiteSchema = z.object({
 
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+export type UpdateClientDetailsInput = z.infer<typeof updateClientDetailsSchema>;
 export type AssignUserSiteInput = z.infer<typeof assignUserSiteSchema>;

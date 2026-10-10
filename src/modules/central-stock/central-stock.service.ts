@@ -25,6 +25,7 @@ export class CentralStockService {
           ...clearance,
           supportingDocUrl: this.documentUrl(clearance.supportingDocUrl),
           dmsDocUrl: this.documentUrl(clearance.dmsDocUrl),
+          assessmentDocUrl: this.documentUrl(clearance.assessmentDocUrl),
         })),
         transactions: stock.transactions.map((transaction) => ({
           ...transaction,

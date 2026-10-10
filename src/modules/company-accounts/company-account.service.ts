@@ -21,13 +21,20 @@ export class CompanyAccountService {
     return account;
   }
 
-  create(input: CreateCompanyAccountInput, createdAtBy: string) {
+  async create(input: CreateCompanyAccountInput, createdAtBy: string) {
+    await this.assertSite(input.siteId);
     return this.repo.create(input, createdAtBy);
   }
 
   async update(id: string, input: UpdateCompanyAccountInput) {
     await this.find(id);
+    await this.assertSite(input.siteId);
     return this.repo.update(id, input);
+  }
+
+  /** An account tied to a site must name one that exists. */
+  private async assertSite(siteId: string | null | undefined) {
+    if (siteId && !(await this.repo.findSite(siteId))) throw new NotFoundError("Site");
   }
 
   async changeStatus(id: string) {

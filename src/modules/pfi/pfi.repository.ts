@@ -23,7 +23,15 @@ export class PfiRepository {
       nominationId: true,
       unitPrice: true,
       supportingDocUrl: true,
-      nomination: true
+      nomination: {
+        include: {
+          t1Validations: {
+            include: {
+              extraValidations: true
+            }
+          }
+        }
+      },
       },
     });
   }

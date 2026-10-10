@@ -8,6 +8,9 @@ import { globalErrorHandler } from "../src/utils/error-handler.js";
 const walletId = "cjld2cjxh0000qzrmn831i7rn";
 const clientId = "e805d56d-893b-4e36-8872-29d567a4bc5e";
 const planId = "7de52860-00c0-4907-a665-d210eeeb8c2b";
+const otherPlanId = "0b9a3c1e-5f2d-4e7a-8c6b-1d2e3f4a5b6c";
+const plan = (id: string, amount: string, number = 100, issued = 0) =>
+  ({ id, name: `Plan ${amount}`, number, amount: new Prisma.Decimal(amount), _count: { clientCoupons: issued } });
 
 async function setup() {
   const wallet = { id: walletId, clientId, status: "active", amount: new Prisma.Decimal(100) };
@@ -17,7 +20,7 @@ async function setup() {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       findUniqueOrThrow: vi.fn().mockResolvedValue(wallet)
     },
-    couponPlan: { findFirst: vi.fn().mockResolvedValue({ id: planId, amount: new Prisma.Decimal("12.50") }) },
+    couponPlan: { findMany: vi.fn().mockResolvedValue([plan(planId, "12.50")]) },
     clientCoupon: { create: vi.fn().mockImplementation(async ({ data }) => ({ id: "coupon-id", ...data })) },
     cardCopy: { findFirst: vi.fn().mockResolvedValue({ id: 3n }) },
     card: {
@@ -67,6 +70,96 @@ describe("wallet operations", () => {
     } finally { await app.close(); }
   });
 
+  it("sells coupons of several plans in one debit", async () => {
+    const { app, db, post } = await setup();
+    try {
+      db.couponPlan.findMany.mockResolvedValue([plan(planId, "12.50"), plan(otherPlanId, "20.00")] as never);
+      const response = await post("buy-coupons", {
+        items: [{ couponPlanId: planId, quantity: 2 }, { couponPlanId: otherPlanId, quantity: 3 }]
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().data.amount).toBe("85");
+      expect(db.clientWallet.updateMany).toHaveBeenCalledTimes(1);
+      expect(db.clientWallet.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: { amount: { decrement: new Prisma.Decimal(85) } }
+      }));
+      expect(db.clientCoupon.create).toHaveBeenCalledTimes(5);
+    } finally { await app.close(); }
+  });
+
+  it("refuses more coupons than a plan has left, before taking payment", async () => {
+    const { app, db, post } = await setup();
+    try {
+      db.couponPlan.findMany.mockResolvedValue([plan(planId, "12.50", 10, 8)] as never);
+      const response = await post("buy-coupons", { items: [{ couponPlanId: planId, quantity: 3 }] });
+      expect(response.statusCode).toBe(422);
+      expect(response.json().error.code).toBe("COUPON_PLAN_EXHAUSTED");
+      expect(db.clientWallet.updateMany).not.toHaveBeenCalled();
+      expect(db.clientCoupon.create).not.toHaveBeenCalled();
+      expect((await post("buy-coupons", { items: [{ couponPlanId: planId, quantity: 2 }] })).statusCode).toBe(201);
+    } finally { await app.close(); }
+  });
+
+  it("rejects a sale naming the same plan twice", async () => {
+    const { app, post } = await setup();
+    try {
+      const response = await post("buy-coupons", {
+        items: [{ couponPlanId: planId, quantity: 1 }, { couponPlanId: planId, quantity: 1 }]
+      });
+      expect(response.statusCode).toBe(400);
+    } finally { await app.close(); }
+  });
+
+  it("moves money from the wallet to a main card", async () => {
+    const { app, db, post } = await setup();
+    try {
+      const response = await post("card-transfer", { direction: "TO_CARD", cardId: "5", amount: "25" });
+      expect(response.statusCode).toBe(201);
+      expect(db.clientWallet.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: { amount: { decrement: new Prisma.Decimal(25) } }
+      }));
+      expect(db.card.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: { balance: { increment: new Prisma.Decimal(25) } }
+      }));
+      expect(db.walletTransaction.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ type: "TRANSFER", direction: "OUT" })
+      }));
+      expect(db.cardCopyTransaction.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ direction: "IN" })
+      }));
+    } finally { await app.close(); }
+  });
+
+  it("moves money from a main card back to the wallet", async () => {
+    const { app, db, post } = await setup();
+    try {
+      const response = await post("card-transfer", { direction: "FROM_CARD", cardId: "5", amount: "10" });
+      expect(response.statusCode).toBe(201);
+      expect(db.card.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ balance: { gte: new Prisma.Decimal(10) } }),
+        data: { balance: { decrement: new Prisma.Decimal(10) } }
+      }));
+      expect(db.clientWallet.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: { amount: { increment: new Prisma.Decimal(10) } }
+      }));
+      expect(db.walletTransaction.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ type: "TRANSFER", direction: "IN" })
+      }));
+    } finally { await app.close(); }
+  });
+
+  it("refuses a card transfer from a card without enough balance, or not the client's main card", async () => {
+    const { app, db, post } = await setup();
+    try {
+      db.card.updateMany.mockResolvedValueOnce({ count: 0 } as never);
+      expect((await post("card-transfer", { direction: "FROM_CARD", cardId: "5", amount: "999" })).statusCode).toBe(422);
+      expect(db.walletTransaction.create).not.toHaveBeenCalled();
+      db.cardCopy.findFirst.mockResolvedValueOnce(null as never);
+      expect((await post("card-transfer", { direction: "TO_CARD", cardId: "7", amount: "1" })).statusCode).toBe(404);
+      expect((await post("card-transfer", { direction: "SIDEWAYS", cardId: "5", amount: "1" })).statusCode).toBe(400);
+    } finally { await app.close(); }
+  });
+
   it("credits an assigned card and records both sides with JSON-safe IDs", async () => {
     const { app, db, post } = await setup();
     try {
@@ -101,7 +194,7 @@ describe("wallet operations", () => {
   it("rejects inactive plans, other clients' cards and unavailable wallets", async () => {
     const { app, db, post } = await setup();
     try {
-      db.couponPlan.findFirst.mockResolvedValue(null as never);
+      db.couponPlan.findMany.mockResolvedValue([] as never);
       expect((await post("buy-coupons", { couponPlanId: planId })).statusCode).toBe(404);
       db.cardCopy.findFirst.mockResolvedValue(null as never);
       expect((await post("transfer-to-card", { cardId: "5", amount: "25" })).statusCode).toBe(404);

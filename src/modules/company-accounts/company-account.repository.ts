@@ -10,6 +10,10 @@ const companyAccountSelect = {
   id: true,
   code: true,
   name: true,
+  type: true,
+  siteId: true,
+  site: { select: { id: true, name: true } },
+  requiredReference: true,
   status: true,
   createdAtBy: true,
   user: {
@@ -58,6 +62,10 @@ export class CompanyAccountRepository {
       data: input,
       select: companyAccountSelect
     });
+  }
+
+  findSite(id: string) {
+    return this.db.tblSite.findUnique({ where: { id }, select: { id: true } });
   }
 
   changeStatus(id: string, status: "active" | "inactive") {

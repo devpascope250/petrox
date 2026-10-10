@@ -18,7 +18,7 @@ function setup() {
   const tx = {
     tblCuve: { findFirst: vi.fn().mockResolvedValue(cuve), findMany: vi.fn().mockResolvedValue([cuve]) },
     cuveTransaction: {
-      findMany: vi.fn().mockResolvedValue([{ id: "txn", quantity: d(50), direction: "IN" }]),
+      findMany: vi.fn().mockResolvedValue([{ id: "txn", quantity: d(50), direction: "IN", sale: null }]),
       count: vi.fn().mockResolvedValue(3),
       groupBy: vi.fn().mockResolvedValueOnce([
         { direction: "IN", _sum: { quantity: d(50) } },
@@ -26,6 +26,7 @@ function setup() {
       ]).mockResolvedValueOnce([{ direction: "IN", _sum: { quantity: d(10) } }]),
     },
   };
+  Object.assign(tx, { fuelSale: { aggregate: vi.fn().mockResolvedValue({ _sum: { amount: null } }) } });
   const db = { ...tx, $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback(tx)) };
   return { tx, db, repo: new CuveRepository(db as never) };
 }
@@ -116,7 +117,7 @@ describe("cuve stock reports", () => {
       const transactions = await app.inject({ method: "GET", url: `/api/v1/cuves/${id}/transactions?endDate=2026-09-10` });
       expect(transactions.statusCode).toBe(200);
       expect(transactions.json().data.summary.netMovement).toBe(30);
-      expect(authorize).toHaveBeenCalledWith("cuve.read", "cuve.manage");
+      expect(authorize).toHaveBeenCalledWith("cuve.stock.read", "cuve.read", "cuve.manage");
     } finally { await app.close(); }
   });
 });

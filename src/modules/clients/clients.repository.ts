@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { assertCarItems, assertPlatesFree } from "../client-cars/client-car.repository.js";
 import { AuthUser } from "../../shared/auth/context-user.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PaginationQuery } from "../../shared/validation/index.js";
@@ -45,6 +46,11 @@ export class ClientRepository {
           data: { ...input.clientDetails, clientCode: generateClientCode() }
         });
         clientId = client.id;
+        if (input.cars?.length) {
+          await assertPlatesFree(tx, input.cars.map((car) => car.plateNo));
+          await assertCarItems(tx, input.cars.map((car) => car.itemId));
+          await tx.clientCar.createMany({ data: input.cars.map((car) => ({ ...car, clientId: client.id })) });
+        }
       } else if (input.position === "clientUser") {
         clientId = input.clientId;
       }
@@ -68,8 +74,23 @@ export class ClientRepository {
     });
   }
 
-  update(id: string, data: Prisma.UserUpdateInput) {
-    return this.db.user.update({ where: { id }, data, select: publicUserSelect });
+  /**
+   * Updates the user, and the client company it belongs to when company details
+   * were supplied. Both land in one transaction so a half-saved edit is never
+   * visible, and the client is written first so the returned user carries it.
+   */
+  update(
+    id: string,
+    data: Prisma.UserUpdateInput,
+    client?: { id: string; data: Prisma.ClientUpdateInput }
+  ) {
+    if (!client) {
+      return this.db.user.update({ where: { id }, data, select: publicUserSelect });
+    }
+    return this.db.$transaction(async (tx) => {
+      await tx.client.update({ where: { id: client.id }, data: client.data });
+      return tx.user.update({ where: { id }, data, select: publicUserSelect });
+    });
   }
 
   async updateStatus(id: string) {

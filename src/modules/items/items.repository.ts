@@ -22,7 +22,7 @@ export class ItemsRepository {
         parentId: data.parentId,
         itemUnits: {
           createMany: {
-            data: data.units
+            data: data.units ?? []
           }
         }
       }
@@ -33,17 +33,17 @@ export class ItemsRepository {
     if(! await this.find(id)) throw new NotFoundError();
     return await this.db.$transaction(async(tx) => {
       await tx.item.update({ where: {id},data: {baseUnitId: data.baseUnitId, parentId: data.parentId, name: data.name, descriptions: data.descriptions}});
-      await tx.itemUnit.deleteMany({
-        where: {
-          itemId: id,
-          unitId: {
-            notIn: data.units.map((unt) => unt.unitId)
-          }
-        }
-      })
+      // No `units` in the request means "leave the units alone" — they are
+      // managed on their own page too, and an item edit must not wipe them.
+      const units = data.units;
+      if (!units) return [];
 
+      const dropped = { itemId: id, unitId: { notIn: units.map((unt) => unt.unitId) } };
+      // A unit with prices set is switched off, not deleted: its prices are history.
+      await tx.itemUnit.updateMany({ where: { ...dropped, itemPrices: { some: {} } }, data: { status: "inactive" } });
+      await tx.itemUnit.deleteMany({ where: { ...dropped, itemPrices: { none: {} } } });
 
-      const itemUnits = data.units.map(async(dt) => {
+      const itemUnits = units.map(async(dt) => {
         return await tx.itemUnit.upsert(
           {
             where: {

@@ -6,8 +6,13 @@ import { CreateDriverSchema } from "./deriver.schema.js";
 export class DriverRepository {
   constructor(private db: PrismaClient) {}
 
-  list(query: PaginationQuery) {
-    return this.db.$transaction([
+  /**
+   * Drivers with their active trucks. Each truck carries its tank capacity and
+   * how much is already nominated on it but not yet delivered — the same rule
+   * nominations enforce — so a form can show the space left before submitting.
+   */
+  async list(query: PaginationQuery) {
+    const [drivers, total] = await this.db.$transaction([
       this.db.driver.findMany({
       ...paginationArgs(query),
       orderBy: { createdAt: "desc" },
@@ -31,14 +36,35 @@ export class DriverRepository {
               platNumber: true,
               model: true,
               status: true,
+              tankCapacity: true,
             }
-          }
+          },
+          nominations: {
+            where: { timeLine: { none: { timeLineStatus: { status: "stockReceived" } } } },
+            select: { ambQuantity: true },
+          },
          }
        }
       },
       }),
       this.db.driver.count()
     ]);
+    const items = drivers.map((driver) => ({
+      ...driver,
+      vehicles: driver.vehicles.map(({ nominations, vechile, ...assignment }) => {
+        const tankCapacity = Number(vechile.tankCapacity);
+        const nominatedQuantity = nominations.reduce((sum, row) => sum + Number(row.ambQuantity), 0);
+        return {
+          ...assignment,
+          vechile: { ...vechile, tankCapacity },
+          /** Nominated on this truck and not yet delivered. */
+          nominatedQuantity,
+          /** What still fits in the tank. */
+          availableCapacity: Math.max(0, tankCapacity - nominatedQuantity),
+        };
+      }),
+    }));
+    return [items, total] as const;
   }
 
   create(data: CreateDriverSchema) {

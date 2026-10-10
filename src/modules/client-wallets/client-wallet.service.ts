@@ -6,12 +6,12 @@ import { ClientWalletRepository } from "./client-wallet.repository.js";
 import type {
   CreateClientWalletInput,
   TransferWalletToCardInput,
+  WalletCardTransferInput,
   BuyWalletCouponsInput,
   CreateWalletMovementInput,
   UpdateClientWalletInput,
   WalletMovementQuery
 } from "./client-wallet.schema.js";
-import { within2DaysPeriod } from "../../utils/utils.js";
 
 export class ClientWalletService {
   constructor(private repo: ClientWalletRepository) {}
@@ -49,8 +49,9 @@ export class ClientWalletService {
 
   async listMovements(id: string, query: WalletMovementQuery, actor: AuthUser) {
     await this.find(id, actor);
-    const dates = within2DaysPeriod(query.startDate, query.endDate);
-    const [items, total] = await this.repo.listMovements(id, { ...query, ...dates });
+    // Without dates, the latest movements are listed — a page of them — rather
+    // than an arbitrary recent window that may hold none.
+    const [items, total] = await this.repo.listMovements(id, query);
     return paginatedData(items, total, query);
   }
 
@@ -64,6 +65,16 @@ export class ClientWalletService {
 
   transferToCard(id: string, input: TransferWalletToCardInput, actor: AuthUser) {
     return this.repo.transferToCard(id, input, actor.userId, this.clientScope(actor));
+  }
+
+  /** The client's main cards, which money can move to and from. */
+  async mainCards(id: string, actor: AuthUser) {
+    const wallet = await this.find(id, actor);
+    return this.repo.listMainCards(wallet.clientId);
+  }
+
+  cardTransfer(id: string, input: WalletCardTransferInput, actor: AuthUser) {
+    return this.repo.cardTransfer(id, input, actor.userId, this.clientScope(actor));
   }
 
   buyCoupons(id: string, input: BuyWalletCouponsInput, actor: AuthUser) {

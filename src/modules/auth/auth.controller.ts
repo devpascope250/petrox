@@ -80,6 +80,9 @@ export class AuthController {
     return success(null);
   };
 
+  me = async (request: FastifyRequest) =>
+    success(await this.service.me(request.contextUser!.userId));
+
   requestReset = async (request: FastifyRequest, reply: FastifyReply) =>
     created(reply, await this.service.createResetToken(parseInput(resetRequestSchema, request.body).email));
 

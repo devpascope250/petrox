@@ -1,12 +1,12 @@
 import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
-import { AuthUser } from "../../shared/auth/context-user.js";
+import { AuthUser, isSiteBound } from "../../shared/auth/context-user.js";
 import { NotFoundError } from "../../utils/errors.js";
 import { CreateSiteSchema } from "./sites.schema.js";
 export class SiteRepository {
   constructor(private db: PrismaClient) {}
 
   async list(actor: AuthUser) {
-    if (actor.position === "siteManager") {
+    if (isSiteBound(actor)) {
       if (!actor.siteId) throw new NotFoundError("This User Must Have Site Assigned to Him")
     }
   const whereClause = actor.siteId ? { id: actor.siteId} : {};

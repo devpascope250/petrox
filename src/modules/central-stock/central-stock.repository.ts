@@ -31,6 +31,7 @@ export class CentralStockRepository {
         ambQuantity: true, 
         quantityAt20C: true, 
         supportingDocUrl: true,
+        receiptNumber: true,
         status: true, 
         createdAt: true, 
         updatedAt: true,
@@ -44,7 +45,15 @@ export class CentralStockRepository {
         deport: { select: { id: true, name: true, location: true, type: true, status: true } },
         t1Validation: { select: {
           id: true, exportingCountry: true, supportingDocUrl: true, createdAt: true,
-          nomination: { select: { id: true, ambQuantity: true, quantityAt20C: true, destination: true, expectedLoadingDate: true } },
+          // What customs validated, so a receipt can be compared against it.
+          quantityAt20C: true,
+          nomination: { select: {
+            id: true, ambQuantity: true, destination: true, expectedLoadingDate: true,
+            nominationVessels: { orderBy: { createdAt: "asc" }, select: {
+              id: true, stockId: true, ambQuantity: true,
+              stock: { select: { item: true, cargo: true } },
+            } },
+          } },
         } },
         transactions: {
           orderBy: { createdAt: "desc" },
@@ -58,7 +67,7 @@ export class CentralStockRepository {
           orderBy: { createdAt: "desc" },
           select: {
             id: true, quantity: true, fees: true, amount: true, status: true,
-            supportingDocUrl: true, dmsDocUrl: true, createdAt: true, updatedAt: true,
+            supportingDocUrl: true, dmsDocUrl: true, assessmentDocUrl: true, createdAt: true, updatedAt: true,
             agent: { select: { id: true, names: true, fees: true, status: true } },
             user: { select: { id: true, firstName: true, lastName: true } },
             centralStockOrders: { select: { quantity: true, orderType: true } },
@@ -72,6 +81,7 @@ export class CentralStockRepository {
       ambQuantity: Prisma.Decimal;
       quantityAt20C: Prisma.Decimal;
       supportingDocUrl: string | null;
+      receiptNumber: string | null;
       status: string;
       gainQty: Prisma.Decimal | null;
       lossQty: Prisma.Decimal | null;
@@ -91,18 +101,27 @@ export class CentralStockRepository {
         clearanceQuantitiesByStatus: Record<string, number>;
       };
       stocks: Array<{
-        id: string; quantityBeforeTransactions: number; receivedQuantity: number;
+        id: string; 
+        quantityBeforeTransactions: number; 
+        receivedQuantity: number;
         reconciledInQuantity: number;
         reconciledOutQuantity: number; soldOutQuantity: number; remainingQuantity: number;
         clearedQuantity: number; unclearedQuantity: number;
-        supportingDocUrl: string | null; status: typeof centralStocks[number]["status"];
+        supportingDocUrl: string | null;
+        receiptNumber: string | null;
+        // The receipt's own measured figures and reconciliation — previously
+        // only the newest receipt's leaked onto the item group.
+        ambQuantity: number; quantityAt20C: number;
+        lossQty: number | null; gainQty: number | null; toleranceRate: number | null;
+         status: typeof centralStocks[number]["status"];
         createdAt: Date; updatedAt: Date; depot: typeof centralStocks[number]["deport"];
         t1Validation: typeof centralStocks[number]["t1Validation"];
         clearances: Array<{
           id: string; quantity: number; fees: number | null;
           amount: number | null;
           status: typeof centralStocks[number]["stockClearances"][number]["status"];
-          supportingDocUrl: string | null; dmsDocUrl: string | null; createdAt: Date; updatedAt: Date;
+          supportingDocUrl: string | null; dmsDocUrl: string | null; assessmentDocUrl: string | null;
+          createdAt: Date; updatedAt: Date;
           agent: typeof centralStocks[number]["stockClearances"][number]["agent"];
           clearedBy: typeof centralStocks[number]["stockClearances"][number]["user"];
         }>;
@@ -120,6 +139,7 @@ export class CentralStockRepository {
           ambQuantity: stock.ambQuantity, 
           quantityAt20C: stock.quantityAt20C, 
           supportingDocUrl: stock.supportingDocUrl,
+          receiptNumber: stock.receiptNumber,
           status: stock.status, 
         gainQty: stock.gainQty, 
         lossQty: stock.lossQty,
@@ -163,6 +183,7 @@ export class CentralStockRepository {
           fees: clearance.fees === null ? null : Number(clearance.fees),
           amount: clearance.amount === null ? null : Number(clearance.amount),
           status: clearance.status, supportingDocUrl: clearance.supportingDocUrl, dmsDocUrl: clearance.dmsDocUrl,
+          assessmentDocUrl: clearance.assessmentDocUrl,
           createdAt: clearance.createdAt, updatedAt: clearance.updatedAt, agent: clearance.agent,
           clearedBy: clearance.user,
         };
@@ -191,6 +212,11 @@ export class CentralStockRepository {
         id: stock.id, quantityBeforeTransactions: quantity, receivedQuantity, reconciledInQuantity,reconciledOutQuantity,
         soldOutQuantity, remainingQuantity, clearedQuantity, unclearedQuantity,
         supportingDocUrl: stock.supportingDocUrl, status: stock.status,
+        receiptNumber: stock.receiptNumber,
+        ambQuantity: Number(stock.ambQuantity), quantityAt20C: Number(stock.quantityAt20C),
+        lossQty: stock.lossQty === null ? null : Number(stock.lossQty),
+        gainQty: stock.gainQty === null ? null : Number(stock.gainQty),
+        toleranceRate: stock.toleranceRate === null ? null : Number(stock.toleranceRate),
         createdAt: stock.createdAt, updatedAt: stock.updatedAt,
         // The database relation is named `deport`; expose it as `depot`.
         depot: stock.deport, t1Validation: stock.t1Validation, clearances, transactions,
@@ -217,6 +243,7 @@ export class CentralStockRepository {
         quantityAt20C: data.quantityAt20C,
         deportId: data.deportId, 
         t1ValidationId: data.t1ValidationId, 
+        receiptNumber: data.receiptNumber,
         itemId: data.itemId,
         transactions: { 
           create: { 

@@ -15,6 +15,18 @@ export const cuveTransactionsQuerySchema = paginationQuerySchema.extend({
   message: "startDate must be before or equal to endDate", path: ["endDate"],
 });
 
+/** With no dates the inventory covers the whole history, so opening is zero. */
+export const cuveInventoryQuerySchema = z.object({
+  siteId: uuidSchema.optional(),
+  startDate: reportDate.transform((value) => new Date(value)).optional(),
+  endDate: reportDate.transform((value) => new Date(
+    value.length === 10 ? `${value}T23:59:59.999Z` : value,
+  )).optional(),
+}).refine(({ startDate, endDate }) => !startDate || !endDate || startDate <= endDate, {
+  message: "startDate must be before or equal to endDate", path: ["endDate"],
+});
+
+export type CuveInventoryQuery = z.infer<typeof cuveInventoryQuerySchema>;
 export type CuveStockQuery = z.infer<typeof cuveStockQuerySchema>;
 export type CuveTransactionsQuery = z.infer<typeof cuveTransactionsQuerySchema>;
 

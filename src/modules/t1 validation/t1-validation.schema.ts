@@ -5,7 +5,8 @@ export const createT1ValidationsSchema = z.object({
   nominationId: uuidSchema,
   exportingCountry: nonEmptyNameSchema,
   customOffice:   nonEmptyNameSchema,
-  transitNumbering: nonEmptyNameSchema,
+  // transitNumbering: nonEmptyNameSchema,
+  quantityAt20C: z.coerce.number(),
   supportingDocUrl: z.string().optional().nullable(),
   createdBy: z.string().optional()
 });

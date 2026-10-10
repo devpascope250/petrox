@@ -27,8 +27,8 @@ export class StockRepository {
             id: true,
             blRef: true,
             vesselName: true,
-            ambQuantity: true,
-            quantityAt20C: true,  
+            quantityInKg: true,
+            quantityInLitre: true, 
             receivedDate: true,
             expirationDate: true,
             status: true,
@@ -54,32 +54,37 @@ export class StockRepository {
             },
           },
         },
-        nominations: {
+        nominationVessels: {
           orderBy: { createdAt: "desc" },
           select: {
             id: true,
             ambQuantity: true,
-            quantityAt20C: true,
-            destination: true,
-            expectedLoadingDate: true,
-            driverVehicle: {
+            nomination: {
               select: {
-                driver: {
+                id: true,
+                destination: true,
+                expectedLoadingDate: true,
+                ambQuantity: true,
+                driverVehicle: {
                   select: {
-                    id: true,
-                    names: true,
-                    phone: true,
-                    lisence: true,
-                    passport: true,
-                  },
-                },
-                vechile: {
-                  select: {
-                    id: true,
-                    platNumber: true,
-                    truckNumber: true,
-                    trailerNumber: true,
-                    model: true,
+                    driver: {
+                      select: {
+                        id: true,
+                        names: true,
+                        phone: true,
+                        lisence: true,
+                        passport: true,
+                      },
+                    },
+                    vechile: {
+                      select: {
+                        id: true,
+                        platNumber: true,
+                        truckNumber: true,
+                        trailerNumber: true,
+                        model: true,
+                      },
+                    },
                   },
                 },
               },
@@ -109,11 +114,13 @@ export class StockRepository {
         depot: typeof stocks[number]["deport"];
         nominations: Array<{
           id: string;
+          vesselId: string;
           quantity: number;
+          nominationQuantity: number;
           destination: string;
           expectedLoadingDate: Date;
-          driver: typeof stocks[number]["nominations"][number]["driverVehicle"]["driver"];
-          vehicle: typeof stocks[number]["nominations"][number]["driverVehicle"]["vechile"];
+          driver: typeof stocks[number]["nominationVessels"][number]["nomination"]["driverVehicle"]["driver"];
+          vehicle: typeof stocks[number]["nominationVessels"][number]["nomination"]["driverVehicle"]["vechile"];
         }>;
       }>;
     }>();
@@ -137,9 +144,13 @@ export class StockRepository {
       }
 
       const quantity = Number(stock.quantity);
-      const nominations = stock.nominations.map((nomination) => ({
+      // A nomination can load from several vessels, so `quantity` here is the
+      // slice drawn from *this* stock, not the nomination's whole volume.
+      const nominations = stock.nominationVessels.map(({ nomination, ...vessel }) => ({
         id: nomination.id,
-        quantity: Number(nomination.quantityAt20C),
+        vesselId: vessel.id,
+        quantity: Number(vessel.ambQuantity),
+        nominationQuantity: Number(nomination.ambQuantity),
         destination: nomination.destination,
         expectedLoadingDate: nomination.expectedLoadingDate,
         driver: nomination.driverVehicle.driver,

@@ -8,7 +8,11 @@ import {
 } from "../../shared/validation/index.js";
 import { NominationService } from "./nominations.service.js";
 import { NominationRepository } from "./nominations.repository.js";
-import { createNominationsSchema } from "./nominations.schema.js";
+import {
+  addNominationVesselSchema,
+  createNominationsSchema,
+  nominationListQuerySchema,
+} from "./nominations.schema.js";
 const routes: FastifyPluginAsync = async (app) => {
   const service = new NominationService(
     new NominationRepository(app.prisma),
@@ -27,6 +31,7 @@ const routes: FastifyPluginAsync = async (app) => {
         await service.list(
           parseInput(datesQuerySchema, request.query),
           parseInput(itemIdQuerySchema, request.query).itemId,
+          parseInput(nominationListQuerySchema, request.query).withoutPfi,
         ),
       ),
   );
@@ -75,6 +80,23 @@ const routes: FastifyPluginAsync = async (app) => {
             ...(request.body as object),
             createdBy: request.contextUser?.userId,
           }),
+        ),
+      ),
+  );
+  app.post(
+    "/:id/vessels",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("nominations.edit", "nominations.manage"),
+      ],
+    },
+    async (request, reply) =>
+      created(
+        reply,
+        await service.addVessels(
+          parseInput(idParamsSchema, request.params).id,
+          parseInput(addNominationVesselSchema, request.body),
         ),
       ),
   );

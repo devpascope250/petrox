@@ -58,10 +58,23 @@ const superAdminUserSchema = userProfileSchema.extend({
   siteId: z.never().optional()
 });
 
+/**
+ * Staff who work at a site but manage nothing there, e.g. a pompiste. The site
+ * is optional here and can be assigned later; until then they appear in no
+ * site's shift pickers.
+ */
+const othersUserSchema = userProfileSchema.extend({
+  position: z.literal(UserPositions.others),
+  siteId: uuidSchema.optional(),
+  clientDetails: z.never().optional(),
+  clientId: z.never().optional()
+});
+
 /** Users managed independently from a client account. */
 export const createStaffUserSchema = z.discriminatedUnion("position", [
   siteManagerUserSchema,
-  superAdminUserSchema
+  superAdminUserSchema,
+  othersUserSchema
 ]);
 
 /** A new client administrator, or a user attached to an existing client. */
@@ -74,7 +87,8 @@ export const createUserSchema = z.discriminatedUnion("position", [
   clientAdminUserSchema,
   clientUserSchema,
   siteManagerUserSchema,
-  superAdminUserSchema
+  superAdminUserSchema,
+  othersUserSchema
 ]);
 
 export const updateUserSchema = z.object({

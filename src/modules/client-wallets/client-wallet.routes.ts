@@ -5,6 +5,7 @@ import { ClientWalletRepository } from "./client-wallet.repository.js";
 import {
   clientWalletParamsSchema,
   transferWalletToCardSchema,
+  walletCardTransferSchema,
   buyWalletCouponsSchema,
   createClientWalletSchema,
   createWalletMovementSchema,
@@ -22,6 +23,25 @@ const routes: FastifyPluginAsync = async (app) => {
     async (request, reply) => created(reply, await service.transferToCard(
       parseInput(clientWalletParamsSchema, request.params).id,
       parseInput(transferWalletToCardSchema, request.body),
+      request.contextUser!
+    ))
+  );
+
+  app.get(
+    "/:id/main-cards",
+    { preHandler: [app.authenticate, app.authorize("client.wallets.read")] },
+    async (request) => success(await service.mainCards(
+      parseInput(clientWalletParamsSchema, request.params).id,
+      request.contextUser!
+    ))
+  );
+
+  app.post(
+    "/:id/card-transfer",
+    { preHandler: [app.authenticate, app.authorize("client.wallets.edit")] },
+    async (request, reply) => created(reply, await service.cardTransfer(
+      parseInput(clientWalletParamsSchema, request.params).id,
+      parseInput(walletCardTransferSchema, request.body),
       request.contextUser!
     ))
   );

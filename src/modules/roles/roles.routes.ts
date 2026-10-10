@@ -14,7 +14,7 @@ import {
   createRoleSchema,
   deleteParamSchema,
 } from "./roles.schema.js";
-import { NotFoundError } from "../../utils/errors.js";
+import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { Prisma } from "../../../prisma/generated/prisma/client.js";
 
 const routes: FastifyPluginAsync = async (app) => {
@@ -76,36 +76,41 @@ const routes: FastifyPluginAsync = async (app) => {
       );
       if (!(await app.prisma.role.findUnique({ where: { id: input.id } })))
         throw new NotFoundError(`This Role with ${input.id} does nnot exist`);
-      const updated = await app.prisma.$transaction(
-        async (tx: Prisma.TransactionClient) => {
-        await tx.rolePermission.deleteMany({
-          where: {
-            roleId: input.id,
-            id: {
-              notIn: data.permissionIds
-            }
-          }
-        })
-        await tx.role.update({where: {id: input.id}, data: {name: data.name}});
-        const permissions = data.permissionIds.map(async (permission) => {
-          return await tx.rolePermission.upsert({
-            where: {
-              roleId_permissionId: {
-                roleId: input.id,
-                permissionId: permission,
-              },
-            },
-            update: {
-              permissionId: permission,
-            },
-            create: {
-              roleId: input.id,
-              permissionId: permission,
-            },
-          });
-        });
+      const permissionIds = [...new Set(data.permissionIds)];
 
-        return await Promise.all(permissions);
+      // Removing role management from your own role would lock you out of this
+      // screen with no way back in, so that one change is refused.
+      if (input.id === request.contextUser!.roleId) {
+        const kept = await app.prisma.permission.count({
+          where: { id: { in: permissionIds }, code: "roles.manage" },
+        });
+        if (kept === 0) {
+          throw new BusinessError(
+            "CANNOT_REMOVE_OWN_ROLE_ACCESS",
+            "You cannot remove role management from your own role — you would lose access to this page.",
+          );
+        }
+      }
+
+      /*
+       * The list sent is the role's full set: anything missing is removed and
+       * anything new is added. The old delete filtered on the join row's own id
+       * rather than the permission id, so it wiped and re-created every row.
+       */
+      const updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const removed = await tx.rolePermission.deleteMany({
+          where: { roleId: input.id, permissionId: { notIn: permissionIds } },
+        });
+        const added = await tx.rolePermission.createMany({
+          data: permissionIds.map((permissionId) => ({ roleId: input.id, permissionId })),
+          skipDuplicates: true,
+        });
+        const role = await tx.role.update({
+          where: { id: input.id },
+          data: { name: data.name },
+          include: { permissions: { include: { permission: true } } },
+        });
+        return { ...role, added: added.count, removed: removed.count };
       });
 
       return success(updated);

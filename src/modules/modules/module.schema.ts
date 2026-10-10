@@ -26,6 +26,9 @@ export const moduleItemsSchemaBody = z
     icon: z.string().optional().nullable(),
   });
 
+/** The same fields without the id, for `PUT /edit/:id` where the id is in the path. */
+export const updateModuleFieldsSchema = updateMouleSchemaBody.omit({ id: true });
+
 export const moduleSortingBodySchema = z.object({
   categoryId: uuidSchema,
   sortingNumber: z.coerce.number().positive(),

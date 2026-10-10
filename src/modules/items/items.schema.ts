@@ -11,7 +11,7 @@ export const createItemSchema = z.object({
         unitId: uuidSchema,
         factorialValue: z.int().positive()
       })
-    ).max(250).default([])
+    ).max(250).optional()
   });
 
 export const createUnitSchema = z.object({

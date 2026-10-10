@@ -1,11 +1,17 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { generateCouponCode } from "../../utils/randomCodegen.js";
 import { NotFoundError } from "../../utils/errors.js";
 import { ClientCouponRepository } from "./client-coupon.repository.js";
-import type { CreateClientCouponInput, UpdateClientCouponInput, ClientCouponQuery } from "./client-coupon.schema.js";
+import type { CreateClientCouponInput, UpdateClientCouponInput, ClientCouponQuery, ClientCouponClientQuery } from "./client-coupon.schema.js";
 
 export class ClientCouponService {
   constructor(private repo: ClientCouponRepository) {}
   list(query: ClientCouponQuery) { return this.repo.list(query); }
+  listByClient(query: ClientCouponClientQuery) { return this.repo.listByClient(query); }
+  async clientSummary(clientId: string) {
+    if (!(await this.repo.findClient(clientId))) throw new NotFoundError("Client");
+    return this.repo.clientSummary(clientId);
+  }
   async find(id: string) {
     const record = await this.repo.find(id);
     if (!record) throw new NotFoundError("Client coupon");
@@ -16,7 +22,7 @@ export class ClientCouponService {
     const couponPlan = await this.repo.findPlan(input.couponPlanId);
     if (!couponPlan) throw new NotFoundError("Coupon plan");
     if (input.couponPlanId && !couponPlan) throw new NotFoundError("Coupon plan");
-    return this.repo.create({ ...input, amount: String(couponPlan.amount), code: input.code ?? randomUUID(), token: input.token ?? randomBytes(32).toString("hex") });
+    return this.repo.create({ ...input, amount: String(couponPlan.amount ?? input.amount), code: input.code ?? generateCouponCode(), token: input.token ?? randomBytes(32).toString("hex") });
   }
   async update(id: string, input: UpdateClientCouponInput) {
     await this.find(id);

@@ -12,6 +12,11 @@ const schema = z.object({
   PIN_HMAC_SECRET: z.string().min(32),
   ACCESS_TOKEN_TTL: z.string().default("15m"),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  /** POS devices: the longest a provisioning key may live, and how long a device's refresh token lasts. */
+  MOBILE_PROVISIONING_KEY_MAX_MINUTES: z.coerce.number().int().positive().max(1440).default(30),
+  MOBILE_DEVICE_REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(90),
+  /** A POS sale still initiated after this many minutes is cancelled, and its card freed. */
+  MOBILE_SALE_TIMEOUT_MINUTES: z.coerce.number().int().positive().max(1440).default(10),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
 
   SMTP_HOST: z.string().min(5),

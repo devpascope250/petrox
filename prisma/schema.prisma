@@ -105,6 +105,15 @@ model User {
   orderReceptions            OrderReception[]
   discounts                  Discount[]
   cardCopyTransactions       CardCopyTransaction[]
+  timeTablesUser             TblTimeTable[]           @relation("TimeTableUsers")
+  tblPumpAttendants          TblPumpAttendant[]
+  cuveTransactions           CuveTransaction[]
+  fuelSales                  FuelSale[]
+  cardTypes                  CardType[]
+  provisioningKeys           SiteProvisioningKey[]    @relation("ProvisioningKeyCreator")
+  revokedDevices             SiteDevice[]             @relation("DeviceRevoker")
+  itemPrices                 ItemPrice[]
+  generalTransactions        GeneralTransaction[]
 
   @@index([roleId])
 }
@@ -114,28 +123,32 @@ enum UserPositions {
   siteManager
   clientAdmin
   clientUser
+  /// Staff who work at a site but manage nothing there, e.g. a pompiste.
+  others
 }
 
 model Client {
-  id               String         @id @default(uuid())
-  clientCode       String         @unique
-  name             String?
-  phone            String?
-  email            String?
-  idTino           String?
-  province         String?
-  proviceLocation  Location?      @relation("ProviceLocationsRef", fields: [province], references: [id], onDelete: SetNull)
-  district         String?
-  districtLocation Location?      @relation("DistrictLocationRef", fields: [district], references: [id], onDelete: SetNull)
-  sector           String?
-  sectorLocation   Location?      @relation("SectorLocationRef", fields: [sector], references: [id], onDelete: SetNull)
-  status           Boolean        @default(true)
-  subsidyAllowed   Boolean        @default(false)
-  users            User[]
-  clientWallets    ClientWallet[]
-  cardCopies       CardCopy[]
-  discounts        Discount[]
-  clientCoupons    ClientCoupon[]
+  id                  String               @id @default(uuid())
+  clientCode          String               @unique
+  name                String?
+  phone               String?
+  email               String?
+  idTino              String?
+  province            String?
+  proviceLocation     Location?            @relation("ProviceLocationsRef", fields: [province], references: [id], onDelete: SetNull)
+  district            String?
+  districtLocation    Location?            @relation("DistrictLocationRef", fields: [district], references: [id], onDelete: SetNull)
+  sector              String?
+  sectorLocation      Location?            @relation("SectorLocationRef", fields: [sector], references: [id], onDelete: SetNull)
+  status              Boolean              @default(true)
+  subsidyAllowed      Boolean              @default(false)
+  users               User[]
+  clientWallets       ClientWallet[]
+  cardCopies          CardCopy[]
+  discounts           Discount[]
+  clientCoupons       ClientCoupon[]
+  clientCars          ClientCar[]
+  generalTransactions GeneralTransaction[]
 }
 
 model RefreshToken {
@@ -177,13 +190,15 @@ model Item {
   baseUnit  Unit?      @relation(fields: [baseUnitId], references: [id], onDelete: SetNull)
   itemUnits ItemUnit[]
 
-  itemClass      Item?               @relation("ItemHierarchy", fields: [parentId], references: [id])
-  items          Item[]              @relation("ItemHierarchy")
-  orders         Order[]
-  stock          Stock[]
-  centralStocks  CentralStock[]
-  cuves          TblCuve[]
-  toleranceRates ItemToleranceRate[]
+  itemClass           Item?                @relation("ItemHierarchy", fields: [parentId], references: [id])
+  items               Item[]               @relation("ItemHierarchy")
+  orders              Order[]
+  stock               Stock[]
+  centralStocks       CentralStock[]
+  cuves               TblCuve[]
+  toleranceRates      ItemToleranceRate[]
+  clientCars          ClientCar[]
+  generalTransactions GeneralTransaction[]
 
   @@index([id])
   @@index([parentId])
@@ -211,13 +226,25 @@ model ItemUnit {
   updatedAt      DateTime   @updatedAt
   status         StatusType @default(active)
 
-  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  unit Unit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  item       Item        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  unit       Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  itemPrices ItemPrice[]
 
   @@unique([unitId, itemId])
   @@index([id])
   @@index([unitId])
   @@index([itemId])
+}
+
+model ItemPrice {
+  id         String     @id @default(uuid())
+  itemUnitId String
+  itemUnit   ItemUnit   @relation(fields: [itemUnitId], references: [id])
+  price      Decimal    @db.Decimal(18, 2)
+  createdBy  String
+  user       User       @relation(fields: [createdBy], references: [id])
+  status     StatusType @default(active)
+  createdAt  DateTime   @default(now())
 }
 
 model Supplier {
@@ -433,17 +460,20 @@ model LoadedOrder {
 }
 
 model OrderReception {
-  id             String             @id @default(uuid())
-  loadingOrderId String
-  loadingOrder   LoadingOrder       @relation(fields: [loadingOrderId], references: [id])
-  cuveId         String
-  cuve           TblCuve            @relation(fields: [cuveId], references: [id])
-  expectedQty    Decimal            @db.Decimal(18,2)
-  receivedQty    Decimal            @db.Decimal(18,2)
-  receivedBy     String
-  status         LoadingOrderStatus @default(pending)
-  user           User               @relation(fields: [receivedBy], references: [id])
-  createdAt      DateTime           @default(now())
+  id              String             @id @default(uuid())
+  loadingOrderId  String
+  loadingOrder    LoadingOrder       @relation(fields: [loadingOrderId], references: [id])
+  cuveId          String
+  cuve            TblCuve            @relation(fields: [cuveId], references: [id])
+  expectedQty     Decimal            @db.Decimal(18, 2)
+  receivedQty     Decimal            @db.Decimal(18, 2)
+  receivedBy      String
+  comment         String?
+  status          LoadingOrderStatus @default(pending)
+  user            User               @relation(fields: [receivedBy], references: [id])
+  createdAt       DateTime           @default(now())
+  /// The tank ledger row this delivery produced.
+  cuveTransaction CuveTransaction?
 
   @@index([loadingOrderId])
   @@index([cuveId])
@@ -507,8 +537,8 @@ model Cargo {
   vesselName       String
   receivedDate     DateTime
   expirationDate   DateTime
-  ambQuantity      Decimal        @default(0.0) @db.Decimal(18, 2)
-  quantityAt20C    Decimal        @default(0.0) @db.Decimal(18, 2)
+  quantityInKg     Decimal        @default(0.0) @db.Decimal(18, 2)
+  quantityInLitre  Decimal        @default(0.0) @db.Decimal(18, 2)
   blRef            String
   supportingDocUrl String?
   tansisRef        String?
@@ -527,19 +557,19 @@ model Cargo {
 }
 
 model Stock {
-  id           String       @id @default(uuid())
-  deportId     String
-  deport       Deport       @relation(fields: [deportId], references: [id])
-  cargoId      String
-  cargo        Cargo        @relation(fields: [cargoId], references: [id])
-  itemId       String
-  item         Item         @relation(fields: [itemId], references: [id])
-  quantity     Decimal      @db.Decimal(18, 2)
-  receivedDate DateTime
-  status       StockStatus  @default(awaiting)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  nominations  Nomination[]
+  id                String             @id @default(uuid())
+  deportId          String
+  deport            Deport             @relation(fields: [deportId], references: [id])
+  cargoId           String
+  cargo             Cargo              @relation(fields: [cargoId], references: [id])
+  itemId            String
+  item              Item               @relation(fields: [itemId], references: [id])
+  quantity          Decimal            @db.Decimal(18, 2)
+  receivedDate      DateTime
+  status            StockStatus        @default(awaiting)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  nominationVessels NominationVessel[]
 
   @@index([deportId])
   @@index([cargoId])
@@ -561,12 +591,9 @@ enum CargoStatus {
 
 model Nomination {
   id                  String               @id @default(uuid())
-  stockId             String
-  stock               Stock                @relation(fields: [stockId], references: [id])
   driverVehicleId     String
   driverVehicle       DriverVehicles       @relation(fields: [driverVehicleId], references: [id])
   ambQuantity         Decimal              @default(0.0) @db.Decimal(18, 2)
-  quantityAt20C       Decimal              @default(0.0) @db.Decimal(18, 2)
   destination         String
   expectedLoadingDate DateTime
   createdAt           DateTime             @default(now())
@@ -574,9 +601,22 @@ model Nomination {
   pfis                Pfi[]
   timeLine            NominationTimeLine[]
   t1Validations       T1Validation[]
+  nominationVessels   NominationVessel[]
+
+  @@index([driverVehicleId])
+}
+
+model NominationVessel {
+  id           String     @id @default(uuid())
+  nominationId String
+  nomination   Nomination @relation(fields: [nominationId], references: [id])
+  stockId      String
+  stock        Stock      @relation(fields: [stockId], references: [id])
+  ambQuantity  Decimal    @default(0.0) @db.Decimal(18, 2)
+  createdAt    DateTime   @default(now())
 
   @@index([stockId])
-  @@index([driverVehicleId])
+  @@index([nominationId])
 }
 
 model Currency {
@@ -648,6 +688,7 @@ model T1Validation {
   nominationId     String     @unique
   nomination       Nomination @relation(fields: [nominationId], references: [id])
   exportingCountry String
+  quantityAt20C    Decimal    @default(0.0) @db.Decimal(18, 2)
   supportingDocUrl String?
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
@@ -661,14 +702,14 @@ model T1Validation {
 }
 
 model ExtraT1Validation {
-  id               String                  @id @default(uuid())
-  t1ValidationId   String
-  validation       T1Validation            @relation(fields: [t1ValidationId], references: [id])
-  customOffice     String
-  transitNumbering String
-  status           ExtraT1ValidationStatus @default(pending)
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
+  id             String                  @id @default(uuid())
+  t1ValidationId String
+  validation     T1Validation            @relation(fields: [t1ValidationId], references: [id])
+  customOffice   String
+  // transitNumbering String
+  status         ExtraT1ValidationStatus @default(pending)
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
 
   @@index([t1ValidationId])
 }
@@ -687,6 +728,7 @@ model CentralStock {
   item               Item                @relation(fields: [itemId], references: [id])
   ambQuantity        Decimal             @default(0.0) @db.Decimal(18, 2)
   quantityAt20C      Decimal             @default(0.0) @db.Decimal(18, 2)
+  receiptNumber      String?
   supportingDocUrl   String?
   t1ValidationId     String
   t1Validation       T1Validation        @relation(fields: [t1ValidationId], references: [id])
@@ -743,6 +785,7 @@ model StockClearance {
   agent              ClearingAgent?      @relation(fields: [agentId], references: [id])
   supportingDocUrl   String?
   dmsDocUrl          String?
+  assessmentDocUrl   String?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   centralStockOrders CentralStockOrder[]
@@ -812,22 +855,91 @@ enum CentralOrderStatus {
 }
 
 model TblSite {
-  id                 String              @id @default(uuid())
-  name               String
-  phone              String?
-  email              String?
-  address            String?
-  status             StatusType          @default(active)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  pumps              TblPump[]
-  tblCuves           TblCuve[]
-  centralStockOrders CentralStockOrder[]
-  users              UserSites[]
-  discounts          Discount[]
-  rangingDiscounts   RangingDiscount[]
+  id                  String                @id @default(uuid())
+  name                String
+  phone               String?
+  email               String?
+  address             String?
+  status              StatusType            @default(active)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  pumps               TblPump[]
+  tblCuves            TblCuve[]
+  centralStockOrders  CentralStockOrder[]
+  users               UserSites[]
+  discounts           Discount[]
+  rangingDiscounts    RangingDiscount[]
+  tblShiftSites       TblShiftSite[]
+  tblPumpAttendants   TblPumpAttendant[]
+  tblTimeTables       TblTimeTable[]
+  companyAccounts     CompanyAccount[]
+  fuelSales           FuelSale[]
+  provisioningKeys    SiteProvisioningKey[]
+  devices             SiteDevice[]
+  generalTransactions GeneralTransaction[]
 
   @@index([id])
+}
+
+/// A one-time key that registers a POS device to a site. Only a hash of the
+/// key is stored; the key itself is shown once, when it is generated.
+/// See docs/mobile-pos-provisioning.md.
+model SiteProvisioningKey {
+  id             String      @id @default(uuid())
+  siteId         String
+  site           TblSite     @relation(fields: [siteId], references: [id])
+  /// SHA-256 of the normalised key.
+  keyHash        String      @unique
+  expiresAt      DateTime
+  usedAt         DateTime?
+  /// The device the key registered, once used.
+  usedByDeviceId String?
+  usedByDevice   SiteDevice? @relation(fields: [usedByDeviceId], references: [id])
+  revokedAt      DateTime?
+  createdBy      String
+  user           User        @relation("ProvisioningKeyCreator", fields: [createdBy], references: [id])
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([siteId, createdAt])
+  @@index([expiresAt])
+  @@index([usedByDeviceId])
+  @@map("site_provisioning_keys")
+}
+
+/// A POS device registered to a site. Never deleted: a device taken out of
+/// service is revoked, which keeps its history.
+model SiteDevice {
+  id                    String                @id @default(uuid())
+  siteId                String
+  site                  TblSite               @relation(fields: [siteId], references: [id])
+  /// The identifier the device reports. An identifier, not a secret.
+  deviceUuid            String                @unique @db.VarChar(128)
+  deviceName            String                @db.VarChar(80)
+  status                SiteDeviceStatus      @default(active)
+  /// SHA-256 of the device's current refresh token; rotated on every refresh.
+  refreshTokenHash      String?               @unique
+  refreshTokenExpiresAt DateTime?
+  /// Carried in every access token; bumped on revoke and re-provisioning so
+  /// tokens issued before then stop working at once.
+  tokenVersion          Int                   @default(0)
+  lastSeenAt            DateTime?
+  provisionedAt         DateTime
+  revokedAt             DateTime?
+  revokedBy             String?
+  revoker               User?                 @relation("DeviceRevoker", fields: [revokedBy], references: [id])
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  provisioningKeys      SiteProvisioningKey[]
+  generalTransactions   GeneralTransaction[]
+
+  @@index([siteId, status])
+  @@map("site_devices")
+}
+
+enum SiteDeviceStatus {
+  active
+  revoked
 }
 
 model UserSites {
@@ -859,24 +971,38 @@ model TblCuve {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  nozzles          TblNozzle[]
-  orderReceptions  OrderReception[]
-  cuveTransactions CuveTransaction[]
+  nozzles             TblNozzle[]
+  orderReceptions     OrderReception[]
+  cuveTransactions    CuveTransaction[]
+  generalTransactions GeneralTransaction[]
 
   @@index([id])
   @@index([siteId])
 }
 
+/// The tank ledger: every litre in or out of a cuve, and what caused it.
+/// Nothing about money lives here — a sale's price and payments are on FuelSale.
 model CuveTransaction {
-  id        String                   @id @default(uuid())
-  cuveId    String
-  cuve      TblCuve                  @relation(fields: [cuveId], references: [id])
-  quantity  Decimal                  @db.Decimal(18, 2)
-  type      CuveTransactionType      @default(received)
-  direction CuveTransactionDirection @default(IN)
-  note      String?
-  createdAt DateTime                 @default(now())
-  updatedAt DateTime                 @updatedAt
+  id                   String                   @id @default(uuid())
+  cuveId               String
+  cuve                 TblCuve                  @relation(fields: [cuveId], references: [id])
+  quantity             Decimal                  @db.Decimal(18, 2)
+  type                 CuveTransactionType      @default(received)
+  direction            CuveTransactionDirection @default(IN)
+  note                 String?
+  createdBy            String
+  user                 User                     @relation(fields: [createdBy], references: [id])
+  /// Set when the movement is fuel sold through a nozzle.
+  saleId               String?                  @unique
+  sale                 FuelSale?                @relation(fields: [saleId], references: [id])
+  /// Set when the movement is a delivery received from a loading order.
+  orderReceptionId     String?                  @unique
+  orderReception       OrderReception?          @relation(fields: [orderReceptionId], references: [id])
+  /// Set when the movement is a POS sale (GeneralTransaction) being confirmed.
+  generalTransactionId String?                  @unique
+  generalTransaction   GeneralTransaction?      @relation(fields: [generalTransactionId], references: [id])
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
 
   @@index([cuveId])
 }
@@ -891,16 +1017,72 @@ enum CuveTransactionType {
   sold
 }
 
+/// Fuel sold through a nozzle: how much, at what price, on which shift, by whom.
+/// Each sale takes its litres out of a cuve through one CuveTransaction row.
+model FuelSale {
+  id              String            @id @default(uuid())
+  siteId          String
+  site            TblSite           @relation(fields: [siteId], references: [id])
+  /// Optional: a sale always names its pump, and its nozzle when it is known.
+  nozzleId        String?
+  nozzle          TblNozzle?        @relation(fields: [nozzleId], references: [id])
+  pumpId          String
+  pump            TblPump           @relation(fields: [pumpId], references: [id])
+  shiftId         String?
+  shift           TblShiftSite?     @relation(fields: [shiftId], references: [id])
+  quantity        Decimal           @db.Decimal(18, 2)
+  /// Price per unit at the moment of the sale, kept even if prices change later.
+  unitPrice       Decimal           @db.Decimal(18, 2)
+  amount          Decimal           @db.Decimal(18, 2)
+  note            String?
+  createdBy       String
+  user            User              @relation(fields: [createdBy], references: [id])
+  /// The working day the sale counts towards — the same day the time table
+  /// (`TblTimeTable.dateOn`) uses. A night shift that runs past midnight
+  /// still belongs to the day it started on.
+  dateOn          DateTime          @db.Date
+  createdAt       DateTime          @default(now())
+  payments        FuelSalePayment[]
+  cuveTransaction CuveTransaction?
+
+  @@index([siteId, dateOn])
+  @@index([nozzleId])
+  @@index([shiftId])
+  @@index([createdAt])
+}
+
+/// Where a sale's money went. A sale can be split across several accounts.
+model FuelSalePayment {
+  id              String         @id @default(cuid())
+  saleId          String
+  sale            FuelSale       @relation(fields: [saleId], references: [id])
+  accountId       String
+  account         CompanyAccount @relation(fields: [accountId], references: [id])
+  amount          Decimal        @db.Decimal(18, 2)
+  /// The mobile-money / bank / card reference. Required when the account's
+  /// `requiredReference` is on.
+  reference       String?
+  referenceDocUrl String?
+  createdAt       DateTime       @default(now())
+
+  @@unique([saleId, accountId])
+  @@index([saleId])
+  @@index([accountId])
+}
+
 model TblPump {
-  id        String       @id @default(uuid())
-  name      String
-  siteId    String
-  site      TblSite      @relation(fields: [siteId], references: [id])
-  status    StatusType   @default(active)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  displays  TblDisplay[]
-  nozzles   TblNozzle[]
+  id                  String               @id @default(uuid())
+  name                String
+  siteId              String
+  site                TblSite              @relation(fields: [siteId], references: [id])
+  status              StatusType           @default(active)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  displays            TblDisplay[]
+  nozzles             TblNozzle[]
+  tblPumpAttendants   TblPumpAttendant[]
+  fuelSales           FuelSale[]
+  generalTransactions GeneralTransaction[]
 
   @@index([id])
   @@index([siteId])
@@ -922,18 +1104,21 @@ model TblDisplay {
 }
 
 model TblNozzle {
-  id         String     @id @default(uuid())
-  name       String
-  nozzleCode String
-  pumpId     String
-  pump       TblPump    @relation(fields: [pumpId], references: [id])
-  displayId  String
-  display    TblDisplay @relation(fields: [displayId], references: [id])
-  cuveId     String
-  cuve       TblCuve    @relation(fields: [cuveId], references: [id])
-  status     StatusType @default(active)
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  id                   String                @id @default(uuid())
+  name                 String
+  nozzleCode           String                @unique
+  pumpId               String
+  pump                 TblPump               @relation(fields: [pumpId], references: [id])
+  displayId            String
+  display              TblDisplay            @relation(fields: [displayId], references: [id])
+  cuveId               String
+  cuve                 TblCuve               @relation(fields: [cuveId], references: [id])
+  status               StatusType            @default(active)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  pumpAttendantNozzles PumpAttendantNozzle[]
+  fuelSales            FuelSale[]
+  generalTransactions  GeneralTransaction[]
 
   @@index([id])
   @@index([pumpId])
@@ -960,16 +1145,30 @@ model Location {
 }
 
 model CompanyAccount {
-  id          String     @id @default(cuid())
-  code        String     @unique
-  name        String
-  status      StatusType @default(active)
-  createdAtBy String
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id                String             @id @default(cuid())
+  code              String             @unique
+  name              String
+  type              CompanyAccountType
+  siteId            String?
+  site              TblSite?           @relation(fields: [siteId], references: [id])
+  requiredReference Boolean            @default(false)
+  status            StatusType         @default(active)
+  createdAtBy       String
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
-  user               User                @relation(fields: [createdAtBy], references: [id])
-  walletTransactions walletTransaction[]
+  user                       User                        @relation(fields: [createdAtBy], references: [id])
+  walletTransactions         walletTransaction[]
+  fuelSalePayments           FuelSalePayment[]
+  generalTransactionPayments GeneralTransactionPayment[]
+}
+
+enum CompanyAccountType {
+  cash
+  bank
+  mobileMoney
+  transfer
+  card
 }
 
 model ClientWallet {
@@ -1027,10 +1226,12 @@ model Card {
   cardCode         String?
   balance          Decimal   @default(0.0) @db.Decimal(18, 2)
   availability     Boolean   @default(true)
-  type             CardType?
+  /// What kind of card it is, and so which rules (CardSetting) apply to it.
+  cardTypeId       String?
+  cardType         CardType? @relation(fields: [cardTypeId], references: [id])
   // COMMENT '1=Ordinary 2=Specific',
   securityCategory Int?
-  state            Int       @default(1)
+  state            Int       @default(0)
   swapStatus       Int?
   inventoryStatus  Int?
   createdAt        DateTime  @default(now())
@@ -1040,29 +1241,71 @@ model Card {
   copyCards     CardCopy[] @relation("copyCardFromCard")
 
   @@index([cardNumber])
+  @@index([cardTypeId])
 }
 
-enum CardType {
-  prePaid
-  postPaid
-  master
-  royalty
+/// A kind of card (prepaid, postpaid, fleet…). Never deleted: switched off instead.
+model CardType {
+  id          String       @id @default(uuid())
+  name        String       @unique
+  description String?
+  status      StatusType   @default(active)
+  createdBy   String
+  user        User         @relation(fields: [createdBy], references: [id])
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  cards       Card[]
+  setting     CardSetting?
+}
+
+/// The rules every card of a type follows when it is used.
+model CardSetting {
+  id                  String           @id @default(uuid())
+  cardTypeId          String           @unique
+  cardType            CardType         @relation(fields: [cardTypeId], references: [id], onDelete: Cascade)
+  /// The holder must enter the card's PIN.
+  requirePin          Boolean          @default(true)
+  /// The vehicle's plate number must be typed in.
+  requirePlateNumber  Boolean          @default(false)
+  /// A picture of the vehicle's plate number must be taken.
+  capturePlatePicture Boolean          @default(false)
+  /// The vehicle's odometer (mileage) reading must be recorded.
+  requireOdometer     Boolean          @default(false)
+  /// The card may be used past its balance, to be settled later (postpaid).
+  allowCredit         Boolean          @default(false)
+  /// Spending is capped at `limitAmount` per `limitPeriod`.
+  hasLimit            Boolean          @default(false)
+  showBalance         Boolean          @default(true)
+  captureDisplay      Boolean          @default(false)
+  limitAmount         Decimal?         @db.Decimal(18, 2)
+  limitPeriod         CardLimitPeriod?
+  updatedAt           DateTime         @updatedAt
+}
+
+enum CardLimitPeriod {
+  transaction
+  daily
+  weekly
+  monthly
 }
 
 model CardCopy {
-  id                   BigInt                @id @default(autoincrement())
-  clientId             String
-  client               Client                @relation(fields: [clientId], references: [id])
-  cardId               BigInt
-  card                 Card                  @relation("originalCards", fields: [cardId], references: [id])
-  cardCopyId           BigInt?
-  copyCard             Card?                 @relation("copyCardFromCard", fields: [cardCopyId], references: [id])
-  lastIndex            Int                   @default(1)
-  pin                  String
-  status               Boolean               @default(true)
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  cardCopyTransactions CardCopyTransaction[]
+  id                       BigInt                    @id @default(autoincrement())
+  clientId                 String
+  client                   Client                    @relation(fields: [clientId], references: [id])
+  cardId                   BigInt
+  card                     Card                      @relation("originalCards", fields: [cardId], references: [id])
+  cardCopyId               BigInt?
+  copyCard                 Card?                     @relation("copyCardFromCard", fields: [cardCopyId], references: [id])
+  lastIndex                Int                       @default(1)
+  // Assigned as 123456 (DEFAULT_CARD_PIN); older rows may have none.
+  pin                      String?
+  status                   Boolean                   @default(true)
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  cardCopyTransactions     CardCopyTransaction[]
+  clientCarCardAssignments ClientCarCardAssignment[]
+  generalTransactions      GeneralTransaction[]
 
   @@index([clientId])
   @@index([cardId])
@@ -1075,7 +1318,7 @@ model CardCopyTransaction {
   cardCopy    CardCopy                         @relation(fields: [carfdCopyId], references: [id])
   type        CardTransactionType
   direction   CardCopyTransactionDirectionType
-  amount      Decimal                          @default(0.0) @db.Decimal
+  amount      Decimal                          @default(0.0) @db.Decimal(18, 2)
   createdById String
   user        User                             @relation(fields: [createdById], references: [id])
   createdAt   DateTime                         @default(now())
@@ -1217,4 +1460,190 @@ enum ClientCouponStatus {
   used
   called
   cancelled
+}
+
+model TblShift {
+  id            String         @id @default(uuid())
+  name          String
+  startAt       DateTime       @db.Time(0)
+  endAt         DateTime       @db.Time(0)
+  status        Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  tblShiftSites TblShiftSite[]
+}
+
+model TblShiftSite {
+  id                  String               @id @default(uuid())
+  shiftId             String
+  shift               TblShift             @relation(fields: [shiftId], references: [id])
+  siteId              String
+  site                TblSite              @relation(fields: [siteId], references: [id])
+  turnonAt            DateTime             @default(now())
+  status              Int                  @default(1)
+  tblPumpAttendants   TblPumpAttendant[]
+  tblTimeTables       TblTimeTable[]
+  fuelSales           FuelSale[]
+  generalTransactions GeneralTransaction[]
+
+  @@index([shiftId])
+  @@index([siteId])
+}
+
+model TblPumpAttendant {
+  id                   String                @id @default(uuid())
+  pumpId               String
+  pump                 TblPump               @relation(fields: [pumpId], references: [id])
+  day                  Int
+  siteShiftId          String
+  siteShift            TblShiftSite          @relation(fields: [siteShiftId], references: [id])
+  userId               String
+  user                 User                  @relation(fields: [userId], references: [id])
+  siteId               String
+  site                 TblSite               @relation(fields: [siteId], references: [id])
+  createdAt            DateTime              @default(now())
+  pumpAttendantNozzles PumpAttendantNozzle[]
+
+  @@index([pumpId])
+  @@index([siteShiftId])
+  @@index([userId])
+  @@index([siteId])
+}
+
+model PumpAttendantNozzle {
+  id              String           @id @default(uuid())
+  pumpAttendantId String
+  pumpAttendant   TblPumpAttendant @relation(fields: [pumpAttendantId], references: [id])
+  nozzleId        String
+  nozzle          TblNozzle        @relation(fields: [nozzleId], references: [id])
+  createdAt       DateTime         @default(now())
+
+  @@index([pumpAttendantId])
+}
+
+model TblTimeTable {
+  id          String       @id @default(uuid())
+  days        Int
+  dateOn      DateTime     @db.Date
+  siteShiftId String
+  shiftSite   TblShiftSite @relation(fields: [siteShiftId], references: [id])
+  userId      String
+  user        User         @relation("TimeTableUsers", fields: [userId], references: [id])
+  siteId      String
+  site        TblSite      @relation(fields: [siteId], references: [id])
+  status      Int          @default(0)
+  extraShift  Int          @default(0)
+  createdAt   DateTime     @default(now())
+  isChief     Boolean      @default(false)
+  isSuport    Boolean      @default(false)
+
+  @@index([siteShiftId])
+  @@index([userId])
+  @@index([siteId])
+}
+
+model ClientCar {
+  id                       String                    @id @default(uuid())
+  clientId                 String
+  client                   Client                    @relation(fields: [clientId], references: [id])
+  plateNo                  String
+  trackNo                  String?
+  itemId                   String
+  item                     Item                      @relation(fields: [itemId], references: [id])
+  tancapacity              Decimal                   @db.Decimal(18, 2)
+  status                   StatusType                @default(active)
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  clientCarCardAssignments ClientCarCardAssignment[]
+
+  @@index([clientId])
+}
+
+model ClientCarCardAssignment {
+  id           String     @id @default(uuid())
+  clientCarId  String
+  clientCar    ClientCar  @relation(fields: [clientCarId], references: [id])
+  cardCopyId   BigInt
+  cardCopy     CardCopy   @relation(fields: [cardCopyId], references: [id])
+  assignedAt   DateTime   @default(now())
+  unassignedAt DateTime?
+  status       StatusType @default(active)
+
+  @@index([clientCarId])
+  @@index([cardCopyId])
+}
+
+model GeneralTransaction {
+  id                         String                      @id @default(uuid())
+  transactionCode            String                      @unique
+  itemId                     String
+  item                       Item                        @relation(fields: [itemId], references: [id])
+  cuveId                     String
+  cuve                       TblCuve                     @relation(fields: [cuveId], references: [id])
+  pumpId                     String
+  pump                       TblPump                     @relation(fields: [pumpId], references: [id])
+  nozzleId                   String
+  nozzle                     TblNozzle                   @relation(fields: [nozzleId], references: [id])
+  clientId                   String?
+  client                     Client?                     @relation(fields: [clientId], references: [id])
+  cardCopyId                 BigInt?
+  cardCopy                   CardCopy?                   @relation(fields: [cardCopyId], references: [id])
+  platNumber                 String?
+  platePictureUrl            String?
+  quantity                   Decimal                     @default(0.0) @db.Decimal(18, 2)
+  unitPrice                  Decimal                     @default(0.0) @db.Decimal(18, 2)
+  amount                     Decimal                     @default(0.0) @db.Decimal(18, 2)
+  siteId                     String
+  site                       TblSite                     @relation(fields: [siteId], references: [id])
+  discountAmount             Decimal                     @default(0.0) @db.Decimal(18, 2)
+  shiftId                    String?
+  shift                      TblShiftSite?               @relation(fields: [shiftId], references: [id])
+  displayPictureUrl          String?
+  doneBy                     String?
+  user                       User?                       @relation(fields: [doneBy], references: [id])
+  reason                     String?
+  comments                   String?
+  printStatus                Boolean                     @default(false)
+  appVersion                 String?
+  subsidyRate                Decimal                     @default(0.0) @db.Decimal(12, 2)
+  subsidyAmount              Decimal                     @default(0.0) @db.Decimal(18, 2)
+  /// initiated by the POS, then confirmed once (or cancelled).
+  status                     GeneralTransactionStatus    @default(initiated)
+  confirmedAt                DateTime?
+  /// The POS that recorded it.
+  deviceId                   String?
+  device                     SiteDevice?                 @relation(fields: [deviceId], references: [id])
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @updatedAt
+  generalTransactionPayments GeneralTransactionPayment[]
+  /// The tank ledger row written when the sale is confirmed.
+  cuveTransaction            CuveTransaction?
+
+  @@index([siteId, createdAt])
+  @@index([siteId, id])
+  @@index([status])
+}
+
+enum GeneralTransactionStatus {
+  initiated
+  confirmed
+  cancelled
+}
+
+model GeneralTransactionPayment {
+  id              String             @id @default(cuid())
+  transactionId   String
+  transaction     GeneralTransaction @relation(fields: [transactionId], references: [id])
+  accountId       String
+  account         CompanyAccount     @relation(fields: [accountId], references: [id])
+  amount          Decimal            @db.Decimal(18, 2)
+  /// The mobile-money / bank / card reference. Required when the account's
+  /// `requiredReference` is on.
+  reference       String?
+  referenceDocUrl String?
+  createdAt       DateTime           @default(now())
+
+  @@unique([transactionId, accountId])
+  @@index([transactionId])
+  @@index([accountId])
 }

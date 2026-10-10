@@ -5,7 +5,7 @@ import { UsersRepository } from "./users.repository.js";
 import {
   assignUserSiteSchema,
   createClientUserSchema,
-  createStaffUserSchema,
+  createUserSchema,
   updateUserSchema
 } from "./users.schema.js";
 import { UsersService } from "./users.service.js";
@@ -17,11 +17,18 @@ const routes: FastifyPluginAsync = async (app) => {
     success(await service.list(parseInput(paginationQuerySchema, request.query))));
 
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("users.read")] }, async (request) =>
-    success(await service.find(parseInput(idParamsSchema, request.params).id)));
+    success(await service.get(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
 
+  // Everything a create-user form needs to build its position select and the
+  // dependent site / client selects, scoped to what this actor may create.
+  app.get("/form-options", { preHandler: [app.authenticate, app.authorize("users.create")] }, async (request) =>
+    success(await service.formOptions(request.contextUser!)));
+
+  // Accepts any position. Who may actually create what is enforced in the
+  // service, not by the schema, so this stays as strict as the split routes.
   app.post("/", { preHandler: [app.authenticate, app.authorize("users.create")] }, async (request, reply) =>
     created(reply, await service.create(
-      parseInput(createStaffUserSchema, request.body),
+      parseInput(createUserSchema, request.body),
       request.contextUser!
     )));
 
@@ -34,16 +41,21 @@ const routes: FastifyPluginAsync = async (app) => {
   app.put("/:id", { preHandler: [app.authenticate, app.authorize("users.edit")] }, async (request) =>
     success(await service.update(
       parseInput(idParamsSchema, request.params).id,
-      parseInput(updateUserSchema, request.body)
+      parseInput(updateUserSchema, request.body),
+      request.contextUser!
     )));
 
   app.patch("/:id/status", { preHandler: [app.authenticate, app.authorize("users.edit")] }, async (request) =>
-    success(await service.changeStatus(parseInput(idParamsSchema, request.params).id)));
+    success(await service.changeStatus(
+      parseInput(idParamsSchema, request.params).id,
+      request.contextUser!
+    )));
 
   app.patch("/:id/site", { preHandler: [app.authenticate, app.authorize("users.edit")] }, async (request) =>
     success(await service.assignSite(
       parseInput(idParamsSchema, request.params).id,
-      parseInput(assignUserSiteSchema, request.body).siteId
+      parseInput(assignUserSiteSchema, request.body).siteId,
+      request.contextUser!
     )));
 
   app.delete("/:id", { preHandler: [app.authenticate, app.authorize("users.delete")] }, async (request) =>

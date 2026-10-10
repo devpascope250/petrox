@@ -4,7 +4,7 @@ import type { AuthUser } from "../../shared/auth/context-user.js";
 import { paginatedData } from "../../shared/pagination/index.js";
 import type { PaginationQuery } from "../../shared/validation/index.js";
 import { generateTemporaryPin, hashPin } from "../../utils/crypto.js";
-import { NotFoundError, forbidden } from "../../utils/errors.js";
+import { BusinessError, NotFoundError, forbidden } from "../../utils/errors.js";
 import type { CreateUserInput, UpdateUserInput } from "./clients.schema.js";
 import { ClientRepository } from "./clients.repository.js";
 
@@ -19,6 +19,13 @@ export class ClientService {
   async find(id: string) {
     const user = await this.repo.find(id);
     if (!user) throw new NotFoundError("User");
+    return user;
+  }
+
+  /** `find` for request handlers, so a caller cannot read outside its client. */
+  async get(id: string, actor: AuthUser) {
+    const user = await this.find(id);
+    this.assertCanManage(user, actor);
     return user;
   }
 
@@ -43,25 +50,58 @@ export class ClientService {
     return { ...user, temporaryPin };
   }
 
-  async update(id: string, input: UpdateUserInput) {
-    await this.find(id);
-    const { password, pin, ...profile } = input;
-    return this.repo.update(id, {
-      ...profile,
-      ...(password ? { passwordHash: await bcrypt.hash(password, 12) } : {}),
-      ...(pin !== undefined
-        ? { pinHash: pin ? hashPin(pin, this.config.PIN_HMAC_SECRET) : null }
-        : {})
-    });
+  async update(id: string, input: UpdateUserInput, actor: AuthUser) {
+    const target = await this.find(id);
+    this.assertCanManage(target, actor);
+    const { password, pin, clientDetails, ...profile } = input;
+
+    // Only super administrators may move a user between roles; otherwise a
+    // client administrator could grant itself an administrative role.
+    if (profile.roleId !== undefined && actor.position !== "superAdmin") {
+      throw forbidden("Only super administrators can change a user's role");
+    }
+    if (clientDetails && !target.clientId) {
+      throw new BusinessError(
+        "NOT_A_CLIENT_USER",
+        "This user is not attached to a client, so client details cannot be updated"
+      );
+    }
+
+    return this.repo.update(
+      id,
+      {
+        ...profile,
+        ...(password ? { passwordHash: await bcrypt.hash(password, 12) } : {}),
+        ...(pin !== undefined
+          ? { pinHash: pin ? hashPin(pin, this.config.PIN_HMAC_SECRET) : null }
+          : {})
+      },
+      clientDetails && target.clientId
+        ? { id: target.clientId, data: clientDetails }
+        : undefined
+    );
   }
 
-  changeStatus(id: string) {
+  /** A client administrator may only reach users inside its own client. */
+  private assertCanManage(target: { clientId: string | null }, actor: AuthUser) {
+    if (actor.position === "superAdmin") return;
+    if (actor.position === "clientAdmin") {
+      if (!actor.clientId || target.clientId !== actor.clientId) {
+        throw forbidden("Client administrators can only manage users for their own client");
+      }
+      return;
+    }
+    throw forbidden("Only super administrators and client administrators can manage users");
+  }
+
+  async changeStatus(id: string, actor: AuthUser) {
+    this.assertCanManage(await this.find(id), actor);
     return this.repo.updateStatus(id);
   }
 
   async delete(id: string, actor: AuthUser) {
     if (id === actor.userId) throw forbidden("You cannot delete your own account");
-    await this.find(id);
+    this.assertCanManage(await this.find(id), actor);
     return this.repo.delete(id);
   }
 }

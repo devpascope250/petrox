@@ -13,7 +13,16 @@ export class AuthService {
     return user.role ? user.role.permissions.map((item) => item.permission.code) : null;
   }
   private publicUser(user: AuthUser) {
-    return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role?.name, position: user.position, sites: user.sites };
+    // `position`, `clientId` and `client` let the frontend pick the client
+    // portal over the admin layout, and name the account, without a second call.
+    return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role?.name, position: user.position, sites: user.sites, clientId: user.clientId, client: user.client };
+  }
+
+  /** The signed-in account, for restoring a session on page load. */
+  async me(userId: string) {
+    const user = await this.repo.findUserById(userId);
+    this.ensureActive(user);
+    return { user: this.publicUser(user), permissions: this.permissions(user) ?? [] };
   }
   private async issue(user: AuthUser) {
     const permissions = this.permissions(user);

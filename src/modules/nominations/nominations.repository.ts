@@ -1,113 +1,380 @@
-import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { CreateNominationsSchema } from "./nominations.schema.js";
+import { CreateNominationsSchema, NominationVesselSchema } from "./nominations.schema.js";
+
+type Tx = Prisma.TransactionClient;
+
+/** Driver and vehicle, shaped the same way on every nomination response. */
+const driverVehicleSelect = {
+  select: {
+    driver: {
+      select: { names: true, phone: true, passport: true, lisence: true },
+    },
+    vechile: {
+      select: {
+        id: true,
+        model: true,
+        platNumber: true,
+        tankCapacity: true,
+        trailerNumber: true,
+        truckNumber: true,
+        createdAt: true,
+      },
+    },
+  },
+} as const;
+
+/**
+ * The vessels a nomination loads from. Each one names its stock receipt, so a
+ * caller can see the cargo and item behind every part of the nomination.
+ */
+const vesselsSelect = {
+  orderBy: { createdAt: "asc" },
+  select: {
+    id: true,
+    stockId: true,
+    ambQuantity: true,
+    stock: {
+      select: {
+        id: true,
+        quantity: true,
+        receivedDate: true,
+        status: true,
+        cargo: true,
+        // The unit comes with the item, so a caller can label quantities
+        // without a second lookup against the units list.
+        item: {
+          select: {
+            id: true,
+            name: true,
+            descriptions: true,
+            parentId: true,
+            baseUnitId: true,
+            status: true,
+            baseUnit: { select: { id: true, name: true, code: true } },
+          },
+        },
+        deport: { select: { id: true, name: true, location: true, type: true } },
+      },
+    },
+  },
+} as const;
+
+const nominationSelect = {
+  id: true,
+  ambQuantity: true,
+  destination: true,
+  expectedLoadingDate: true,
+  driverVehicleId: true,
+  createdAt: true,
+  updatedAt: true,
+  nominationVessels: vesselsSelect,
+  driverVehicle: driverVehicleSelect,
+  // Once a nomination is invoiced, what it carries is fixed — callers use this
+  // to decide whether more stock may be loaded onto it. The T1 count says
+  // whether customs validation has been raised.
+  _count: { select: { pfis: true, t1Validations: true } },
+  // The furthest stage reached, so a list can show progress without fetching
+  // every nomination's timeline.
+  timeLine: {
+    orderBy: { timeLineStatus: { level: "desc" } },
+    take: 1,
+    select: {
+      createdAt: true,
+      timeLineStatus: { select: { status: true, level: true } },
+    },
+  },
+} as const;
+
+/**
+ * The detail view adds what the drawer shows beyond a list row: the invoices
+ * raised against the nomination and its customs validation. The list stays
+ * lean, since it renders a table.
+ */
+const nominationDetailSelect = {
+  ...nominationSelect,
+  pfis: {
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      pifCode: true,
+      pfiReference: true,
+      currancyCode: true,
+      unitPrice: true,
+      amount: true,
+      supportingDocUrl: true,
+      createdAt: true,
+    },
+  },
+  t1Validations: {
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      exportingCountry: true,
+      quantityAt20C: true,
+      supportingDocUrl: true,
+      createdAt: true,
+      extraValidations: {
+        orderBy: { createdAt: "asc" },
+        select: { id: true, customOffice: true, status: true, createdAt: true },
+      },
+    },
+  },
+} as const;
+
 export class NominationRepository {
   constructor(private db: PrismaClient) {}
 
-  async list(startDate: Date, endDate: Date, itemId?: string) {
+  /** The nomination's quantity is always the total of its vessels. */
+  private totalQuantity(vessels: NominationVesselSchema[]) {
+    return vessels.reduce((total, vessel) => total + Number(vessel.ambQuantity), 0);
+  }
+
+  async list(startDate: Date, endDate: Date, itemId?: string, withoutPfi?: boolean) {
     return await this.db.nomination.findMany({
       where: {
-        stock: {
-          ...(itemId ? { itemId: itemId } : {})
-        },
+        ...(itemId ? { nominationVessels: { some: { stock: { itemId } } } } : {}),
+        // Nominations still open for more stock: none of them invoiced yet.
+        ...(withoutPfi ? { pfis: { none: {} } } : {}),
         createdAt: {
           gte: startDate,
           lte: endDate
         }
       },
       orderBy: { createdAt: "desc" },
+      select: nominationSelect,
+    });
+  }
+
+  /**
+   * Every vessel must fit inside what its stock still has free. `exclude` drops
+   * a nomination's own vessels from the running total, so re-saving an
+   * unchanged nomination is not blocked by the stock it already holds.
+   */
+  private async assertStockCapacity(
+    tx: Tx,
+    vessels: NominationVesselSchema[],
+    exclude?: string,
+  ) {
+    const stocks = await tx.stock.findMany({
+      where: { id: { in: vessels.map((vessel) => vessel.stockId) } },
       select: {
-      id: true,
-       ambQuantity: true,
-       quantityAt20C: true,
-       destination: true,
-       stock: {
-        select: {
-          cargo: true,
-          item: true
-        }
-       },
-       driverVehicle: {
-        select: {
-          driver: {
-            select: {
-              names: true,
-              phone: true,
-              passport: true,
-              lisence: true,
-            }
-          },
-          vechile: {
-            select: {
-              id: true,
-              model: true,
-              platNumber: true,
-              tankCapacity: true,
-              trailerNumber: true,
-              truckNumber: true,
-              createdAt: true
-            }
-          },
-        }
-       }
+        id: true,
+        quantity: true,
+        item: { select: { name: true } },
+        nominationVessels: {
+          ...(exclude ? { where: { nominationId: { not: exclude } } } : {}),
+          select: { ambQuantity: true },
+        },
       },
     });
+    const byId = new Map(stocks.map((stock) => [stock.id, stock]));
+
+    for (const vessel of vessels) {
+      const stock = byId.get(vessel.stockId);
+      if (!stock) throw new NotFoundError("Stock not found");
+      const nominated = stock.nominationVessels.reduce(
+        (total, row) => total + Number(row.ambQuantity),
+        0,
+      );
+      const remaining = Number(stock.quantity) - nominated;
+      if (Number(vessel.ambQuantity) > remaining) {
+        throw new BusinessError(
+          "400",
+          `The Nominations Qty can not be greater than stock quantity! Only ${remaining} ${stock.item.name} remains on this stock`,
+        );
+      }
+    }
+  }
+
+  /**
+   * A truck cannot carry more than its tank holds. What is already nominated on
+   * it and not yet delivered — no `stockReceived` on its timeline — plus what is
+   * being added must fit inside `tankCapacity`.
+   *
+   * `exclude` names a nomination whose current quantity is being replaced, so
+   * re-saving it does not count its own load twice.
+   */
+  private async assertTruckCapacity(
+    tx: Tx,
+    driverVehicleId: string,
+    adding: number,
+    exclude?: string,
+  ) {
+    const assignment = await tx.driverVehicles.findUnique({
+      where: { id: driverVehicleId },
+      select: {
+        vechile: { select: { platNumber: true, tankCapacity: true } },
+        nominations: {
+          where: {
+            ...(exclude && { id: { not: exclude } }),
+            timeLine: { none: { timeLineStatus: { status: "stockReceived" } } },
+          },
+          select: { ambQuantity: true },
+        },
+      },
+    });
+    if (!assignment) throw new NotFoundError("Driver and vehicle assignment not found");
+
+    const capacity = new Prisma.Decimal(assignment.vechile.tankCapacity);
+    const onTruck = assignment.nominations.reduce(
+      (total, row) => total.plus(row.ambQuantity),
+      new Prisma.Decimal(0),
+    );
+    if (onTruck.plus(adding).greaterThan(capacity)) {
+      const free = Prisma.Decimal.max(0, capacity.minus(onTruck));
+      throw new BusinessError(
+        "TANK_CAPACITY_EXCEEDED",
+        `Truck ${assignment.vechile.platNumber} holds ${capacity.toString()}. ` +
+          `${onTruck.toString()} is already nominated on it, so only ${free.toString()} more fits — ` +
+          `${new Prisma.Decimal(adding).toString()} was requested.`,
+        422,
+        { tankCapacity: capacity.toNumber(), alreadyNominated: onTruck.toNumber(), available: free.toNumber() },
+      );
+    }
+  }
+
+  /**
+   * A nomination carries one product. Its vessels may come from different
+   * cargos, but they must all hold the same item — a truck is loaded with one
+   * thing, and everything downstream (T1, receipt, tolerance) is per item.
+   *
+   * `existing` names a nomination whose current vessels count too, for when
+   * stock is being added to one that already exists.
+   */
+  private async assertSingleItem(
+    tx: Tx,
+    vessels: NominationVesselSchema[],
+    existing?: string,
+  ) {
+    const stocks = await tx.stock.findMany({
+      where: { id: { in: vessels.map((vessel) => vessel.stockId) } },
+      select: { id: true, itemId: true, item: { select: { name: true } } },
+    });
+    const items = new Map(stocks.map((stock) => [stock.itemId, stock.item.name]));
+
+    if (existing) {
+      const onNomination = await tx.nominationVessel.findMany({
+        where: { nominationId: existing },
+        select: { stock: { select: { itemId: true, item: { select: { name: true } } } } },
+      });
+      for (const vessel of onNomination) {
+        items.set(vessel.stock.itemId, vessel.stock.item.name);
+      }
+    }
+
+    if (items.size > 1) {
+      throw new BusinessError(
+        "400",
+        `A nomination can only carry one product, but this one mixes ${Array.from(items.values()).join(" and ")}`,
+      );
+    }
   }
 
   async create(data: CreateNominationsSchema) {
     const getstatus = await this.db.nominationTimeLineStatus.findFirst({where: {status: "awaiting"}});
     if (!getstatus) throw new NotFoundError("The nomination status must be registered before")
-      const stock = await this.findNominationsAndCompareStock(data.stockId, data.quantityAt20C);
-    if(stock) throw new BusinessError("400", "The Nominations Qty can not be greater than stock quantity!")
-    return await this.db.nomination.create({
-      data: {
-        stockId: data.stockId,
-        destination: data.destination,
-        quantityAt20C: data.quantityAt20C,
-        ambQuantity: data.ambQuantity,
-        expectedLoadingDate: data.expectedLoadingedDate,
-        driverVehicleId: data.driverVehicleId,
-        timeLine: {
-          create: {
-            timeLineStatusId: getstatus?.id,
-            changedBy: data.createdBy
+    return await this.db.$transaction(async (tx) => {
+      await this.assertSingleItem(tx, data.vessels);
+      await this.assertStockCapacity(tx, data.vessels);
+      await this.assertTruckCapacity(tx, data.driverVehicleId, this.totalQuantity(data.vessels));
+      return await tx.nomination.create({
+        data: {
+          destination: data.destination,
+          // Held on the nomination as the total of its vessels.
+          ambQuantity: this.totalQuantity(data.vessels),
+          expectedLoadingDate: data.expectedLoadingedDate,
+          driverVehicleId: data.driverVehicleId,
+          nominationVessels: {
+            create: data.vessels.map((vessel) => ({
+              stockId: vessel.stockId,
+              ambQuantity: vessel.ambQuantity,
+            })),
+          },
+          timeLine: {
+            create: {
+              timeLineStatusId: getstatus.id,
+              changedBy: data.createdBy
+            }
           }
-        }
-        
-      },
-    });
+        },
+        select: nominationSelect,
+      });
+    }, { isolationLevel: "Serializable" });
   }
 
   async update(id: string, data: CreateNominationsSchema) {
     if (!(await this.find(id))) throw new NotFoundError();
-    return await this.db.nomination.update({
-      where: { id: id },
-      data: {
-        stockId: data.stockId,
-        destination: data.destination,
-        quantityAt20C: data.quantityAt20C,
-        ambQuantity: data.ambQuantity,
-        expectedLoadingDate: data.expectedLoadingedDate,
-        driverVehicleId: data.driverVehicleId
-
-      }
-    });
+    return await this.db.$transaction(async (tx) => {
+      await this.assertSingleItem(tx, data.vessels);
+      await this.assertStockCapacity(tx, data.vessels, id);
+      // Its own current load is being replaced, so it is left out of the total.
+      await this.assertTruckCapacity(tx, data.driverVehicleId, this.totalQuantity(data.vessels), id);
+      // The vessel list is replaced wholesale: what the client sends is what
+      // the nomination ends up loading from.
+      await tx.nominationVessel.deleteMany({ where: { nominationId: id } });
+      return await tx.nomination.update({
+        where: { id: id },
+        data: {
+          destination: data.destination,
+          ambQuantity: this.totalQuantity(data.vessels),
+          expectedLoadingDate: data.expectedLoadingedDate,
+          driverVehicleId: data.driverVehicleId,
+          nominationVessels: {
+            create: data.vessels.map((vessel) => ({
+              stockId: vessel.stockId,
+              ambQuantity: vessel.ambQuantity,
+            })),
+          },
+        },
+        select: nominationSelect,
+      });
+    }, { isolationLevel: "Serializable" });
   }
 
-  async findNominationsAndCompareStock(id: string, quantity: number) {
-    const stock = await this.db.stock.findFirst({
-      where: {id},
-      select: {quantity: true, nominations: {select: {quantityAt20C: true}}}
+  /**
+   * Loads more stock onto a nomination that already exists: each vessel is a
+   * new row, and the nomination's own quantity grows by their total. Nothing
+   * already on the nomination is touched.
+   *
+   * Refused once the nomination carries a PFI — invoicing fixes what it is
+   * carrying, so stock added afterwards would not be on the invoice.
+   */
+  async addVessels(id: string, vessels: NominationVesselSchema[]) {
+    const nomination = await this.db.nomination.findUnique({
+      where: { id },
+      select: { id: true, driverVehicleId: true, _count: { select: { pfis: true } } },
     });
-
-    const currentQty = Number(stock?.nominations.reduce((total, stoc) => total + Number(stoc.quantityAt20C), 0)) + quantity;
-
-    return currentQty > Number(stock?.quantity);
+    if (!nomination) throw new NotFoundError("Nomination not found");
+    if (nomination._count.pfis > 0) {
+      throw new BusinessError("400", "This nomination is already invoiced, so no more stock can be added to it");
+    }
+    return await this.db.$transaction(async (tx) => {
+      // What the nomination already carries counts here: added stock must be
+      // the same product.
+      await this.assertSingleItem(tx, vessels, id);
+      // A pure addition, so everything already nominated — including this
+      // nomination's own vessels — counts against what the stock has left.
+      await this.assertStockCapacity(tx, vessels);
+      // An addition: what the nomination already carries stays on the truck.
+      await this.assertTruckCapacity(tx, nomination.driverVehicleId, this.totalQuantity(vessels));
+      await tx.nominationVessel.createMany({
+        data: vessels.map((vessel) => ({
+          nominationId: id,
+          stockId: vessel.stockId,
+          ambQuantity: vessel.ambQuantity,
+        })),
+      });
+      return await tx.nomination.update({
+        where: { id },
+        data: { ambQuantity: { increment: this.totalQuantity(vessels) } },
+        select: nominationSelect,
+      });
+    }, { isolationLevel: "Serializable" });
   }
-
 
   find(id: string) {
-    return this.db.nomination.findUnique({ where: { id } });
+    return this.db.nomination.findUnique({ where: { id }, select: nominationDetailSelect });
   }
 
   async findByTimeLine(nominationId: string) {
@@ -128,7 +395,7 @@ export class NominationRepository {
             status: true,
             descriptions: true
           },
-           
+
         },
         createdAt: true,
       },

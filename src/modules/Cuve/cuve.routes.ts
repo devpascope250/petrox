@@ -3,12 +3,16 @@ import { created, success } from "../../shared/http/index.js";
 import { idParamsSchema, parseInput } from "../../shared/validation/index.js";
 import { CuveService } from "./cuve.service.js";
 import { CuveRepository } from "./cuve.repository.js";
-import { createCuveSchema, cuveStockQuerySchema, cuveTransactionsQuerySchema } from "./cuve.schema.js";
+import { createCuveSchema, cuveInventoryQuerySchema, cuveStockQuerySchema, cuveTransactionsQuerySchema } from "./cuve.schema.js";
 const routes: FastifyPluginAsync = async (app) => {
   const service = new CuveService(new CuveRepository(app.prisma), app.config);
-  app.get("/stocks", { preHandler: [app.authenticate, app.authorize("cuve.read", "cuve.manage")] }, async (request) =>
+  // Stock levels belong to the "Cuve Stock" module; `cuve.read` keeps working for the reports.
+  // Selling out of a cuve is its own module — see /fuel-sales.
+  app.get("/stocks", { preHandler: [app.authenticate, app.authorize("cuve.stock.read", "cuve.read", "cuve.manage")] }, async (request) =>
     success(await service.stocks(parseInput(cuveStockQuerySchema, request.query), request.contextUser!)));
-  app.get("/:id/transactions", { preHandler: [app.authenticate, app.authorize("cuve.read", "cuve.manage")] }, async (request) =>
+  app.get("/inventory", { preHandler: [app.authenticate, app.authorize("cuve.stock.read", "cuve.read", "cuve.manage")] }, async (request) =>
+    success(await service.inventory(parseInput(cuveInventoryQuerySchema, request.query), request.contextUser!)));
+  app.get("/:id/transactions", { preHandler: [app.authenticate, app.authorize("cuve.stock.read", "cuve.read", "cuve.manage")] }, async (request) =>
     success(await service.transactions(
       parseInput(idParamsSchema, request.params).id,
       parseInput(cuveTransactionsQuerySchema, request.query),

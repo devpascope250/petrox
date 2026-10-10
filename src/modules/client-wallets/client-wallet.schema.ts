@@ -38,11 +38,52 @@ export const transferWalletToCardSchema = z.object({
   amount: walletAmountSchema
 }).strict();
 
-export const buyWalletCouponsSchema = z.object({
+/** Most coupons one sale may issue, across all its plans. */
+export const MAX_COUPONS_PER_SALE = 1000;
+
+const couponLineSchema = z.object({
   couponPlanId: uuidSchema,
-  quantity: z.number().int().min(1).max(100).default(1)
+  quantity: z.number().int().min(1).max(MAX_COUPONS_PER_SALE)
 }).strict();
 
+/** The coupons of one sale: one line per plan, each plan once. */
+export const couponLinesSchema = z.array(couponLineSchema)
+  .min(1, "Choose at least one coupon plan")
+  .max(50)
+  .superRefine((items, ctx) => {
+    const plans = items.map((item) => item.couponPlanId);
+    if (new Set(plans).size !== plans.length) {
+      ctx.addIssue({ code: "custom", message: "Each coupon plan may appear only once" });
+    }
+    if (items.reduce((sum, item) => sum + item.quantity, 0) > MAX_COUPONS_PER_SALE) {
+      ctx.addIssue({ code: "custom", message: `At most ${MAX_COUPONS_PER_SALE} coupons per sale` });
+    }
+  });
+
+/**
+ * Coupons bought from a wallet, paid in one debit. The single-plan shape —
+ * `{ couponPlanId, quantity }` — is still accepted, and read as one line.
+ */
+export const buyWalletCouponsSchema = z.union([
+  z.object({ items: couponLinesSchema }).strict(),
+  z.object({
+    couponPlanId: uuidSchema,
+    quantity: z.number().int().min(1).max(100).default(1)
+  }).strict().transform(({ couponPlanId, quantity }) => ({ items: [{ couponPlanId, quantity }] }))
+]);
+
+/**
+ * Money moved between a wallet and one of its client's main cards, either
+ * way: `TO_CARD` debits the wallet and credits the card, `FROM_CARD` the
+ * reverse.
+ */
+export const walletCardTransferSchema = z.object({
+  direction: z.enum(["TO_CARD", "FROM_CARD"]),
+  cardId: z.string().regex(/^[1-9]\d*$/, "Card id must be a positive integer").transform(BigInt),
+  amount: walletAmountSchema
+}).strict();
+
+export type WalletCardTransferInput = z.infer<typeof walletCardTransferSchema>;
 export type TransferWalletToCardInput = z.infer<typeof transferWalletToCardSchema>;
 export type BuyWalletCouponsInput = z.infer<typeof buyWalletCouponsSchema>;
 

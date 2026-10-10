@@ -1,7 +1,7 @@
 import type { AppConfig } from "../../config/env.js";
-import { AuthUser } from "../../shared/auth/context-user.js";
+import { AuthUser, isSiteBound } from "../../shared/auth/context-user.js";
 import { CuveRepository } from "./cuve.repository.js";
-import { CreateCuveSchema, CuveStockQuery, CuveTransactionsQuery } from "./cuve.schema.js";
+import { CreateCuveSchema, CuveInventoryQuery, CuveStockQuery, CuveTransactionsQuery } from "./cuve.schema.js";
 import { AppError, forbidden } from "../../utils/errors.js";
 export class CuveService {
   constructor(private repo: CuveRepository, private config: AppConfig) {}
@@ -18,14 +18,21 @@ export class CuveService {
     return this.repo.stocks({ siteId });
   }
 
+  inventory(query: CuveInventoryQuery, actor: AuthUser) {
+    const siteId = this.stockSite(actor) ?? query.siteId;
+    if (!siteId) throw new AppError(400, "SITE_ID_REQUIRED", "Select a site to view its inventory");
+    return this.repo.inventory(siteId, query);
+  }
+
   transactions(id: string, query: CuveTransactionsQuery, actor: AuthUser) {
     return this.repo.transactions(id, query, this.stockSite(actor));
   }
 
+  /** The site someone is held to: none for a super administrator, their own for site staff. */
   private stockSite(actor: AuthUser) {
     if (actor.position === "superAdmin") return undefined;
-    if (actor.position !== "siteManager" || !actor.siteId) {
-      throw forbidden("Stock reports require a super administrator or a site manager assigned to a site");
+    if (!isSiteBound(actor) || !actor.siteId) {
+      throw forbidden("Cuve stock requires a super administrator or site staff assigned to a site");
     }
     return actor.siteId;
   }

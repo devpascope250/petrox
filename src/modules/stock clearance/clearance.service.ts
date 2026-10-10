@@ -14,5 +14,4 @@ export class StockClearanceService {
     return this.repo.create(input);
   }
 
-
 }

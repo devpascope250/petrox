@@ -2,24 +2,100 @@ import { Prisma, PrismaClient } from "../../prisma/generated/prisma/client.js";
 import { paginatedData, paginationArgs } from "../shared/pagination/index.js";
 import {
   CentralStockReportQuery,
+  CentralStockInventoryQuery,
   CentralStockTransactionReportQuery,
   ReportOrderQuery,
 } from "./report.schema.js";
 
 const zero = () => new Prisma.Decimal(0);
 const num = (value: Prisma.Decimal | null | undefined) => Number(value ?? 0);
+const round = (value: number) => Math.round(value * 100) / 100;
+
+export type ToleranceOutcome = "gain" | "loss" | "balanced";
+export type ToleranceStatus =
+  | "withinTolerance"
+  | "exceededGain"
+  | "exceededLoss"
+  | "notAssessed";
+/**
+ * Which declared quantity a receipt was measured against. `t1Validated` is the
+ * official basis; `nominated` is the fallback used while a T1 validation has no
+ * quantity recorded on it, so receipts are still graded instead of skipped.
+ */
+export type ToleranceBasis = "t1Validated" | "nominated";
 
 export class ReportRepository {
   constructor(private db: PrismaClient) {}
 
-  private orderWhere(query: ReportOrderQuery): Prisma.OrderWhereInput {
+  private orderWhere(
+    query: ReportOrderQuery,
+    options: { byCargoDeport?: boolean } = {},
+  ): Prisma.OrderWhereInput {
+    const { byCargoDeport = true } = options;
     return {
       orderDate: { gte: query.startDate, lte: query.endDate },
       ...(query.byOrderPlanId && { orderPlanId: query.byOrderPlanId }),
       ...(query.bySupplierId && { supplierId: query.bySupplierId }),
-      ...(query.deportId && { cargos: { some: { deportId: query.deportId } } }),
+      ...(byCargoDeport &&
+        query.deportId && { cargos: { some: { deportId: query.deportId } } }),
       ...(query.itemId && { itemId: query.itemId }),
       ...(query.orderCode && { orderCode: { contains: query.orderCode } }),
+    };
+  }
+
+  /**
+   * The quantity a receipt should have delivered. Prefers the T1-validated
+   * figure; falls back to the nominated quantity when the T1 carries none, so
+   * receipts still get graded rather than dropping out of the report.
+   */
+  private expectedQuantity(
+    t1Quantity: Prisma.Decimal | null,
+    nominatedQuantity: Prisma.Decimal | null,
+  ): { quantity: number; basis: ToleranceBasis } {
+    const validated = num(t1Quantity);
+    return validated > 0
+      ? { quantity: validated, basis: "t1Validated" }
+      : { quantity: num(nominatedQuantity), basis: "nominated" };
+  }
+
+  /**
+   * Compares what a receipt was expected to deliver against what it actually
+   * delivered, and grades the gap against the tolerance rate allowed for it.
+   */
+  private assessTolerance(
+    expected: number,
+    actual: number,
+    rate: number | null,
+    basis: ToleranceBasis = "t1Validated",
+  ) {
+    const variance = round(actual - expected);
+    const outcome: ToleranceOutcome =
+      variance > 0 ? "gain" : variance < 0 ? "loss" : "balanced";
+    const allowedVariance =
+      rate === null || expected <= 0 ? null : round((expected * rate) / 100);
+    const status: ToleranceStatus =
+      allowedVariance === null
+        ? "notAssessed"
+        : Math.abs(variance) <= allowedVariance
+          ? "withinTolerance"
+          : outcome === "gain"
+            ? "exceededGain"
+            : "exceededLoss";
+    return {
+      basis,
+      expectedQuantity: round(expected),
+      actualQuantity: round(actual),
+      variance,
+      variancePct: expected > 0 ? round((variance / expected) * 100) : null,
+      outcome,
+      allowedRate: rate,
+      allowedVariance,
+      exceededBy:
+        allowedVariance === null || status === "withinTolerance"
+          ? 0
+          : round(Math.abs(variance) - allowedVariance),
+      status,
+      withinTolerance: status === "withinTolerance",
     };
   }
 
@@ -39,31 +115,31 @@ export class ReportRepository {
         },
         orderBy: { status: "asc" },
         _count: true,
-        _sum: { ambQuantity: true, quantityAt20C: true },
+        _sum: { quantityInKg: true, quantityInLitre: true },
       }),
     ]);
     const cargoTotals = cargos as unknown as Array<{
       status: (typeof cargos)[number]["status"];
       _count: number;
-      _sum: { ambQuantity: Prisma.Decimal | null; quantityAt20C: Prisma.Decimal | null };
+      _sum: { quantityInKg: Prisma.Decimal | null; quantityInLitre: Prisma.Decimal | null };
     }>;
     return {
       totalOrders: orders._count._all,
       totalOrderedQuantity: num(orders._sum.quantity),
       totalCargos: cargoTotals.reduce((sum, row) => sum + row._count, 0),
-      totalCargoAmbientQuantity: cargoTotals
-        .reduce((sum, row) => sum.plus(row._sum.ambQuantity ?? 0), zero())
+      totalCargoQuantityInLittre: cargoTotals
+        .reduce((sum, row) => sum.plus(row._sum.quantityInLitre ?? 0), zero())
         .toNumber(),
-      totalCargoQuantityAt20C: cargoTotals
-        .reduce((sum, row) => sum.plus(row._sum.quantityAt20C ?? 0), zero())
+      totalCargoQuantityInKg: cargoTotals
+        .reduce((sum, row) => sum.plus(row._sum.quantityInKg ?? 0), zero())
         .toNumber(),
       cargosByStatus: Object.fromEntries(
         cargoTotals.map((row) => [
           row.status,
           {
             count: row._count,
-            ambientQuantity: num(row._sum.ambQuantity),
-            quantityAt20C: num(row._sum.quantityAt20C),
+            quantityInKg: num(row._sum.quantityInKg),
+            quantityInLittre: num(row._sum.quantityInLitre),
           },
         ]),
       ),
@@ -125,8 +201,8 @@ export class ReportRepository {
               blRef: true,
               tansisRef: true,
               outurnRef: true,
-              ambQuantity: true,
-              quantityAt20C: true,
+              quantityInKg: true,
+              quantityInLitre: true,
               status: true,
               receivedDate: true,
               expirationDate: true,
@@ -153,8 +229,8 @@ export class ReportRepository {
         quantity: num(row.quantity),
         cargos: row.cargos.map((cargo) => ({
           ...cargo,
-          ambQuantity: num(cargo.ambQuantity),
-          quantityAt20C: num(cargo.quantityAt20C),
+          quantityInKg: num(cargo.quantityInKg),
+          quantityInLitre: num(cargo.quantityInLitre),
         })),
       })),
       total,
@@ -186,7 +262,7 @@ export class ReportRepository {
                 where: query.deportId
                   ? { deportId: query.deportId }
                   : undefined,
-                select: { quantityAt20C: true },
+                select: { quantityInKg: true, quantityInLitre: true },
               },
             },
           },
@@ -203,7 +279,7 @@ export class ReportRepository {
           .toNumber(),
         receivedQuantityAt20C: orders
           .flatMap((row) => row.cargos)
-          .reduce((sum, row) => sum.plus(row.quantityAt20C), zero())
+          .reduce((sum, row) => sum.plus(row.quantityInLitre), zero())
           .toNumber(),
       })),
       total,
@@ -235,7 +311,7 @@ export class ReportRepository {
                 where: query.deportId
                   ? { deportId: query.deportId }
                   : undefined,
-                select: { quantityAt20C: true },
+                select: { quantityInLitre: true },
               },
             },
           },
@@ -252,7 +328,7 @@ export class ReportRepository {
           .toNumber(),
         receivedQuantityAt20C: orders
           .flatMap((row) => row.cargos)
-          .reduce((sum, row) => sum.plus(row.quantityAt20C), zero())
+          .reduce((sum, row) => sum.plus(row.quantityInLitre), zero())
           .toNumber(),
       })),
       total,
@@ -280,7 +356,7 @@ export class ReportRepository {
           createdAt: true,
           cargos: {
             where: { order: orderWhere },
-            select: { ambQuantity: true, quantityAt20C: true, status: true },
+            select: { quantityInLitre: true, quantityInKg: true, status: true },
           },
         },
       }),
@@ -290,11 +366,11 @@ export class ReportRepository {
       rows.map(({ cargos, ...depot }) => ({
         ...depot,
         totalCargos: cargos.length,
-        ambientQuantity: cargos
-          .reduce((sum, row) => sum.plus(row.ambQuantity), zero())
+        quantityInKg: cargos
+          .reduce((sum, row) => sum.plus(row.quantityInKg), zero())
           .toNumber(),
-        quantityAt20C: cargos
-          .reduce((sum, row) => sum.plus(row.quantityAt20C), zero())
+        quantityInLittre: cargos
+          .reduce((sum, row) => sum.plus(row.quantityInLitre), zero())
           .toNumber(),
         cargosByStatus: Object.fromEntries(
           [...new Set(cargos.map((row) => row.status))].map((status) => [
@@ -306,6 +382,334 @@ export class ReportRepository {
       total,
       query,
     );
+  }
+
+
+  /**
+   * Tolerance report: for every stock receipt raised against orders in range,
+   * measures the T1-validated quantity at 20C against the quantity actually
+   * taken into central stock, and flags anything outside the item's allowed
+   * tolerance rate. Rows are items; receipts hang underneath them.
+   *
+   * `deportId` here means the receiving depot, not the cargo's arrival depot.
+   */
+  async supplyChainOrdersByOrderTolerance(query: ReportOrderQuery) {
+    const orderWhere = this.orderWhere(query, { byCargoDeport: false });
+    const stockWhere: Prisma.CentralStockWhereInput = {
+      ...(query.deportId && { deportId: query.deportId }),
+      ...(query.itemId && { itemId: query.itemId }),
+      t1Validation: { nomination: { nominationVessels: { some: { stock: { cargo: { order: orderWhere } } } } } },
+    };
+    const where: Prisma.ItemWhereInput = { centralStocks: { some: stockWhere } };
+
+    const [rows, total, allReceipts, activeRates] = await this.db.$transaction([
+      this.db.item.findMany({
+        where,
+        ...paginationArgs(query),
+        orderBy: [{ name: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          name: true,
+          descriptions: true,
+          status: true,
+          baseUnit: { select: { id: true, name: true, code: true } },
+          toleranceRates: {
+            where: { status: "active" },
+            orderBy: { createdAt: "asc" },
+            select: { id: true, maxRate: true, status: true, createdAt: true },
+          },
+          centralStocks: {
+            where: stockWhere,
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            select: {
+              id: true,
+              receiptNumber: true,
+              ambQuantity: true,
+              quantityAt20C: true,
+              toleranceRate: true,
+              gainQty: true,
+              lossQty: true,
+              status: true,
+              supportingDocUrl: true,
+              createdAt: true,
+              deport: {
+                select: { id: true, name: true, location: true, type: true },
+              },
+              t1Validation: {
+                select: {
+                  id: true,
+                  exportingCountry: true,
+                  quantityAt20C: true,
+                  nomination: {
+                    select: {
+                      id: true,
+                      destination: true,
+                      expectedLoadingDate: true,
+                      ambQuantity: true,
+                      // A nomination can load from several vessels, so every
+                      // cargo behind the receipt comes through this list.
+                      nominationVessels: {
+                        orderBy: { createdAt: "asc" },
+                        select: {
+                          id: true,
+                          stockId: true,
+                          ambQuantity: true,
+                          stock: {
+                            select: {
+                              cargo: {
+                                select: {
+                                  id: true,
+                                  blRef: true,
+                                  vesselName: true,
+                                  tansisRef: true,
+                                  outurnRef: true,
+                                  order: {
+                                    select: {
+                                      id: true,
+                                      orderCode: true,
+                                      orderDate: true,
+                                      quantity: true,
+                                      supplier: { select: { id: true, name: true } },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.db.item.count({ where }),
+      // Unpaginated, so the headline summary covers the whole filtered set
+      // rather than just the current page of items.
+      this.db.centralStock.findMany({
+        where: stockWhere,
+        select: {
+          itemId: true,
+          quantityAt20C: true,
+          ambQuantity: true,
+          toleranceRate: true,
+          gainQty: true,
+          lossQty: true,
+          t1Validation: {
+            select: {
+              quantityAt20C: true,
+              nomination: { select: { ambQuantity: true } },
+            },
+          },
+        },
+      }),
+      this.db.itemToleranceRate.findMany({
+        where: { status: "active", item: where },
+        orderBy: { createdAt: "asc" },
+        select: { itemId: true, maxRate: true },
+      }),
+    ]);
+
+    // Latest active rate wins, so a re-configured item is graded on today's rule.
+    const rateByItem = new Map(
+      activeRates.map((rate) => [rate.itemId, num(rate.maxRate)]),
+    );
+
+    const items = rows.map(({ centralStocks, toleranceRates, ...item }) => {
+      const itemRate = rateByItem.get(item.id) ?? null;
+      const receipts = centralStocks.map(
+        ({ t1Validation, deport, ...stock }) => {
+          const { nomination } = t1Validation;
+          const vessels = nomination.nominationVessels;
+          // `order` and `cargo` stay single-valued for existing consumers: the
+          // first vessel leads, and `vessels` below carries the full picture.
+          // A nomination with no vessel at all cannot be reached through this
+          // report's filter, but it is guarded rather than trusted.
+          const cargo = vessels[0]?.stock.cargo ?? null;
+          const appliedRate =
+            stock.toleranceRate === null ? itemRate : num(stock.toleranceRate);
+          const expected = this.expectedQuantity(
+            t1Validation.quantityAt20C,
+            nomination.ambQuantity,
+          );
+          const atStandard = this.assessTolerance(
+            expected.quantity,
+            num(stock.quantityAt20C),
+            appliedRate,
+            expected.basis,
+          );
+          return {
+            id: stock.id,
+            receiptNumber: stock.receiptNumber,
+            stockStatus: stock.status,
+            supportingDocUrl: stock.supportingDocUrl,
+            receivedAt: stock.createdAt,
+            depot: deport,
+            order: cargo
+              ? { ...cargo.order, quantity: num(cargo.order.quantity) }
+              : null,
+            cargo: cargo
+              ? {
+                  id: cargo.id,
+                  blRef: cargo.blRef,
+                  vesselName: cargo.vesselName,
+                  tansisRef: cargo.tansisRef,
+                  outurnRef: cargo.outurnRef,
+                }
+              : null,
+            nomination: {
+              id: nomination.id,
+              destination: nomination.destination,
+              expectedLoadingDate: nomination.expectedLoadingDate,
+              ambQuantity: num(nomination.ambQuantity),
+              vessels: vessels.map((vessel) => ({
+                id: vessel.id,
+                stockId: vessel.stockId,
+                ambQuantity: num(vessel.ambQuantity),
+                cargo: {
+                  id: vessel.stock.cargo.id,
+                  blRef: vessel.stock.cargo.blRef,
+                  vesselName: vessel.stock.cargo.vesselName,
+                  tansisRef: vessel.stock.cargo.tansisRef,
+                  outurnRef: vessel.stock.cargo.outurnRef,
+                },
+                order: {
+                  ...vessel.stock.cargo.order,
+                  quantity: num(vessel.stock.cargo.order.quantity),
+                },
+              })),
+            },
+            t1Validation: {
+              id: t1Validation.id,
+              exportingCountry: t1Validation.exportingCountry,
+              quantityAt20C: num(t1Validation.quantityAt20C),
+            },
+            // Headline assessment: T1-validated vs received, both at 20C.
+            tolerance: atStandard,
+            // Secondary view: dispatched vs received in ambient terms.
+            ambient: this.assessTolerance(
+              num(nomination.ambQuantity),
+              num(stock.ambQuantity),
+              appliedRate,
+              "nominated",
+            ),
+            recorded: {
+              toleranceRate:
+                stock.toleranceRate === null ? null : num(stock.toleranceRate),
+              gainQty: stock.gainQty === null ? null : num(stock.gainQty),
+              lossQty: stock.lossQty === null ? null : num(stock.lossQty),
+              matchesComputed:
+                round(num(stock.gainQty) - num(stock.lossQty)) ===
+                atStandard.variance,
+            },
+          };
+        },
+      );
+      return {
+        ...item,
+        allowedRate: itemRate,
+        toleranceRates: toleranceRates.map((rate) => ({
+          ...rate,
+          maxRate: num(rate.maxRate),
+        })),
+        summary: this.summariseTolerance(
+          receipts.map((receipt) => receipt.tolerance),
+          itemRate,
+        ),
+        receipts,
+      };
+    });
+
+    const overall = allReceipts.map((receipt) => {
+      const expected = this.expectedQuantity(
+        receipt.t1Validation.quantityAt20C,
+        receipt.t1Validation.nomination.ambQuantity,
+      );
+      return this.assessTolerance(
+        expected.quantity,
+        num(receipt.quantityAt20C),
+        receipt.toleranceRate === null
+          ? (rateByItem.get(receipt.itemId) ?? null)
+          : num(receipt.toleranceRate),
+        expected.basis,
+      );
+    });
+
+    return {
+      ...paginatedData(items, total, query),
+      summary: {
+        itemCount: total,
+        ...this.summariseTolerance(overall, null),
+        recordedGainQty: round(
+          allReceipts.reduce((sum, row) => sum + num(row.gainQty), 0),
+        ),
+        recordedLossQty: round(
+          allReceipts.reduce((sum, row) => sum + num(row.lossQty), 0),
+        ),
+      },
+    };
+  }
+
+  /** Rolls a set of graded receipts into the numbers a reader actually wants. */
+  private summariseTolerance(
+    assessments: ReturnType<ReportRepository["assessTolerance"]>[],
+    allowedRate: number | null,
+  ) {
+    const total = (pick: (row: (typeof assessments)[number]) => number) =>
+      round(assessments.reduce((sum, row) => sum + pick(row), 0));
+    const count = (status: ToleranceStatus) =>
+      assessments.filter((row) => row.status === status).length;
+
+    const expectedQuantity = total((row) => row.expectedQuantity);
+    const actualQuantity = total((row) => row.actualQuantity);
+    const netVariance = round(actualQuantity - expectedQuantity);
+    const assessed = assessments.filter((row) => row.status !== "notAssessed");
+    const breached = assessments.filter(
+      (row) => row.status === "exceededGain" || row.status === "exceededLoss",
+    );
+    const worst = [...assessments]
+      .filter((row) => row.variancePct !== null)
+      .sort((a, b) => Math.abs(b.variancePct!) - Math.abs(a.variancePct!))[0];
+
+    return {
+      receiptCount: assessments.length,
+      expectedQuantity,
+      actualQuantity,
+      netVariance,
+      netVariancePct:
+        expectedQuantity > 0
+          ? round((netVariance / expectedQuantity) * 100)
+          : null,
+      netOutcome: (netVariance > 0
+        ? "gain"
+        : netVariance < 0
+          ? "loss"
+          : "balanced") as ToleranceOutcome,
+      totalGain: total((row) => (row.variance > 0 ? row.variance : 0)),
+      totalLoss: total((row) => (row.variance < 0 ? -row.variance : 0)),
+      allowedRate,
+      withinToleranceCount: count("withinTolerance"),
+      exceededGainCount: count("exceededGain"),
+      exceededLossCount: count("exceededLoss"),
+      notAssessedCount: count("notAssessed"),
+      breachedQuantity: total((row) => row.exceededBy),
+      complianceRate: assessed.length
+        ? round(((assessed.length - breached.length) / assessed.length) * 100)
+        : null,
+      worstVariancePct: worst?.variancePct ?? null,
+      // How many receipts fell back to the nominated quantity because their
+      // T1 validation carries no quantity — high numbers mean the headline
+      // figures are softer than they look.
+      measuredAgainst: {
+        t1Validated: assessments.filter((row) => row.basis === "t1Validated")
+          .length,
+        nominated: assessments.filter((row) => row.basis === "nominated")
+          .length,
+      },
+    };
   }
 
   async supplyChainOrdersByOrderPlan(query: ReportOrderQuery) {
@@ -405,7 +809,6 @@ export class ReportRepository {
                       destination: true,
                       expectedLoadingDate: true,
                       ambQuantity: true,
-                      quantityAt20C: true,
                     },
                   },
                 },
@@ -574,6 +977,147 @@ export class ReportRepository {
                 { count: row._count, quantity: num(row._sum.quantity) },
               ]),
             ),
+          },
+        };
+      },
+      { isolationLevel: "RepeatableRead" },
+    );
+  }
+
+  /**
+   * Inventory per item for a period: what was on hand when it opened, what came
+   * in, what went out, and what was left. Movements are summed in the database
+   * by stock and type, then folded up to the item each stock belongs to.
+   *
+   *   opening  = in - out, for every movement before `startDate`
+   *   stockIn  = received + reconcilliationIn within the period
+   *   consumed = saleOut + reconcilliationOut within the period
+   *   closing  = opening + stockIn - consumed
+   *   total    = opening + stockIn, i.e. everything available in the period
+   */
+  async centralStockInventory(query: CentralStockInventoryQuery) {
+    const stockWhere: Prisma.CentralStockWhereInput = {
+      ...(query.itemId && { itemId: query.itemId }),
+      ...(query.depotId && { deportId: query.depotId }),
+    };
+
+    return this.db.$transaction(
+      async (tx) => {
+        const [before, during] = await Promise.all([
+          tx.stockTransaction.groupBy({
+            by: ["centralStockId", "type"],
+            where: { centralStock: stockWhere, createdAt: { lt: query.startDate } },
+            orderBy: [{ centralStockId: "asc" }, { type: "asc" }],
+            _sum: { quantity: true },
+          }),
+          tx.stockTransaction.groupBy({
+            by: ["centralStockId", "type"],
+            where: {
+              centralStock: stockWhere,
+              createdAt: { gte: query.startDate, lte: query.endDate },
+            },
+            orderBy: [{ centralStockId: "asc" }, { type: "asc" }],
+            _sum: { quantity: true },
+          }),
+        ]);
+
+        const stockIds = [
+          ...new Set([...before, ...during].map((row) => row.centralStockId)),
+        ];
+        const stocks = await tx.centralStock.findMany({
+          where: { id: { in: stockIds } },
+          select: {
+            id: true,
+            item: {
+              select: {
+                id: true,
+                name: true,
+                baseUnit: { select: { id: true, name: true, code: true } },
+              },
+            },
+          },
+        });
+        const itemByStock = new Map(stocks.map((stock) => [stock.id, stock.item]));
+
+        type Totals = {
+          item: (typeof stocks)[number]["item"];
+          opening: Prisma.Decimal;
+          received: Prisma.Decimal;
+          reconciledIn: Prisma.Decimal;
+          sold: Prisma.Decimal;
+          reconciledOut: Prisma.Decimal;
+        };
+        const byItem = new Map<string, Totals>();
+        const totalsFor = (stockId: string) => {
+          const item = itemByStock.get(stockId)!;
+          let totals = byItem.get(item.id);
+          if (!totals) {
+            totals = {
+              item,
+              opening: zero(),
+              received: zero(),
+              reconciledIn: zero(),
+              sold: zero(),
+              reconciledOut: zero(),
+            };
+            byItem.set(item.id, totals);
+          }
+          return totals;
+        };
+
+        for (const row of before) {
+          const totals = totalsFor(row.centralStockId);
+          const quantity = row._sum.quantity ?? zero();
+          const incoming = row.type === "received" || row.type === "reconcilliationIn";
+          totals.opening = incoming
+            ? totals.opening.plus(quantity)
+            : totals.opening.minus(quantity);
+        }
+        for (const row of during) {
+          const totals = totalsFor(row.centralStockId);
+          const quantity = row._sum.quantity ?? zero();
+          if (row.type === "received") totals.received = totals.received.plus(quantity);
+          if (row.type === "reconcilliationIn") totals.reconciledIn = totals.reconciledIn.plus(quantity);
+          if (row.type === "saleOut") totals.sold = totals.sold.plus(quantity);
+          if (row.type === "reconcilliationOut") totals.reconciledOut = totals.reconciledOut.plus(quantity);
+        }
+
+        const items = [...byItem.values()]
+          .sort((a, b) => a.item.name.localeCompare(b.item.name))
+          .map((totals) => {
+            const stockIn = totals.received.plus(totals.reconciledIn);
+            const consumed = totals.sold.plus(totals.reconciledOut);
+            const totalStock = totals.opening.plus(stockIn);
+            return {
+              item: totals.item,
+              opening: totals.opening.toNumber(),
+              stockIn: stockIn.toNumber(),
+              consumed: consumed.toNumber(),
+              closing: totalStock.minus(consumed).toNumber(),
+              totalStock: totalStock.toNumber(),
+              // What each column is made of, for a drill-down or tooltip.
+              breakdown: {
+                received: totals.received.toNumber(),
+                reconciledIn: totals.reconciledIn.toNumber(),
+                sold: totals.sold.toNumber(),
+                reconciledOut: totals.reconciledOut.toNumber(),
+              },
+            };
+          });
+
+        const sum = (pick: (row: (typeof items)[number]) => number) =>
+          items.reduce((total, row) => total.plus(pick(row)), zero()).toNumber();
+
+        return {
+          period: { startDate: query.startDate, endDate: query.endDate },
+          items,
+          totals: {
+            itemCount: items.length,
+            opening: sum((row) => row.opening),
+            stockIn: sum((row) => row.stockIn),
+            consumed: sum((row) => row.consumed),
+            closing: sum((row) => row.closing),
+            totalStock: sum((row) => row.totalStock),
           },
         };
       },

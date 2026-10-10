@@ -11,6 +11,7 @@ export const createStockClearanceSchema = z.object({
     clearedBy: uuidSchema.optional(),
     agentId: uuidSchema.optional(),
     dmsDocUrl: z.string().optional(),
+    assessmentDocUrl: z.string().optional(),
   }).refine((data) => { 
     // id type == "manual" requires centralStockId to be present
     if (data.type === "manual" && !data.centralStockId) {

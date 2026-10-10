@@ -21,12 +21,20 @@ export class T1ValidationRepository {
           select: {
             id: true,
             ambQuantity: true,
-            quantityAt20C: true,
-            stockId: true,
             timeLine: true,
-            stock: {
+            // A nomination can load from several vessels now, so the stock and
+            // its item come through the vessel list rather than one `stock`.
+            nominationVessels: {
+              orderBy: { createdAt: "asc" },
               select: {
-                item: true
+                id: true,
+                stockId: true,
+                ambQuantity: true,
+                stock: {
+                  select: {
+                    item: true
+                  }
+                }
               }
             }
           }
@@ -48,12 +56,20 @@ export class T1ValidationRepository {
           select: {
             id: true,
             ambQuantity: true,
-            quantityAt20C: true,
-            stockId: true,
             timeLine: true,
-            stock: {
+            // A nomination can load from several vessels now, so the stock and
+            // its item come through the vessel list rather than one `stock`.
+            nominationVessels: {
+              orderBy: { createdAt: "asc" },
               select: {
-                item: true
+                id: true,
+                stockId: true,
+                ambQuantity: true,
+                stock: {
+                  select: {
+                    item: true
+                  }
+                }
               }
             }
           }
@@ -73,10 +89,11 @@ export class T1ValidationRepository {
       data: {
         exportingCountry: data.exportingCountry,
         nominationId: data.nominationId,
+        quantityAt20C: data.quantityAt20C,
         extraValidations: {
           create: {
             customOffice: data.customOffice,
-            transitNumbering: data.transitNumbering
+            // transitNumbering: data.transitNumbering
           }
         },
         supportingDocUrl: data.supportingDocUrl
@@ -91,7 +108,7 @@ export class T1ValidationRepository {
       data: {
         t1ValidationId: data.t1ValidationId,
         customOffice: data.customOffice,
-        transitNumbering: data.transitNumbering
+        // transitNumbering: data.transitNumbering
       },
     });
   }
@@ -103,10 +120,11 @@ export class T1ValidationRepository {
      data: {
        exportingCountry: data.exportingCountry,
         nominationId: data.nominationId,
+        quantityAt20C: data.quantityAt20C,
         extraValidations: {
           update: {
             where: {id: extraT1Id},
-            data: {customOffice: data.customOffice, transitNumbering: data.transitNumbering}
+            data: {customOffice: data.customOffice}
           }
         },
         supportingDocUrl: data.supportingDocUrl

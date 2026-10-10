@@ -66,6 +66,7 @@ export const receptionOrdersQuerySchema = paginationQuerySchema.extend({
 export const receiveLoadingOrderSchema = z.object({
   cuveId: uuidSchema,
   receivedQty: z.coerce.number().positive(),
+  comment: z.string().optional()
 }).strict();
 
 

@@ -111,6 +111,7 @@ export class StockClearanceRepository {
           amount: data.amount === undefined ? undefined : data.amount * ratio,
           agentId: data.agentId, clearedBy: data.clearedBy,
           dmsDocUrl: data.dmsDocUrl,
+          assessmentDocUrl: data.assessmentDocUrl,
         }}));
       }
       return rows;

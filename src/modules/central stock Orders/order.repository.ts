@@ -3,14 +3,59 @@ import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { CentralStockOrderReportQuerySchema, CreateCentralStockOrderSchema, CreateLoadingOrderSchema, LoadingOrderStatusSchema, ReceptionOrdersQuerySchema, ReceiveLoadingOrderSchema } from "./order.schema.js";
 
+/** Who asked for an order — shown so a site manager can spot their own requests. */
+const requesterSelect = { select: { id: true, firstName: true, lastName: true } } as const;
+
+/**
+ * Reception progress against what was sent. When the lines and receptions are
+ * already narrowed to one site, this is that site's share of the load; a load
+ * can serve several sites, and each receives only its own part.
+ */
+function receptionProgress(
+  lines: Array<{ quantity: Prisma.Decimal | number }>,
+  receptions: Array<{ receivedQty: Prisma.Decimal | number }>,
+) {
+  const expected = lines.reduce((sum, line) => sum.plus(line.quantity), new Prisma.Decimal(0));
+  const received = receptions.reduce((sum, row) => sum.plus(row.receivedQty), new Prisma.Decimal(0));
+  return {
+    expectedQuantity: expected.toNumber(),
+    receivedQuantity: received.toNumber(),
+    remainingQuantity: Prisma.Decimal.max(0, expected.minus(received)).toNumber(),
+    receptionStatus: received.isZero()
+      ? "notReceived"
+      : received.greaterThanOrEqualTo(expected) ? "received" : "partiallyReceived",
+  } as const;
+}
+
+/**
+ * A site manager's view of loads: only the orders **he requested** for his own
+ * site. Receptions carry no link to individual order lines, so "received" is
+ * what he himself took in against them.
+ */
+export type RequesterScope = { siteId: string; requesterId: string };
+
+function scopedLines(scope?: RequesterScope): Prisma.LoadedOrderWhereInput | undefined {
+  return scope ? { order: { siteId: scope.siteId, createdBy: scope.requesterId } } : undefined;
+}
+
+function scopedReceptions(scope?: RequesterScope): Prisma.OrderReceptionWhereInput | undefined {
+  return scope ? { receivedBy: scope.requesterId } : undefined;
+}
+
 export class CentralStockOrderRepository {
   constructor(private db: PrismaClient) {}
 
-  async list(query: CentralStockOrderReportQuerySchema & { startDate: Date; endDate: Date }) {
+  /**
+   * Stockout orders in a period, each with how far it has got: loaded onto a
+   * truck, received at its site, and what is still to arrive. `requesterId`
+   * narrows the list — and every total — to the orders one person raised.
+   */
+  async list(query: CentralStockOrderReportQuerySchema & { startDate: Date; endDate: Date; requesterId?: string }) {
     const orders = await this.db.centralStockOrder.findMany({
       orderBy: { createdAt: "desc" },
       where: {
         createdAt: { gte: query.startDate, lte: query.endDate },
+        ...(query.requesterId && { createdBy: query.requesterId }),
         ...(query.itemId && { centralStock: { itemId: query.itemId } }),
         ...(query.siteId && { siteId: query.siteId }),
         ...(query.status && { status: query.status }),
@@ -18,7 +63,7 @@ export class CentralStockOrderRepository {
       },
       select: {
         id: true, quantity: true, unitPrice: true, totalPrice: true, orderType: true,
-        status: true, approvedAt: true, createdAt: true, updatedAt: true,
+        status: true, approvedAt: true, createdAt: true, updatedAt: true, createdBy: true,
         site: { select: { id: true, name: true, phone: true, email: true, address: true, status: true } },
         user: { select: { id: true, firstName: true, lastName: true, email: true } },
         approvedUser: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -47,14 +92,46 @@ export class CentralStockOrderRepository {
             } },
             authorizers: { select: { id: true, createdAt: true,
               user: { select: { id: true, firstName: true, lastName: true, email: true } } } },
+            // To work out how much of this order has been received — see below.
+            orderReceptions: { select: { receivedQty: true, receivedBy: true } },
+            loadedOrders: { orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+              select: { id: true, quantity: true, order: { select: { createdBy: true } } } },
           } },
         } },
       },
     });
 
+    /*
+     * A reception is recorded against a load, not against one order on it. The
+     * person who requested an order is the one who receives it, so what someone
+     * took in on a load is spread across their own lines on that load, oldest
+     * first. That gives each order its received figure.
+     */
+    const receivedByLine = new Map<string, number>();
+    for (const order of orders) {
+      for (const line of order.loadedOrders) {
+        const load = line.loadingOrder;
+        if (receivedByLine.has(line.id)) continue;
+        const requester = order.createdBy;
+        let pool = load.orderReceptions
+          .filter((reception) => reception.receivedBy === requester)
+          .reduce((sum, reception) => sum + Number(reception.receivedQty), 0);
+        for (const sibling of load.loadedOrders.filter((row) => row.order.createdBy === requester)) {
+          const share = Math.min(Number(sibling.quantity), Math.max(0, pool));
+          receivedByLine.set(sibling.id, share);
+          pool -= share;
+        }
+      }
+    }
+
     const summary = {
       orderCount: orders.length,
       totalQuantity: 0,
+      /** On trucks so far, including what has already been received. */
+      loadedQuantity: 0,
+      receivedQuantity: 0,
+      /** Approved or pending, and not yet received — what is still to come. */
+      remainingQuantity: 0,
       totalAmount: 0,
       averageUnitPrice: 0,
       quantitiesByStatus: {} as Record<string, number>,
@@ -69,7 +146,20 @@ export class CentralStockOrderRepository {
       const quantity = Number(order.quantity);
       const unitPrice = Number(order.unitPrice);
       const totalPrice = Number(order.totalPrice);
+      const liveLines = order.loadedOrders.filter((line) => line.loadingOrder.status !== "cancelled");
+      const loadedQuantity = liveLines.reduce((sum, line) => sum + Number(line.quantity), 0);
+      const receivedQuantity = liveLines.reduce((sum, line) => sum + (receivedByLine.get(line.id) ?? 0), 0);
+      const closed = order.status === "rejected" || order.status === "cancelled";
+      const remainingQuantity = closed ? 0 : Math.max(0, quantity - receivedQuantity);
+      const deliveryStatus = closed ? "closed"
+        : order.status === "pending" ? "awaitingApproval"
+        : receivedQuantity >= quantity ? "received"
+        : receivedQuantity > 0 ? "partiallyReceived"
+        : loadedQuantity > 0 ? "inTransit" : "awaitingLoad";
       summary.totalQuantity += quantity;
+      summary.loadedQuantity += loadedQuantity;
+      summary.receivedQuantity += receivedQuantity;
+      summary.remainingQuantity += remainingQuantity;
       summary.totalAmount += totalPrice;
       weightedUnitPrice += unitPrice * quantity;
       summary.quantitiesByStatus[order.status] = (summary.quantitiesByStatus[order.status] ?? 0) + quantity;
@@ -92,8 +182,10 @@ export class CentralStockOrderRepository {
         siteRow.amount += totalPrice;
         siteBreakdown.set(order.site.id, siteRow);
       }
+      const { createdBy: _createdBy, ...rest } = order;
       return {
-        ...order, quantity, unitPrice, totalPrice,
+        ...rest, quantity, unitPrice, totalPrice,
+        loadedQuantity, receivedQuantity, remainingQuantity, deliveryStatus,
         clearance: { ...order.clearance, quantity: Number(order.clearance.quantity),
           fees: order.clearance.fees === null ? null : Number(order.clearance.fees),
           amount: order.clearance.amount === null ? null : Number(order.clearance.amount),
@@ -101,7 +193,10 @@ export class CentralStockOrderRepository {
         centralStock: { ...order.centralStock, quantity: Number(order.centralStock.quantityAt20C) },
         loadedOrders: order.loadedOrders.map((loadedOrder) => ({
           ...loadedOrder, quantity: Number(loadedOrder.quantity),
+          receivedQuantity: receivedByLine.get(loadedOrder.id) ?? 0,
           loadingOrder: { ...loadedOrder.loadingOrder,
+            // Used above to work out received figures; not part of the response.
+            orderReceptions: undefined, loadedOrders: undefined,
             totalQuantity: Number(loadedOrder.loadingOrder.totalQuantity),
             dVehicle: { ...loadedOrder.loadingOrder.dVehicle,
               vechile: { ...loadedOrder.loadingOrder.dVehicle.vechile,
@@ -125,24 +220,54 @@ export class CentralStockOrderRepository {
           authorizers: { include: { user: true } } } } } } } });
   }
 
-  listLoadingOrders() {
-    return this.db.loadingOrder.findMany({
+  /**
+   * Every loading order, or — for a site manager — only the loads carrying
+   * orders he requested, narrowed to those orders and his own receptions.
+   */
+  async listLoadingOrders(scope?: RequesterScope) {
+    const loads = await this.db.loadingOrder.findMany({
+      where: scope ? { loadedOrders: { some: scopedLines(scope) } } : undefined,
       orderBy: { createdAt: "desc" },
       include: {
-        loadedOrders: { include: { order: {
-          include: { centralStock: { include: { item: true } }, site: true },
-        } } },
+        loadedOrders: {
+          where: scopedLines(scope),
+          include: { order: {
+            include: { centralStock: { include: { item: true } }, site: true, user: requesterSelect },
+          } },
+        },
         dVehicle: { include: { driver: true, vechile: true } },
         authorizers: { include: { user: { select: { id: true, firstName: true, lastName: true } } } },
+        orderReceptions: {
+          where: scopedReceptions(scope),
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true, expectedQty: true, receivedQty: true, comment: true, status: true, createdAt: true,
+            cuve: { select: { id: true, name: true, siteId: true } },
+            user: { select: { id: true, firstName: true, lastName: true } },
+          },
+        },
       },
     });
+    return loads.map((load) => ({
+      ...load,
+      ...receptionProgress(load.loadedOrders, load.orderReceptions),
+      orderReceptions: load.orderReceptions.map((reception) => ({
+        ...reception,
+        expectedQty: Number(reception.expectedQty),
+        receivedQty: Number(reception.receivedQty),
+      })),
+    }));
   }
 
-  async listReceptionOrders(query: ReceptionOrdersQuerySchema, siteId?: string) {
-    const effectiveSiteId = siteId ?? query.siteId;
+  async listReceptionOrders(query: ReceptionOrdersQuerySchema, scope?: RequesterScope) {
     const where: Prisma.LoadingOrderWhereInput = {
-      ...(effectiveSiteId ? { loadedOrders: { some: { order: { siteId: effectiveSiteId } } } } : {}),
-      ...(query.receptionStatus === "notReceived" ? { orderReceptions: { none: {} } } : {}),
+      // A site manager: only loads carrying orders he requested. Anyone else
+      // may narrow to a site with the `siteId` filter.
+      ...(scope
+        ? { loadedOrders: { some: scopedLines(scope) } }
+        : query.siteId ? { loadedOrders: { some: { order: { siteId: query.siteId } } } } : {}),
+      ...(query.receptionStatus === "notReceived"
+        ? { orderReceptions: { none: scopedReceptions(scope) ?? {} } } : {}),
       ...(query.receptionStatus === "partiallyReceived"
         ? { status: "pending", orderReceptions: { some: {} } } : {}),
       ...(query.receptionStatus === "received"
@@ -156,11 +281,13 @@ export class CentralStockOrderRepository {
         select: {
           id: true, totalQuantity: true, status: true, authorizationStatus: true,
           createdAt: true, updatedAt: true,
-          loadedOrders: { select: {
+          // A load can serve several sites; a site manager sees only their part.
+          loadedOrders: { where: scopedLines(scope), select: {
             id: true, quantity: true,
             order: { select: {
               id: true, siteId: true, quantity: true, orderType: true, status: true,
               site: { select: { id: true, name: true } },
+              user: requesterSelect,
               centralStock: { select: {
                 id: true,
                 item: { select: { id: true, name: true, descriptions: true,
@@ -174,9 +301,10 @@ export class CentralStockOrderRepository {
             vechile: { select: { id: true, platNumber: true, truckNumber: true, trailerNumber: true } },
           } },
           orderReceptions: {
+            where: scopedReceptions(scope),
             orderBy: { createdAt: "asc" },
             select: {
-              id: true, expectedQty: true, receivedQty: true, status: true, createdAt: true,
+              id: true, expectedQty: true, receivedQty: true, comment: true, status: true, createdAt: true,
               cuve: { select: { id: true, name: true, siteId: true } },
               user: { select: { id: true, firstName: true, lastName: true } },
             },
@@ -187,17 +315,13 @@ export class CentralStockOrderRepository {
     ]);
 
     return [orders.map((order) => {
-      const expectedQuantity = Number(order.totalQuantity);
-      const receivedQuantity = order.orderReceptions.reduce(
-        (sum, reception) => sum + Number(reception.receivedQty), 0);
+      const progress = receptionProgress(order.loadedOrders, order.orderReceptions);
       return {
         ...order,
-        totalQuantity: expectedQuantity,
-        receivedQuantity,
-        remainingQuantity: Math.max(0, expectedQuantity - receivedQuantity),
-        receptionStatus: receivedQuantity === 0
-          ? "notReceived"
-          : receivedQuantity >= expectedQuantity ? "received" : "partiallyReceived",
+        // The whole load, kept apart from this site's share of it.
+        loadTotalQuantity: Number(order.totalQuantity),
+        totalQuantity: progress.expectedQuantity,
+        ...progress,
         loadedOrders: order.loadedOrders.map((loadedOrder) => ({
           ...loadedOrder,
           quantity: Number(loadedOrder.quantity),
@@ -212,20 +336,22 @@ export class CentralStockOrderRepository {
     }), total] as const;
   }
 
-  receiveLoadingOrder(loadingOrderId: string, input: ReceiveLoadingOrderSchema, siteId: string, userId: string) {
+  /** A site manager takes in the orders he requested, into a tank at his site. */
+  receiveLoadingOrder(loadingOrderId: string, input: ReceiveLoadingOrderSchema, scope: RequesterScope) {
+    const { siteId, requesterId: userId } = scope;
     return this.db.$transaction(async (tx) => {
       const loadingOrder = await tx.loadingOrder.findFirst({
-        where: { id: loadingOrderId, loadedOrders: { some: { order: { siteId } } } },
+        where: { id: loadingOrderId, loadedOrders: { some: scopedLines(scope) } },
         select: {
           id: true, totalQuantity: true, status: true, authorizationStatus: true, driverVehicleId: true,
-          loadedOrders: { where: { order: { siteId } }, select: {
+          loadedOrders: { where: scopedLines(scope), select: {
             quantity: true,
             order: { select: { siteId: true, centralStock: { select: { itemId: true } } } },
           } },
-          orderReceptions: { select: { receivedQty: true, cuve: { select: { siteId: true } } } },
+          orderReceptions: { select: { receivedQty: true, receivedBy: true } },
         },
       });
-      if (!loadingOrder) throw new NotFoundError("Loading order for this site");
+      if (!loadingOrder) throw new NotFoundError("Loading order carrying orders you requested");
       if (loadingOrder.status === "cancelled") {
         throw new BusinessError("LOADING_ORDER_CANCELLED", "A cancelled loading order cannot be received");
       }
@@ -246,13 +372,24 @@ export class CentralStockOrderRepository {
         throw new BusinessError("CUVE_ITEM_MISMATCH", "The cuve item does not match the loading-order item");
       }
 
-      const received = loadingOrder.orderReceptions.filter((reception) => reception.cuve.siteId === siteId).reduce(
+      // What he has already taken in against his own orders on this load.
+      const received = loadingOrder.orderReceptions.filter((reception) => reception.receivedBy === userId).reduce(
         (sum, reception) => sum.plus(reception.receivedQty), new Prisma.Decimal(0));
       const quantity = new Prisma.Decimal(input.receivedQty);
       const expected = loadingOrder.loadedOrders.reduce(
         (sum, loadedOrder) => sum.plus(loadedOrder.quantity), new Prisma.Decimal(0));
       if (received.plus(quantity).greaterThan(expected)) {
         throw new BusinessError("RECEPTION_QUANTITY_EXCEEDED", `Only ${expected.minus(received).toString()} remains to receive`);
+      }
+
+      // A shortfall must be explained. Decimals are objects, so they are compared
+      // with `equals` — `!==` compared references and was always true, which
+      // demanded a comment on every reception, even an exact one.
+      if (!received.plus(quantity).equals(expected) && !input.comment?.trim()) {
+        throw new BusinessError(
+          "RECEPTION_COMMENT",
+          `Received ${received.plus(quantity).toString()} of ${expected.toString()} expected — explain the difference in a comment`,
+        );
       }
       const cuveQuantity = cuve.balance;
       if (cuveQuantity.plus(quantity).greaterThan(cuve.maximum)) {
@@ -270,6 +407,7 @@ export class CentralStockOrderRepository {
           receivedQty: quantity,
           receivedBy: userId,
           status: "received",
+          comment: input.comment
         },
         include: {
           cuve: { select: { id: true, name: true, siteId: true } },
@@ -287,6 +425,8 @@ export class CentralStockOrderRepository {
           type: "received",
           direction: "IN",
           note: `Loading order ${loadingOrderId}; reception ${reception.id}`,
+          createdBy: userId,
+          orderReceptionId: reception.id,
         },
       });
       await tx.loadingOrder.update({
