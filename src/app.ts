@@ -69,7 +69,12 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(helmet);
-  await app.register(cors, { origin: config.CORS_ORIGIN.split(",").map((v) => v.trim()), credentials: true });
+  await app.register(cors, {
+    origin: config.CORS_ORIGIN.split(",").map((v) => v.trim()),
+    credentials: true,
+    // @fastify/cors defaults to GET,HEAD,POST, which blocks updates and deletes from the browser.
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+  });
   await app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
   await app.register(prismaPlugin);
   await app.register(cookie);
