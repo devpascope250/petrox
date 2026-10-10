@@ -30,10 +30,23 @@ jobs:
 
             cd /home/ikwim-api/htdocs/api.ikwim.com
 
-            echo "🧠 Ensuring pnpm is available..."
-            export PATH=$PATH:$(npm config get prefix)/bin
-            corepack enable || true
-            corepack prepare pnpm@latest --activate || true
+            echo "🧠 Loading Node, pnpm and pm2..."
+            # An SSH deploy runs a non-interactive shell, which skips ~/.bashrc,
+            # so Node installed per user (nvm, fnm, pnpm's own) must be loaded here.
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            export PNPM_HOME="$HOME/.local/share/pnpm"
+            export PATH="$PNPM_HOME:$HOME/.local/bin:$HOME/.fnm:/usr/local/bin:$PATH"
+            command -v fnm >/dev/null && eval "$(fnm env)"
+            for tool in node pnpm pm2; do
+              command -v "$tool" >/dev/null || { echo "❌ $tool not found for $(whoami). Run 'which $tool' on the server and add its folder to PATH above."; exit 1; }
+            done
+            echo "node $(node --version), pnpm $(pnpm --version), pm2 $(pm2 --version)"
+
+            if [ ! -d .git ]; then
+              echo "❌ $(pwd) is not a git clone. Run git init / git remote add origin / git fetch once on the server."
+              exit 1
+            fi
 
             echo "📡 Fetching latest code..."
             git fetch origin main
