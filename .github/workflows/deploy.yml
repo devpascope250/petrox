@@ -30,10 +30,10 @@ jobs:
 
             cd /home/ikwim-api/htdocs/api.ikwim.com
 
-            echo "🧠 Ensuring npm is available..."
+            echo "🧠 Ensuring pnpm is available..."
             export PATH=$PATH:$(npm config get prefix)/bin
             corepack enable || true
-            corepack prepare npm@latest --activate || true
+            corepack prepare pnpm@latest --activate || true
 
             echo "📡 Fetching latest code..."
             git fetch origin main
@@ -41,14 +41,14 @@ jobs:
             echo "🧹 Resetting tracked files..."
             git reset --hard origin/main
 
-            echo "📦 Installing dependencies with npm..."
-            npm install --frozen-lockfile
+            echo "📦 Installing dependencies with pnpm..."
+            pnpm install --frozen-lockfile
 
             echo "🗄️ Generating Prisma client..."
-            npm prisma generate
+            pnpm prisma generate
 
             echo "🏗 Building project..."
-            npm build
+            pnpm build
 
             echo "🔄 Reloading PM2..."
             pm2 reload ecosystem.config.js --env production || pm2 restart all
