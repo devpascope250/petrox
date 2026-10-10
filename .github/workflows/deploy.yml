@@ -64,7 +64,9 @@ jobs:
             pnpm build
 
             echo "🔄 Reloading PM2..."
-            pm2 reload ecosystem.config.js --env production || pm2 restart all
+            # Starts ikwim-api the first time, reloads it after; other pm2 apps are left alone.
+            pm2 startOrReload ecosystem.config.cjs --env production
+            pm2 save
 
             echo "🧹 Cleaning backup..."
             rm -rf /tmp/ikwim-backup

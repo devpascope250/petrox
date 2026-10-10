@@ -62,7 +62,9 @@ import { globalErrorHandler } from "./utils/error-handler.js";
 import { success } from "./shared/http/index.js";
 
 export async function buildApp(config: AppConfig, options: FastifyServerOptions = {}) {
-  const app = Fastify({bodyLimit: 10 * 1024 * 1024, logger: options.logger ?? { level: config.LOG_LEVEL, redact: ["req.headers.authorization", "req.headers.cookie", "body.password", "body.pin", "body.refreshToken", "body.token"] }, ...options });
+  // Behind nginx every request comes from 127.0.0.1; trusting the local proxy's
+  // X-Forwarded-For / -Proto gives the real client IP (rate limits) and scheme.
+  const app = Fastify({bodyLimit: 10 * 1024 * 1024, trustProxy: "127.0.0.1,::1", logger: options.logger ?? { level: config.LOG_LEVEL, redact: ["req.headers.authorization", "req.headers.cookie", "body.password", "body.pin", "body.refreshToken", "body.token"] }, ...options });
   app.decorate("config", config);
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
