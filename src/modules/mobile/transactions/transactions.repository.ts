@@ -204,7 +204,9 @@ export class MobileTransactionsRepository {
    * nozzle must be on that pump and draw from that tank, which must hold that
    * product, all active. For a card sale the card must be assigned and its
    * client active, and the card type's plate rules are applied. The price is
-   * the product's price in force, fixed now for the rest of the sale.
+   * the product's price in force, fixed now for the rest of the sale. A copy
+   * spends from its main card, so the main card must have a balance, unless
+   * its type allows credit.
    */
   async initiate(input: InitiateTransactionInput & { platePictureUrl?: string }, siteId: string, deviceId: string) {
     const nozzle = await this.db.tblNozzle.findFirst({
@@ -235,8 +237,8 @@ export class MobileTransactionsRepository {
       const assignment = await this.db.cardCopy.findFirst({
         where: { id: input.cardCopyId, status: true },
         select: { clientId: true, cardId: true, client: { select: { status: true, name: true } },
-          // A copy follows its main card's type.
-          card: { select: { cardType: { select: { setting: settingSelect } } } },
+          // A copy follows its main card's type, and spends from its balance.
+          card: { select: { cardNumber: true, balance: true, cardType: { select: { setting: settingSelect } } } },
           // The cars this card is on now: active assignment, active car.
           clientCarCardAssignments: {
             where: { status: "active", clientCar: { status: "active" } },
@@ -246,6 +248,10 @@ export class MobileTransactionsRepository {
       if (!assignment) throw new NotFoundError("Card");
       if (!assignment.client.status) throw new BusinessError("CLIENT_INACTIVE", `${assignment.client.name ?? "This client"} is not active`);
       const setting = assignment.card.cardType?.setting;
+      if (!setting?.allowCredit && assignment.card.balance.lessThanOrEqualTo(0)) {
+        throw new BusinessError("INSUFFICIENT_CARD_BALANCE", "The main card of this card has no balance",
+          422, { cardNumber: assignment.card.cardNumber, balance: assignment.card.balance.toFixed(2) });
+      }
       const checksPlate = Boolean(setting?.requirePlateNumber || setting?.capturePlatePicture);
       // A plate picture is only worth taking for a plate that can be checked, so either rule needs the number.
       if (checksPlate && !input.platNumber) {

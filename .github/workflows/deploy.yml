@@ -64,8 +64,11 @@ jobs:
             pnpm build
 
             echo "🔄 Reloading PM2..."
-            # Starts ikwim-api the first time, reloads it after; other pm2 apps are left alone.
-            pm2 startOrReload ecosystem.config.js --env production
+            # The server's own pm2 config, one level above the clone. Starts the
+            # app the first time, reloads it after; other pm2 apps are left alone.
+            ECOSYSTEM=/home/ikwim-api/htdocs/api.ikwim.com/ecosystem.config.js
+            [ -f "$ECOSYSTEM" ] || { echo "❌ $ECOSYSTEM not found"; exit 1; }
+            pm2 startOrReload "$ECOSYSTEM" --env production --update-env
             pm2 save
 
             echo "🧹 Cleaning backup..."
