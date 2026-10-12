@@ -72,7 +72,7 @@ const transactionSelect = {
   item: { select: { id: true, name: true } },
   // cuve: { select: { id: true, name: true } },
   // pump: { select: { id: true, name: true } },
-  nozzle: { select: { id: true, name: true, nozzleCode: true, display: { select: { id: true, name: true } } } },
+  nozzle: { select: { id: true, name: true, nozzleCode: true, display: { select: { id: true, name: true, code: true } } } },
   // site: { select: { id: true, name: true } },
   /** The POS that recorded it. */
   // device: { select: { id: true, deviceName: true } },
