@@ -28,18 +28,18 @@ function receptionProgress(
 }
 
 /**
- * A site manager's view of loads: only the orders **he requested** for his own
- * site. Receptions carry no link to individual order lines, so "received" is
- * what he himself took in against them.
+ * A site manager's view of loads: every order for **his site**, whoever raised
+ * it. Receptions carry no link to individual order lines, so "received" is what
+ * went into the site's own cuves.
  */
-export type RequesterScope = { siteId: string; requesterId: string };
+export type SiteScope = { siteId: string };
 
-function scopedLines(scope?: RequesterScope): Prisma.LoadedOrderWhereInput | undefined {
-  return scope ? { order: { siteId: scope.siteId, createdBy: scope.requesterId } } : undefined;
+function scopedLines(scope?: SiteScope): Prisma.LoadedOrderWhereInput | undefined {
+  return scope ? { order: { siteId: scope.siteId } } : undefined;
 }
 
-function scopedReceptions(scope?: RequesterScope): Prisma.OrderReceptionWhereInput | undefined {
-  return scope ? { receivedBy: scope.requesterId } : undefined;
+function scopedReceptions(scope?: SiteScope): Prisma.OrderReceptionWhereInput | undefined {
+  return scope ? { cuve: { siteId: scope.siteId } } : undefined;
 }
 
 export class CentralStockOrderRepository {
@@ -47,15 +47,14 @@ export class CentralStockOrderRepository {
 
   /**
    * Stockout orders in a period, each with how far it has got: loaded onto a
-   * truck, received at its site, and what is still to arrive. `requesterId`
-   * narrows the list — and every total — to the orders one person raised.
+   * truck, received at its site, and what is still to arrive. `siteId`
+   * narrows the list — and every total — to one site's orders.
    */
-  async list(query: CentralStockOrderReportQuerySchema & { startDate: Date; endDate: Date; requesterId?: string }) {
+  async list(query: CentralStockOrderReportQuerySchema & { startDate: Date; endDate: Date }) {
     const orders = await this.db.centralStockOrder.findMany({
       orderBy: { createdAt: "desc" },
       where: {
         createdAt: { gte: query.startDate, lte: query.endDate },
-        ...(query.requesterId && { createdBy: query.requesterId }),
         ...(query.itemId && { centralStock: { itemId: query.itemId } }),
         ...(query.siteId && { siteId: query.siteId }),
         ...(query.status && { status: query.status }),
@@ -63,7 +62,7 @@ export class CentralStockOrderRepository {
       },
       select: {
         id: true, quantity: true, unitPrice: true, totalPrice: true, orderType: true,
-        status: true, approvedAt: true, createdAt: true, updatedAt: true, createdBy: true,
+        status: true, approvedAt: true, createdAt: true, updatedAt: true, siteId: true,
         site: { select: { id: true, name: true, phone: true, email: true, address: true, status: true } },
         user: { select: { id: true, firstName: true, lastName: true, email: true } },
         approvedUser: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -93,30 +92,30 @@ export class CentralStockOrderRepository {
             authorizers: { select: { id: true, createdAt: true,
               user: { select: { id: true, firstName: true, lastName: true, email: true } } } },
             // To work out how much of this order has been received — see below.
-            orderReceptions: { select: { receivedQty: true, receivedBy: true } },
+            orderReceptions: { select: { receivedQty: true, cuve: { select: { siteId: true } } } },
             loadedOrders: { orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-              select: { id: true, quantity: true, order: { select: { createdBy: true } } } },
+              select: { id: true, quantity: true, order: { select: { siteId: true } } } },
           } },
         } },
       },
     });
 
     /*
-     * A reception is recorded against a load, not against one order on it. The
-     * person who requested an order is the one who receives it, so what someone
-     * took in on a load is spread across their own lines on that load, oldest
-     * first. That gives each order its received figure.
+     * A reception is recorded against a load, not against one order on it. What
+     * a site took in on a load — into its own cuves — is spread across that
+     * site's lines on the load, oldest first. That gives each order its
+     * received figure.
      */
     const receivedByLine = new Map<string, number>();
     for (const order of orders) {
       for (const line of order.loadedOrders) {
         const load = line.loadingOrder;
         if (receivedByLine.has(line.id)) continue;
-        const requester = order.createdBy;
+        const site = order.siteId;
         let pool = load.orderReceptions
-          .filter((reception) => reception.receivedBy === requester)
+          .filter((reception) => reception.cuve.siteId === site)
           .reduce((sum, reception) => sum + Number(reception.receivedQty), 0);
-        for (const sibling of load.loadedOrders.filter((row) => row.order.createdBy === requester)) {
+        for (const sibling of load.loadedOrders.filter((row) => row.order.siteId === site)) {
           const share = Math.min(Number(sibling.quantity), Math.max(0, pool));
           receivedByLine.set(sibling.id, share);
           pool -= share;
@@ -182,9 +181,8 @@ export class CentralStockOrderRepository {
         siteRow.amount += totalPrice;
         siteBreakdown.set(order.site.id, siteRow);
       }
-      const { createdBy: _createdBy, ...rest } = order;
       return {
-        ...rest, quantity, unitPrice, totalPrice,
+        ...order, quantity, unitPrice, totalPrice,
         loadedQuantity, receivedQuantity, remainingQuantity, deliveryStatus,
         clearance: { ...order.clearance, quantity: Number(order.clearance.quantity),
           fees: order.clearance.fees === null ? null : Number(order.clearance.fees),
@@ -222,9 +220,9 @@ export class CentralStockOrderRepository {
 
   /**
    * Every loading order, or — for a site manager — only the loads carrying
-   * orders he requested, narrowed to those orders and his own receptions.
+   * orders for his site, narrowed to those orders and the site's receptions.
    */
-  async listLoadingOrders(scope?: RequesterScope) {
+  async listLoadingOrders(scope?: SiteScope) {
     const loads = await this.db.loadingOrder.findMany({
       where: scope ? { loadedOrders: { some: scopedLines(scope) } } : undefined,
       orderBy: { createdAt: "desc" },
@@ -259,9 +257,9 @@ export class CentralStockOrderRepository {
     }));
   }
 
-  async listReceptionOrders(query: ReceptionOrdersQuerySchema, scope?: RequesterScope) {
+  async listReceptionOrders(query: ReceptionOrdersQuerySchema, scope?: SiteScope) {
     const where: Prisma.LoadingOrderWhereInput = {
-      // A site manager: only loads carrying orders he requested. Anyone else
+      // A site manager: only loads carrying orders for his site. Anyone else
       // may narrow to a site with the `siteId` filter.
       ...(scope
         ? { loadedOrders: { some: scopedLines(scope) } }
@@ -336,9 +334,9 @@ export class CentralStockOrderRepository {
     }), total] as const;
   }
 
-  /** A site manager takes in the orders he requested, into a tank at his site. */
-  receiveLoadingOrder(loadingOrderId: string, input: ReceiveLoadingOrderSchema, scope: RequesterScope) {
-    const { siteId, requesterId: userId } = scope;
+  /** A site manager takes in his site's orders, into a tank at his site. */
+  receiveLoadingOrder(loadingOrderId: string, input: ReceiveLoadingOrderSchema, scope: SiteScope, userId: string) {
+    const { siteId } = scope;
     return this.db.$transaction(async (tx) => {
       const loadingOrder = await tx.loadingOrder.findFirst({
         where: { id: loadingOrderId, loadedOrders: { some: scopedLines(scope) } },
@@ -348,10 +346,10 @@ export class CentralStockOrderRepository {
             quantity: true,
             order: { select: { siteId: true, centralStock: { select: { itemId: true } } } },
           } },
-          orderReceptions: { select: { receivedQty: true, receivedBy: true } },
+          orderReceptions: { select: { receivedQty: true, cuve: { select: { siteId: true } } } },
         },
       });
-      if (!loadingOrder) throw new NotFoundError("Loading order carrying orders you requested");
+      if (!loadingOrder) throw new NotFoundError("Loading order carrying orders for your site");
       if (loadingOrder.status === "cancelled") {
         throw new BusinessError("LOADING_ORDER_CANCELLED", "A cancelled loading order cannot be received");
       }
@@ -372,8 +370,8 @@ export class CentralStockOrderRepository {
         throw new BusinessError("CUVE_ITEM_MISMATCH", "The cuve item does not match the loading-order item");
       }
 
-      // What he has already taken in against his own orders on this load.
-      const received = loadingOrder.orderReceptions.filter((reception) => reception.receivedBy === userId).reduce(
+      // What the site has already taken in on this load, into its own cuves.
+      const received = loadingOrder.orderReceptions.filter((reception) => reception.cuve.siteId === siteId).reduce(
         (sum, reception) => sum.plus(reception.receivedQty), new Prisma.Decimal(0));
       const quantity = new Prisma.Decimal(input.receivedQty);
       const expected = loadingOrder.loadedOrders.reduce(

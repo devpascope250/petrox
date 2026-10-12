@@ -12,10 +12,10 @@ export class CentralStockOrderService {
   async list(query: CentralStockOrderReportQuerySchema, actor: AuthUser) {
     const dates = within2DaysPeriod(query.startDate, query.endDate);
 
-    // Site staff see only the orders they raised — and totals over just those.
+    // Site staff see every order for their own site — and totals over just those.
     const report = await this.repo.list({
       ...query, ...dates,
-      ...(isSiteBound(actor) && { requesterId: actor.userId, siteId: undefined }),
+      ...(isSiteBound(actor) && { siteId: this.requireSite(actor) }),
     });
     return {
       ...report,
@@ -31,9 +31,9 @@ export class CentralStockOrderService {
   }
   find(id: string) { return this.repo.find(id); }
   create(input: CreateCentralStockOrderSchema) { return this.repo.create(input); }
-  /** A site manager sees only the loads carrying orders he requested. */
+  /** A site manager sees only the loads carrying orders for his site. */
   listLoadingOrders(actor: AuthUser) {
-    return this.repo.listLoadingOrders(this.requesterScope(actor));
+    return this.repo.listLoadingOrders(this.siteScope(actor));
   }
   createLoadingOrders(input: CreateLoadingOrderSchema) { return this.repo.createLoadingOrders(input); }
   updateLoadingOrderStatus(id: string, input: LoadingOrderStatusSchema) {
@@ -42,7 +42,7 @@ export class CentralStockOrderService {
 
   async listReceptionOrders(query: ReceptionOrdersQuerySchema, actor: AuthUser) {
     this.assertReceptionAccess(actor);
-    const [items, total] = await this.repo.listReceptionOrders(query, this.requesterScope(actor));
+    const [items, total] = await this.repo.listReceptionOrders(query, this.siteScope(actor));
     return paginatedData(items, total, query);
   }
 
@@ -50,7 +50,7 @@ export class CentralStockOrderService {
     if (actor.position !== "siteManager") {
       throw forbidden("Only site managers can receive loading orders into a cuve");
     }
-    return this.repo.receiveLoadingOrder(id, input, this.requesterScope(actor)!);
+    return this.repo.receiveLoadingOrder(id, input, { siteId: this.requireSite(actor) }, actor.userId);
   }
 
   private documentUrl(path: string | null) {
@@ -63,11 +63,9 @@ export class CentralStockOrderService {
     }
   }
 
-  /** For site staff: the orders they requested, at their own site. */
-  private requesterScope(actor: AuthUser) {
-    return isSiteBound(actor)
-      ? { siteId: this.requireSite(actor), requesterId: actor.userId }
-      : undefined;
+  /** For site staff: every order for their own site, whoever raised it. */
+  private siteScope(actor: AuthUser) {
+    return isSiteBound(actor) ? { siteId: this.requireSite(actor) } : undefined;
   }
 
   private requireSite(actor: AuthUser) {

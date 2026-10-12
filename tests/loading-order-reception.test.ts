@@ -5,24 +5,24 @@ import { CentralStockOrderRepository } from "../src/modules/central stock Orders
 const decimal = (value: number) => new Prisma.Decimal(value);
 
 function setup(siteReceived = 0, otherReceived = 0, balance = 0) {
-  // One load, two requesters: "user" asked for 40 at site-a, "other" for 60 at site-b.
+  // One load, two sites: site-a ordered 40, site-b 60.
   const allocations = [
-    { quantity: decimal(40), order: { siteId: "site-a", createdBy: "user", centralStock: { itemId: "fuel" } } },
-    { quantity: decimal(60), order: { siteId: "site-b", createdBy: "other", centralStock: { itemId: "other-fuel" } } },
+    { quantity: decimal(40), order: { siteId: "site-a", centralStock: { itemId: "fuel" } } },
+    { quantity: decimal(60), order: { siteId: "site-b", centralStock: { itemId: "other-fuel" } } },
   ];
   const tx = {
     loadingOrder: {
       findFirst: vi.fn().mockImplementation(async (query) => ({
         id: "load", totalQuantity: decimal(100), status: "pending", authorizationStatus: "approved",
         driverVehicleId: "vehicle",
-        // Only the lines this person requested, at their own site.
+        // Only the lines for this site, whoever requested them.
         loadedOrders: allocations.filter(({ order }) => {
           const where = query.select.loadedOrders.where?.order;
-          return !where || (order.siteId === where.siteId && order.createdBy === where.createdBy);
+          return !where || order.siteId === where.siteId;
         }),
         orderReceptions: [
-          { receivedQty: decimal(siteReceived), receivedBy: "user" },
-          { receivedQty: decimal(otherReceived), receivedBy: "other" },
+          { receivedQty: decimal(siteReceived), cuve: { siteId: "site-a" } },
+          { receivedQty: decimal(otherReceived), cuve: { siteId: "site-b" } },
         ],
       })),
       update: vi.fn(), count: vi.fn().mockResolvedValue(0),
@@ -38,12 +38,12 @@ function setup(siteReceived = 0, otherReceived = 0, balance = 0) {
     $transaction: async (callback: (transaction: typeof tx) => unknown) => callback(tx),
   } as never);
   // A shortfall must be explained, so partial receipts carry a comment.
-  return { tx, receive: (receivedQty: number, comment?: string) => repo.receiveLoadingOrder(
-    "load", { cuveId: "cuve", receivedQty, comment }, { siteId: "site-a", requesterId: "user" },
+  return { tx, receive: (receivedQty: number, comment?: string, userId = "user") => repo.receiveLoadingOrder(
+    "load", { cuveId: "cuve", receivedQty, comment }, { siteId: "site-a" }, userId,
   ) };
 }
 
-describe("mixed-site, mixed-requester loading order reception", () => {
+describe("mixed-site loading order reception", () => {
   it("increments existing stock and records an inbound receipt", async () => {
     const { tx, receive } = setup(0, 0, 960);
     await receive(40);
@@ -65,7 +65,7 @@ describe("mixed-site, mixed-requester loading order reception", () => {
     expect(tx.cuveTransaction.create).not.toHaveBeenCalled();
   });
 
-  it("receives only the requester's own allocation and keeps the load pending for others", async () => {
+  it("receives only the site's own allocation and keeps the load pending for others", async () => {
     const { tx, receive } = setup();
     await expect(receive(40)).resolves.toMatchObject({
       expectedQty: 40, remainingQuantity: 0, loadingOrderStatus: "pending",
@@ -73,11 +73,19 @@ describe("mixed-site, mixed-requester loading order reception", () => {
     expect(tx.driverVehicles.update).not.toHaveBeenCalled();
   });
 
-  it("does not count another requester's receipts against this requester's remaining quantity", async () => {
+  it("does not count another site's receipts against this site's remaining quantity", async () => {
     const { receive } = setup(10, 60);
     await expect(receive(20, "Rest arrives on the next trip")).resolves.toMatchObject({
       expectedQty: 40, remainingQuantity: 10, loadingOrderStatus: "pending",
     });
+  });
+
+  it("lets any manager at the site receive, counting what colleagues already took in", async () => {
+    const { tx, receive } = setup(10);
+    await expect(receive(30, undefined, "colleague")).resolves.toMatchObject({ remainingQuantity: 0 });
+    expect(tx.orderReception.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ receivedBy: "colleague" }),
+    }));
   });
 
   it("requires a comment when the total received falls short of what was sent", async () => {
@@ -91,7 +99,7 @@ describe("mixed-site, mixed-requester loading order reception", () => {
     await expect(receive(25)).resolves.toMatchObject({ remainingQuantity: 0 });
   });
 
-  it("rejects receiving more than the requester's remaining allocation", async () => {
+  it("rejects receiving more than the site's remaining allocation", async () => {
     const { tx, receive } = setup(10);
     await expect(receive(31)).rejects.toThrow("Only 30 remains to receive");
     expect(tx.orderReception.create).not.toHaveBeenCalled();

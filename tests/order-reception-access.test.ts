@@ -13,15 +13,15 @@ const actor = (position: AuthUser["position"], siteId: string | null): AuthUser 
 });
 
 describe("order reception access", () => {
-  it("forces a site manager's own site and requests onto reception queries", async () => {
+  it("forces a site manager's own site onto reception queries", async () => {
     const repo = { listReceptionOrders: vi.fn().mockResolvedValue([[], 0]) };
     const service = new CentralStockOrderService(repo as never, {} as never);
     await service.listReceptionOrders({ page: 1, pageSize: 20, siteId: "other-site" }, actor("siteManager", "own-site"));
-    // The scope, not the query's `siteId`, decides what he sees: his own site
-    // and only the orders he requested.
+    // The scope, not the query's `siteId`, decides what he sees: every order
+    // for his own site, whoever raised it.
     expect(repo.listReceptionOrders).toHaveBeenCalledWith(
       { page: 1, pageSize: 20, siteId: "other-site" },
-      { siteId: "own-site", requesterId: "user-id" },
+      { siteId: "own-site" },
     );
   });
 
