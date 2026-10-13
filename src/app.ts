@@ -90,6 +90,12 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(fastifyStatic, {
   root: path.join(process.cwd(), "uploads"),
   prefix: "/uploads/",
+  // Helmet sends `Cross-Origin-Resource-Policy: same-origin`, which stops the
+  // frontend (app.ikwim.com) from showing these files in <img> tags. Loosen it
+  // for uploads only; API responses keep the strict default.
+  setHeaders: (res) => {
+    res.header("Cross-Origin-Resource-Policy", "cross-origin");
+  },
 });
   app.setErrorHandler(globalErrorHandler);
   app.get("/health", async () => success({ status: "ok" }));

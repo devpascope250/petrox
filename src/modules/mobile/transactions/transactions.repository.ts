@@ -125,7 +125,7 @@ export class MobileTransactionsRepository {
 
   /** `timeoutMinutes`: how long a sale may stay initiated before it is cancelled. */
   /** `staticBase` is `STATIC_URL`: picture and document paths are returned as full URLs under it. */
-  constructor(private db: PrismaClient, private pinSecret: string, timeoutMinutes = 2, private staticBase?: string) {
+  constructor(private db: PrismaClient, private pinSecret: string, timeoutMinutes = 10, private staticBase?: string) {
     this.timeoutMs = timeoutMinutes * 60_000;
   }
 
@@ -378,7 +378,22 @@ export class MobileTransactionsRepository {
       }
 
       const quantity = money(input.quantity);
-      const amount = money(quantity.times(sale.unitPrice));
+      const unitPrice = money(input.unitPrice);
+      const amount = money(input.amount);
+      // The price was fixed when the sale started; the POS must charge that one.
+      if (!unitPrice.equals(sale.unitPrice)) {
+        throw new BusinessError("UNIT_PRICE_MISMATCH",
+          `The price of this sale is ${sale.unitPrice.toString()}, not ${unitPrice.toString()}`,
+          422, { unitPrice: sale.unitPrice.toFixed(2) });
+      }
+      // The pump rounds what it shows, so the amount may be off quantity × price
+      // by up to what 0.01 of a unit costs — never more.
+      const expected = money(quantity.times(unitPrice));
+      if (amount.minus(expected).abs().greaterThan(unitPrice.times("0.01"))) {
+        throw new BusinessError("AMOUNT_MISMATCH",
+          `${quantity.toString()} × ${unitPrice.toString()} is ${expected.toString()}, not ${amount.toString()}`,
+          422, { expectedAmount: expected.toFixed(2) });
+      }
       const payments = input.payments ?? [];
       // A card sale is charged to the card; any other sale must say how it was paid.
       if (!sale.cardCopyId && payments.length === 0) {

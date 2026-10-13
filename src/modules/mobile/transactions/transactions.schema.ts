@@ -47,13 +47,16 @@ const paymentsField = z.string().transform((value, ctx) => {
 
 /**
  * Closes a sale: the attendant who served it signs with phone and PIN, and
- * the litres delivered and how it was paid are recorded. The picture of the
- * pump display arrives as the `displayPicture` file.
+ * the litres delivered, the price, the amount and how it was paid are
+ * recorded, as the pump display shows them. The picture of the pump display
+ * arrives as the `displayPicture` file.
  */
 export const confirmTransactionSchema = z.object({
   phone: phoneSchema.transform((value) => value.replace(/\s+/g, "")),
   pin: pinSchema,
   quantity: twoDecimals("Quantity"),
+  unitPrice: twoDecimals("Unit price"),
+  amount: twoDecimals("Amount"),
   payments: paymentsField.optional(),
   shiftId: uuidSchema.optional(),
   comments: text(500).optional(),

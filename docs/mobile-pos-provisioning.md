@@ -311,7 +311,9 @@ records the payments and marks the sale `confirmed`. If any check fails, nothing
 | Field | | |
 |---|---|---|
 | `phone`, `pin` | required | The attendant. Must be an active user at the site. Becomes `doneBy`. |
-| `quantity` | required | Litres, at most 2 decimals. `amount` = quantity × unit price. |
+| `quantity` | required | Litres, at most 2 decimals. |
+| `unitPrice` | required | The price per litre. Must equal the price fixed when the sale started (`unitPrice` in the initiate response). |
+| `amount` | required | What the pump display shows. May differ from `quantity` × `unitPrice` by at most the price of 0.01 litre (the pump's rounding). Stored as the sale's amount. |
 | `payments` | JSON array | `[{"accountId","amount","reference"?}]`. Required without a card; when sent, the amounts must add up to `amount`. |
 | `referenceDoc.<n>` (file) | optional | PDF or picture for payment `n`. |
 | `displayPicture` (file) | optional | Picture of the pump display. Required when the card type has `captureDisplay`. |
@@ -343,6 +345,9 @@ initiated. A cancelled sale cannot be confirmed (`409 TRANSACTION_CANCELLED`).
 | 422 | `CAR_ITEM_MISMATCH` | That car runs on another product than `itemId`; `data.car.item` says which. |
 | 422 | `PAYMENTS_REQUIRED`, `PAYMENTS_DO_NOT_MATCH`, `PAYMENT_REFERENCE_REQUIRED`, `ACCOUNT_*` | Payments. |
 | 422 | `INSUFFICIENT_CUVE_STOCK` | The tank holds less than the quantity. |
+| 422 | `UNIT_PRICE_MISMATCH` | `unitPrice` is not the sale's price; `data.unitPrice` gives it. |
+| 422 | `AMOUNT_MISMATCH` | `amount` is too far from `quantity` × `unitPrice`; `data.expectedAmount` gives the exact product. |
+| 422 | `INSUFFICIENT_CARD_BALANCE` | Starting a sale: the card's main card has no balance and its type does not allow credit. |
 | 409 | `CARD_BUSY` | The card's main card is in an open sale; `data.site` says where. |
 | 422 | `CARD_NOT_AVAILABLE` | The card's state is neither free nor busy. |
 | 409 | `TRANSACTION_EXPIRED` | The sale was not confirmed within 10 minutes and has been cancelled. |
