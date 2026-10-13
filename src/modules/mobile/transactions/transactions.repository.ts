@@ -125,7 +125,7 @@ export class MobileTransactionsRepository {
 
   /** `timeoutMinutes`: how long a sale may stay initiated before it is cancelled. */
   /** `staticBase` is `STATIC_URL`: picture and document paths are returned as full URLs under it. */
-  constructor(private db: PrismaClient, private pinSecret: string, timeoutMinutes = 10, private staticBase?: string) {
+  constructor(private db: PrismaClient, private pinSecret: string, timeoutMinutes = 2, private staticBase?: string) {
     this.timeoutMs = timeoutMinutes * 60_000;
   }
 
