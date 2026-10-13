@@ -128,6 +128,7 @@ export const MODULE_TREE: ModuleNode[] = [
       { id: "e144bc35-8fb4-443f-8beb-52cefffb21c4", code: "CUVE", name: "Cuve", icon: "Container", prefix: "cuve" },
       { code: "MOBILE_DEVICES", name: "Mobile Devices", icon: "Smartphone", prefix: "mobile.devices" },
       { code: "SHIFTS", name: "Shifts", icon: "CalendarClock", prefix: "shifts" },
+      { code: "POS_TRANSACTIONS", name: "POS Transactions", icon: "ReceiptText", prefix: "pos.transactions" },
     ] },
     { id: "5ad8d068-de07-42f9-bbf9-73142395eead", code: "PSS_STOCK_MANAGEMENT", name: "PSS Stock Management", icon: "ClipboardCheck", children: [
       { id: "24488b2b-ff26-4bac-ae0e-9d39e246bc02", code: "STOCKOUT_ORDERS", name: "Stockout Orders", icon: "ShoppingCart", prefix: "stockout.orders" },
@@ -210,7 +211,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     "nozzle.read", "nozzle.create", "nozzle.edit", "cuve.read", "cuve.create", "cuve.edit", "cuve.stock.read",
     "mobile.devices.read", "mobile.devices.create", "mobile.devices.edit",
     "shifts.read", "shifts.create", "shifts.edit", "shifts.delete",
-    "fuel.sales.read", "fuel.sales.create", "fuel.sales.report.read",
+    "fuel.sales.read", "fuel.sales.create", "fuel.sales.report.read", "pos.transactions.read",
     "stockout.orders.read", "stockout.orders.create",
     "items.read", "item.price.read", "item.units.read", "units.read", "company.account.read",
     "clients.read", "client.cars.read", "cards.read", "cards.copy.read", "card.types.read", "users.read",
