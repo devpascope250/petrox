@@ -68,13 +68,14 @@ export class UsersService {
       throw forbidden("Only super administrators and client administrators can create users");
     }
 
-    const temporaryPin = generateTemporaryPin();
+    // The PIN entered on the form; without one, a generated PIN is shown once.
+    const temporaryPin = input.pin ? undefined : generateTemporaryPin();
     const user = await this.repo.create(
       input,
       await bcrypt.hash(input.password, 12),
-      hashPin(temporaryPin, this.config.PIN_HMAC_SECRET)
+      hashPin(input.pin ?? temporaryPin!, this.config.PIN_HMAC_SECRET)
     );
-    return { ...user, temporaryPin };
+    return { ...user, ...(temporaryPin ? { temporaryPin } : {}) };
   }
 
   /** `find` for request handlers, so a caller cannot read outside its reach. */

@@ -28,6 +28,8 @@ const userProfileSchema = z.object({
   lastName: nonEmptyNameSchema,
   position: z.enum(UserPositions),
   phone: phoneSchema.optional(),
+  /** Their PIN (4–8 digits). Left out, one is generated and returned once as `temporaryPin`. */
+  pin: pinSchema.optional(),
   roleId: uuidSchema.nullable().optional()
 });
 
