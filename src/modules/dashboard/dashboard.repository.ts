@@ -36,7 +36,8 @@ export class DashboardRepository {
       FROM (
         SELECT s.siteId AS siteId, c.itemId AS itemId, s.dateOn AS day, s.quantity AS quantity, s.amount AS amount
         FROM FuelSale s
-        JOIN CuveTransaction ct ON ct.saleId = s.id
+        -- A POS sale is also written as a fuel sale; it is counted below, from the POS side.
+        JOIN CuveTransaction ct ON ct.saleId = s.id AND ct.generalTransactionId IS NULL
         JOIN TblCuve c ON c.id = ct.cuveId
         WHERE s.dateOn BETWEEN ${startDay} AND ${endDay} ${fuelSite}
         UNION ALL

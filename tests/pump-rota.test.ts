@@ -24,7 +24,7 @@ function check(rows: Array<{ day: number; shift: keyof typeof SHIFTS; nozzles?: 
 describe("pump rota when confirming a sale", () => {
   // 14 Oct 2026 is a Wednesday (day 3); Rwanda is UTC+2.
   it("finds the shift running now on today's weekday", async () => {
-    await expect(check([{ day: 3, shift: "morning" }], "2026-10-14T08:00:00Z")).resolves.toBe("morning-3");
+    await expect(check([{ day: 3, shift: "morning" }], "2026-10-14T08:00:00Z")).resolves.toMatchObject({ siteShiftId: "morning-3", workingDay: "2026-10-14" });
   });
 
   it("refuses outside the shift's hours or on another weekday", async () => {
@@ -41,14 +41,15 @@ describe("pump rota when confirming a sale", () => {
 
   it("keeps a night shift on the weekday it started, past midnight", async () => {
     // Tuesday's night shift: Tuesday 23:00 and Wednesday 03:00, but not Wednesday 23:00.
-    await expect(check([{ day: 2, shift: "night" }], "2026-10-13T21:00:00Z")).resolves.toBe("night-2");
-    await expect(check([{ day: 2, shift: "night" }], "2026-10-14T01:00:00Z")).resolves.toBe("night-2");
+    await expect(check([{ day: 2, shift: "night" }], "2026-10-13T21:00:00Z")).resolves.toMatchObject({ siteShiftId: "night-2", workingDay: "2026-10-13" });
+    await expect(check([{ day: 2, shift: "night" }], "2026-10-14T01:00:00Z"))
+      .resolves.toMatchObject({ siteShiftId: "night-2", workingDay: "2026-10-13" });
     await expect(check([{ day: 2, shift: "night" }], "2026-10-14T21:00:00Z"))
       .rejects.toMatchObject({ code: "ATTENDANT_NOT_ON_PUMP" });
   });
 
   it("wraps Monday's small hours back to Sunday's night shift", async () => {
     // 19 Oct 2026 is a Monday; 02:00 there is still Sunday's (day 7) night shift.
-    await expect(check([{ day: 7, shift: "night" }], "2026-10-19T00:00:00Z")).resolves.toBe("night-7");
+    await expect(check([{ day: 7, shift: "night" }], "2026-10-19T00:00:00Z")).resolves.toMatchObject({ siteShiftId: "night-7", workingDay: "2026-10-18" });
   });
 });

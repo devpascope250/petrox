@@ -306,7 +306,11 @@ used for a new sale. Confirming it then gets `409 TRANSACTION_EXPIRED`: start a 
 
 **2. `POST /mobile/transactions/:code/confirm`** closes the sale. In one database
 transaction it takes the litres out of the tank, writes a `CuveTransaction` (sold/OUT),
-records the payments and marks the sale `confirmed`. If any check fails, nothing changes.
+records the payments and marks the sale `confirmed`. For a card sale it also charges `amount`
+to the card's main card (refused if the balance is short, unless the card type has
+`allowCredit`) and writes a `CardCopyTransaction` (PAYMENT/OUT). Every sale is also recorded as
+a `FuelSale` with its payments, as if entered on the web, sharing the same tank movement, so it
+shows in the Fuel sales pages and report. If any check fails, nothing changes.
 
 | Field | | |
 |---|---|---|
@@ -348,7 +352,7 @@ initiated. A cancelled sale cannot be confirmed (`409 TRANSACTION_CANCELLED`).
 | 422 | `INSUFFICIENT_CUVE_STOCK` | The tank holds less than the quantity. |
 | 422 | `UNIT_PRICE_MISMATCH` | `unitPrice` is not the sale's price; `data.unitPrice` gives it. |
 | 422 | `AMOUNT_MISMATCH` | `amount` is too far from `quantity` × `unitPrice`; `data.expectedAmount` gives the exact product. |
-| 422 | `INSUFFICIENT_CARD_BALANCE` | Starting a sale: the card's main card has no balance and its type does not allow credit. |
+| 422 | `INSUFFICIENT_CARD_BALANCE` | The card's main card cannot pay and its type does not allow credit: no balance at all when starting, less than `amount` when confirming (`data.balance`). |
 | 409 | `CARD_BUSY` | The card's main card is in an open sale; `data.site` says where. |
 | 422 | `CARD_NOT_AVAILABLE` | The card's state is neither free nor busy. |
 | 409 | `TRANSACTION_EXPIRED` | The sale was not confirmed within 10 minutes and has been cancelled. |

@@ -45,6 +45,28 @@ async function holdCard(tx: Tx, cardId: bigint) {
     { site: open?.site ?? null, transactionCode: open?.transactionCode ?? null, since: open?.createdAt ?? null });
 }
 
+/**
+ * Charges a card sale to the main card the card spends from, and records it
+ * in the card ledger like the web's wallet transfers do (PAYMENT, OUT, on the
+ * assignment used at the pump). The balance must cover it, checked and taken
+ * in one statement; a card type that allows credit may go below zero.
+ */
+async function chargeCard(tx: Tx, mainCardId: bigint, cardCopyId: bigint, amount: Prisma.Decimal, allowCredit: boolean, createdById: string) {
+  const charged = await tx.card.updateMany({
+    where: { id: mainCardId, ...(allowCredit ? {} : { balance: { gte: amount } }) },
+    data: { balance: { decrement: amount } },
+  });
+  if (charged.count === 0) {
+    const { balance } = await tx.card.findUniqueOrThrow({ where: { id: mainCardId }, select: { balance: true } });
+    throw new BusinessError("INSUFFICIENT_CARD_BALANCE",
+      `The main card has ${balance.toFixed(2)} left; this sale is ${amount.toFixed(2)}`,
+      422, { balance: balance.toFixed(2), amount: amount.toFixed(2) });
+  }
+  await tx.cardCopyTransaction.create({
+    data: { carfdCopyId: cardCopyId, type: "PAYMENT", direction: "OUT", amount, createdById },
+  });
+}
+
 /** Frees a main card once its sale is confirmed or cancelled. */
 async function releaseCard(tx: Tx, cardId: bigint) {
   await tx.card.updateMany({ where: { id: cardId, state: CARD_BUSY }, data: { state: CARD_FREE } });
@@ -375,15 +397,20 @@ export class MobileTransactionsRepository {
     if (!onNozzle) {
       throw new BusinessError("ATTENDANT_NOT_ON_NOZZLE", `${nozzle.name} is not one of your nozzles on ${nozzle.pump.name} in this shift`);
     }
-    return onNozzle.siteShiftId;
+    // A night shift's small hours count towards the day it started, as on the web.
+    const localDay = local.toISOString().slice(0, 10);
+    const workingDay = onNozzle.day === today ? localDay : new Date(Date.parse(localDay) - 86_400_000).toISOString().slice(0, 10);
+    return { siteShiftId: onNozzle.siteShiftId, workingDay };
   }
 
   /**
    * Closes an initiated sale in one transaction: the litres come out of the
-   * tank (never below zero) with a ledger row, the payments are recorded,
-   * and the sale is marked confirmed by the attendant, who must be on the
-   * rota for its pump and nozzle in the shift running now; the sale is
-   * recorded under that shift. Only one confirm can win: the row is claimed
+   * tank (never below zero) with a ledger row, the payments are recorded, a
+   * card sale is charged to its main card (never below zero unless the card
+   * type allows credit) with a card ledger row, a fuel sale is recorded as
+   * if entered on the web, and the sale is marked
+   * confirmed by the attendant, who must be on the rota for its pump and
+   * nozzle in the shift running now; the sale is recorded under that shift. Only one confirm can win: the row is claimed
    * first, so a repeated or concurrent confirm finds it already taken.
    */
   async confirm(code: string, siteId: string, input: ConfirmTransactionInput & { displayPictureUrl?: string; referenceDocs: Record<number, string> }, doneBy: string) {
@@ -413,7 +440,7 @@ export class MobileTransactionsRepository {
           `This sale is already ${status}`);
       }
 
-      const rotaShiftId = await this.pumpAssignment(tx, doneBy, siteId, sale.nozzle);
+      const { siteShiftId: rotaShiftId, workingDay } = await this.pumpAssignment(tx, doneBy, siteId, sale.nozzle);
 
       const setting = sale.cardCopy?.card.cardType?.setting;
       if (setting?.captureDisplay && !input.displayPictureUrl) {
@@ -481,8 +508,24 @@ export class MobileTransactionsRepository {
         const current = await tx.tblCuve.findUniqueOrThrow({ where: { id: sale.cuveId }, select: { balance: true } });
         throw new BusinessError("INSUFFICIENT_CUVE_STOCK", `${sale.cuve.name} only holds ${current.balance.toString()}; cannot sell ${quantity.toString()}`);
       }
+      // Also recorded as a fuel sale, as if entered on the web, so the Fuel
+      // sales pages and report include it. One tank movement serves both
+      // records, so the litres are never counted twice.
+      const fuelSale = await tx.fuelSale.create({
+        data: {
+          siteId, pumpId: sale.nozzle.pump.id, nozzleId: sale.nozzle.id, shiftId: input.shiftId ?? rotaShiftId,
+          quantity, unitPrice: sale.unitPrice, amount, note: `POS sale ${code}`, createdBy: doneBy,
+          dateOn: new Date(`${workingDay}T00:00:00.000Z`),
+          payments: { create: payments.map((payment, index) => ({
+            accountId: payment.accountId, amount: money(payment.amount),
+            reference: payment.reference ?? null, referenceDocUrl: input.referenceDocs[index] ?? null,
+          })) },
+        },
+        select: { id: true },
+      });
       await tx.cuveTransaction.create({
-        data: { cuveId: sale.cuveId, quantity, type: "sold", direction: "OUT", createdBy: doneBy, generalTransactionId: sale.id },
+        data: { cuveId: sale.cuveId, quantity, type: "sold", direction: "OUT", createdBy: doneBy,
+          generalTransactionId: sale.id, saleId: fuelSale.id },
       });
       if (payments.length > 0) {
         await tx.generalTransactionPayment.createMany({
@@ -492,7 +535,10 @@ export class MobileTransactionsRepository {
           })),
         });
       }
-      if (sale.cardCopy) await releaseCard(tx, sale.cardCopy.cardId);
+      if (sale.cardCopy && sale.cardCopyId) {
+        await chargeCard(tx, sale.cardCopy.cardId, sale.cardCopyId, amount, Boolean(setting?.allowCredit), doneBy);
+        await releaseCard(tx, sale.cardCopy.cardId);
+      }
       const row = await tx.generalTransaction.update({
         where: { id: sale.id },
         data: {
