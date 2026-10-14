@@ -62,12 +62,13 @@ const routes: FastifyPluginAsync = async (app) => {
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("authorizers.read", "authorizers.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));
   app.post("/", { preHandler: [app.authenticate, app.authorize("stockout.orders.create", "authorizers.manage")] }, async (request, reply) => {
-    const userId = request.contextUser?.userId;
+    const actor = request.contextUser!;
+    // Site staff never pick the site or the outcome: see `siteOrderFields`.
     const payload = {
       ...(request.body as object),
-      createdBy: userId
-
-    }
+      createdBy: actor.userId,
+      ...service.siteOrderFields(actor),
+    };
     return created(reply, await service.create(parseInput(createCentralStockOrderSchema, payload)))
   }
     );

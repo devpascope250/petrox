@@ -31,6 +31,17 @@ export class CentralStockOrderService {
   }
   find(id: string) { return this.repo.find(id); }
   create(input: CreateCentralStockOrderSchema) { return this.repo.create(input); }
+
+  /**
+   * What site staff cannot choose when ordering: they order fuel for their own
+   * site (an internal order), and it waits for head office to approve it.
+   * Whatever the request said about the site, type, status or approver is
+   * replaced. Nothing for a super administrator, who names the site.
+   */
+  siteOrderFields(actor: AuthUser) {
+    if (!isSiteBound(actor)) return {};
+    return { siteId: this.requireSite(actor), orderType: "internal" as const, status: "pending" as const, approvedBy: undefined };
+  }
   /** A site manager sees only the loads carrying orders for his site. */
   listLoadingOrders(actor: AuthUser) {
     return this.repo.listLoadingOrders(this.siteScope(actor));
