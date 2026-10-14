@@ -80,7 +80,7 @@ model User {
   pinHash                    String?
   firstName                  String
   lastName                   String
-  phone                      String?                 @unique
+  phone                      String?                  @unique
   roleId                     String?
   role                       Role?                    @relation(fields: [roleId], references: [id], onDelete: SetNull)
   isActive                   Boolean                  @default(true)
@@ -88,6 +88,8 @@ model User {
   updatedAt                  DateTime                 @updatedAt
   clientId                   String?
   siteId                     String?
+  /// The site they work at now. `UserSites` keeps every site they were assigned, with this one active.
+  site                       TblSite?                 @relation("UserHomeSite", fields: [siteId], references: [id], onDelete: SetNull)
   position                   UserPositions            @default(siteManager)
   refreshTokens              RefreshToken[]
   passwordResetTokens        PasswordResetToken[]
@@ -116,6 +118,7 @@ model User {
   generalTransactions        GeneralTransaction[]
 
   @@index([roleId])
+  @@index([siteId])
 }
 
 enum UserPositions {
@@ -877,6 +880,7 @@ model TblSite {
   provisioningKeys    SiteProvisioningKey[]
   devices             SiteDevice[]
   generalTransactions GeneralTransaction[]
+  homeUsers           User[]                @relation("UserHomeSite")
 
   @@index([id])
 }
