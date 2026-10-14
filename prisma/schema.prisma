@@ -80,7 +80,7 @@ model User {
   pinHash                    String?
   firstName                  String
   lastName                   String
-  phone                      String?
+  phone                      String?                 @unique
   roleId                     String?
   role                       Role?                    @relation(fields: [roleId], references: [id], onDelete: SetNull)
   isActive                   Boolean                  @default(true)
