@@ -24,10 +24,9 @@ export class MobileTransactionsService {
   async initiate(request: FastifyRequest) {
     const form = await readMobileForm(request, [{ field: /^platePicture$/, kind: "image" }], 1);
     try {
-      const { phone, pin, ...input } = parseInput(initiateTransactionSchema, form.fields);
+      const input = parseInput(initiateTransactionSchema, form.fields);
       const siteId = deviceSite(request);
-      const attendantId = await this.repo.attendant(phone, pin, siteId);
-      return await this.repo.initiate({ ...input, platePictureUrl: form.files.platePicture }, siteId, request.device!.deviceId, attendantId);
+      return await this.repo.initiate({ ...input, platePictureUrl: form.files.platePicture }, siteId, request.device!.deviceId);
     } catch (error) {
       // Nothing was recorded, so the pictures it came with are not kept.
       await form.discard();

@@ -209,10 +209,9 @@ export class MobileTransactionsRepository {
    * client active, and the card type's plate rules are applied. The price is
    * the product's price in force, fixed now for the rest of the sale. A copy
    * spends from its main card, so the main card must have a balance, unless
-   * its type allows credit. The attendant must be on that pump and nozzle in
-   * the shift running now, which the sale is then recorded under.
+   * its type allows credit.
    */
-  async initiate(input: Omit<InitiateTransactionInput, "phone" | "pin"> & { platePictureUrl?: string }, siteId: string, deviceId: string, attendantId: string) {
+  async initiate(input: InitiateTransactionInput & { platePictureUrl?: string }, siteId: string, deviceId: string) {
     const nozzle = await this.db.tblNozzle.findFirst({
       where: { id: input.nozzleId },
       select: {
@@ -234,7 +233,6 @@ export class MobileTransactionsRepository {
     if (nozzle.status !== "active") throw new BusinessError("NOZZLE_INACTIVE", `${nozzle.name} is not active`);
     if (nozzle.cuve.status !== "active") throw new BusinessError("CUVE_INACTIVE", `${nozzle.cuve.name} is not active`);
     if (nozzle.cuve.item.status !== "active") throw new BusinessError("ITEM_INACTIVE", `${nozzle.cuve.item.name} is not active`);
-    const siteShiftId = await this.pumpAssignment(attendantId, siteId, nozzle);
 
     let clientId: string | null = null;
     let mainCardId: bigint | null = null;
@@ -306,7 +304,7 @@ export class MobileTransactionsRepository {
           data: {
             transactionCode: transactionCode(new Date(startedAt + attempt)),
             itemId: input.itemId, cuveId: input.cuveId, pumpId: input.pumpId, nozzleId: input.nozzleId,
-            cardCopyId: input.cardCopyId ?? null, clientId, shiftId: siteShiftId,
+            cardCopyId: input.cardCopyId ?? null, clientId,
             platNumber: input.platNumber ?? null, platePictureUrl: input.platePictureUrl ?? null,
             siteId, deviceId, unitPrice: price.price, appVersion: input.appVersion ?? null,
           },
@@ -347,13 +345,13 @@ export class MobileTransactionsRepository {
    * midnight belongs to the weekday it started on, so in its small hours
    * yesterday's rota applies.
    */
-  private async pumpAssignment(userId: string, siteId: string,
+  private async pumpAssignment(db: Tx | PrismaClient, userId: string, siteId: string,
     nozzle: { id: string; name: string; pump: { id: string; name: string } }, now = new Date()) {
     const local = new Date(now.getTime() + BUSINESS_OFFSET_MS);
     const clock = local.toISOString().slice(11, 16);
     const today = dayOfWeek(local);
     const yesterday = today === 1 ? 7 : today - 1;
-    const rows = await this.db.tblPumpAttendant.findMany({
+    const rows = await db.tblPumpAttendant.findMany({
       where: { userId, siteId, pumpId: nozzle.pump.id, day: { in: [today, yesterday] }, siteShift: { status: 1 } },
       select: { day: true, siteShiftId: true,
         siteShift: { select: { shift: { select: { name: true, startAt: true, endAt: true } } } },
@@ -380,9 +378,10 @@ export class MobileTransactionsRepository {
   /**
    * Closes an initiated sale in one transaction: the litres come out of the
    * tank (never below zero) with a ledger row, the payments are recorded,
-   * and the sale is marked confirmed by the attendant. Only one confirm can
-   * win: the row is claimed first, so a repeated or concurrent confirm finds
-   * it already taken.
+   * and the sale is marked confirmed by the attendant, who must be on the
+   * rota for its pump and nozzle in the shift running now; the sale is
+   * recorded under that shift. Only one confirm can win: the row is claimed
+   * first, so a repeated or concurrent confirm finds it already taken.
    */
   async confirm(code: string, siteId: string, input: ConfirmTransactionInput & { displayPictureUrl?: string; referenceDocs: Record<number, string> }, doneBy: string) {
     // An overdue sale is cancelled now rather than at the next sweep, so it cannot be confirmed late.
@@ -393,6 +392,7 @@ export class MobileTransactionsRepository {
         where: { transactionCode: code, siteId },
         select: { id: true, status: true, unitPrice: true, cuveId: true, cardCopyId: true,
           cuve: { select: { name: true } },
+          nozzle: { select: { id: true, name: true, pump: { select: { id: true, name: true } } } },
           cardCopy: { select: { cardId: true, card: { select: { cardType: { select: { setting: settingSelect } } } } } } },
       });
       if (!sale) throw new NotFoundError("Transaction");
@@ -409,6 +409,8 @@ export class MobileTransactionsRepository {
         throw new AppError(409, status === "cancelled" ? "TRANSACTION_CANCELLED" : "TRANSACTION_ALREADY_CONFIRMED",
           `This sale is already ${status}`);
       }
+
+      const rotaShiftId = await this.pumpAssignment(tx, doneBy, siteId, sale.nozzle);
 
       const setting = sale.cardCopy?.card.cardType?.setting;
       if (setting?.captureDisplay && !input.displayPictureUrl) {
@@ -491,8 +493,8 @@ export class MobileTransactionsRepository {
       const row = await tx.generalTransaction.update({
         where: { id: sale.id },
         data: {
-          // The shift was recorded when the sale started; one sent now overrides it.
-          quantity, amount, ...(input.shiftId ? { shiftId: input.shiftId } : {}), displayPictureUrl: input.displayPictureUrl ?? null,
+          // The attendant's shift on the rota, unless the POS names one.
+          quantity, amount, shiftId: input.shiftId ?? rotaShiftId, displayPictureUrl: input.displayPictureUrl ?? null,
           comments: input.comments ?? null, ...(input.appVersion ? { appVersion: input.appVersion } : {}),
           ...(input.printStatus !== undefined ? { printStatus: input.printStatus } : {}),
         },

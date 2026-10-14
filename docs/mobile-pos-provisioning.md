@@ -282,7 +282,6 @@ always recorded at the device's site, and a `siteId` field is refused with `400`
 
 | Field | | |
 |---|---|---|
-| `phone`, `pin` | required | The attendant starting the sale. Must be an active user at the site, and on the pump rota (`TblPumpAttendant`) for that pump and nozzle, on today's weekday, in a switched-on site shift whose hours include now (Rwanda time). A night shift past midnight counts on the weekday it started. That site shift is recorded on the sale. |
 | `itemId`, `cuveId`, `pumpId`, `nozzleId` | required | The nozzle must be on that pump and draw from that tank, which must hold that item. All active. |
 | `cardCopyId` | optional | The `cardCopyId` from `GET /mobile/cards/:serialNumber`. The client is taken from it. |
 | `platNumber` | optional | Required when the card type has `requirePlateNumber` or `capturePlatePicture`, and must then be one of the active cars assigned to the card (`CAR_NOT_ASSIGNED_TO_CARD`), and that car's product must be `itemId` (`CAR_ITEM_MISMATCH`); spaces, dashes and case are ignored. Stored in capitals. |
@@ -311,16 +310,16 @@ records the payments and marks the sale `confirmed`. If any check fails, nothing
 
 | Field | | |
 |---|---|---|
-| `phone`, `pin` | required | The attendant. Must be an active user at the site. Becomes `doneBy`. |
+| `phone`, `pin` | required | The attendant. Must be an active user at the site, and on the pump rota (`TblPumpAttendant`) for the sale's pump and nozzle, on today's weekday, in a switched-on site shift whose hours include now (Rwanda time). A night shift past midnight counts on the weekday it started. Becomes `doneBy`, and that site shift is recorded on the sale. |
 | `quantity` | required | Litres, at most 2 decimals. |
 | `unitPrice` | required | The price per litre. Must equal the price fixed when the sale started (`unitPrice` in the initiate response). |
 | `amount` | required | What the pump display shows. May differ from `quantity` × `unitPrice` by at most the price of 0.01 litre (the pump's rounding). Stored as the sale's amount. |
 | `payments` | JSON array | `[{"accountId","amount","reference"?}]`. Required without a card; when sent, the amounts must add up to `amount`. |
 | `referenceDoc.<n>` (file) | optional | PDF or picture for payment `n`. |
 | `displayPicture` (file) | optional | Picture of the pump display. Required when the card type has `captureDisplay`. |
-| `shiftId`, `comments`, `appVersion`, `printStatus` (`true`/`false`) | optional | `shiftId` overrides the shift recorded when the sale started. |
+| `shiftId`, `comments`, `appVersion`, `printStatus` (`true`/`false`) | optional | `shiftId` overrides the shift taken from the rota. |
 
-Starting and confirming are each limited to 20 a minute per device, as both check a PIN. A sale can only be confirmed once: a second confirm,
+Limited to 20 a minute per device. A sale can only be confirmed once: a second confirm,
 including one sent at the same moment, gets `409 TRANSACTION_ALREADY_CONFIRMED`.
 
 **Listing:** `GET /mobile/transactions?status=initiated|confirmed|cancelled` returns the site's
@@ -340,7 +339,7 @@ initiated. A cancelled sale cannot be confirmed (`409 TRANSACTION_CANCELLED`).
 | 400 | `UNSUPPORTED_FILE` / `VALIDATION_ERROR` | Wrong file type, or a field is missing or malformed. |
 | 404 | `RESOURCE_NOT_FOUND` | Unknown nozzle, card or transaction code at this site. |
 | 422 | `INVALID_ATTENDANT` | Wrong phone number or PIN (one answer for both). |
-| 422 | `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE` | Starting a sale: the attendant is not on the rota for that pump in the shift running now, or that nozzle is not one of theirs. |
+| 422 | `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE` | Confirming: the attendant is not on the rota for the sale's pump in the shift running now, or its nozzle is not one of theirs. |
 | 422 | `NOZZLE_NOT_ON_PUMP`, `NOZZLE_CUVE_MISMATCH`, `ITEM_CUVE_MISMATCH`, `*_INACTIVE`, `PRICE_NOT_SET` | The sale does not match the site's equipment. |
 | 422 | `PLATE_NUMBER_REQUIRED`, `PLATE_PICTURE_REQUIRED`, `DISPLAY_PICTURE_REQUIRED` | The card type's rules. |
 | 422 | `CAR_NOT_ASSIGNED_TO_CARD` | The plate is not one of the active cars assigned to the card. |

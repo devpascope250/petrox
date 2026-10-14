@@ -18,10 +18,10 @@ function check(rows: Array<{ day: number; shift: keyof typeof SHIFTS; nozzles?: 
   const repo = new MobileTransactionsRepository(db as never, "secret");
   // Private: the rule is tested on its own, with the clock fixed.
   return (repo as unknown as { pumpAssignment: (...args: unknown[]) => Promise<string> })
-    .pumpAssignment("user", "site", nozzle, new Date(now));
+    .pumpAssignment(db, "user", "site", nozzle, new Date(now));
 }
 
-describe("pump rota at the start of a sale", () => {
+describe("pump rota when confirming a sale", () => {
   // 14 Oct 2026 is a Wednesday (day 3); Rwanda is UTC+2.
   it("finds the shift running now on today's weekday", async () => {
     await expect(check([{ day: 3, shift: "morning" }], "2026-10-14T08:00:00Z")).resolves.toBe("morning-3");
