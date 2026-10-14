@@ -26,7 +26,9 @@ const routes: FastifyPluginAsync = async (app) => {
       parseInput(receptionOrdersQuerySchema, request.query),
       request.contextUser!,
     )));
-  app.post("/reception-orders/:id/receive", { preHandler: [app.authenticate, app.authorize("stockout.orders.edit", "stockout.orders.manage")] }, async (request, reply) =>
+  // Receiving is a site manager's job, checked by position in the service, so
+  // seeing the orders is enough: the edit permission would also open status changes.
+  app.post("/reception-orders/:id/receive", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] }, async (request, reply) =>
     created(reply, await service.receiveLoadingOrder(
       parseInput(idParamsSchema, request.params).id,
       parseInput(receiveLoadingOrderSchema, request.body),
@@ -73,10 +75,12 @@ const routes: FastifyPluginAsync = async (app) => {
   }
     );
 
-    app.put("/:id/status/:status", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] }, async (request) =>
+    // Approving or cancelling an order is head office's decision, never the site's.
+    app.put("/:id/status/:status", { preHandler: [app.authenticate, app.authorize("stockout.orders.edit", "stockout.orders.manage")] }, async (request) =>
     success(await service.changeOrderStatus(
       parseInput(CentralStockOrderParamaSchema, request.params).id,
       parseInput(CentralStockOrderParamaSchema, request.params).status,
+      request.contextUser!,
     )));
 };
 

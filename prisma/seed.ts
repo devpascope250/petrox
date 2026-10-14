@@ -212,7 +212,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     "mobile.devices.read", "mobile.devices.create", "mobile.devices.edit",
     "shifts.read", "shifts.create", "shifts.edit", "shifts.delete",
     "fuel.sales.read", "fuel.sales.create", "fuel.sales.report.read", "pos.transactions.read",
-    "stockout.orders.read", "stockout.orders.create",
+    "stockout.orders.read", "stockout.orders.create", "loading.orders.read",
     "items.read", "item.price.read", "item.units.read", "units.read", "company.account.read",
     "clients.read", "client.cars.read", "cards.read", "cards.copy.read", "card.types.read", "users.read",
   ],

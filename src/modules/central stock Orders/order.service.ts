@@ -84,7 +84,8 @@ export class CentralStockOrderService {
     return actor.siteId;
   }
 
-  changeOrderStatus(id: string, status: CentralOrderStatus) {
+  changeOrderStatus(id: string, status: CentralOrderStatus, actor: AuthUser) {
+    if (isSiteBound(actor)) throw forbidden("Only head office can approve, reject or cancel stockout orders");
     return this.repo.changeOrderStatus(id, status);
   }
 }

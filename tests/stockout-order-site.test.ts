@@ -36,6 +36,11 @@ describe("placing a stockout order", () => {
       .toMatchObject({ siteId: OWN_SITE });
   });
 
+  it("never lets site staff approve, reject or cancel an order", () => {
+    expect(() => service.changeOrderStatus("order", "approved", actor("siteManager", OWN_SITE)))
+      .toThrow(expect.objectContaining({ statusCode: 403 }));
+  });
+
   it("refuses site staff who have no site", () => {
     expect(() => service.siteOrderFields(actor("siteManager", null))).toThrow(expect.objectContaining({ statusCode: 403 }));
   });
