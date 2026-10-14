@@ -330,6 +330,9 @@ export class MobileTransactionsRepository {
         OR: [{ siteId }, { sites: { some: { siteId, status: "active" } } }] },
       select: { id: true, pinHash: true },
     });
+
+    console.log(user);
+    console.log(verifyPin(pin, user?.pinHash!, this.pinSecret));
     // One answer for an unknown phone and a wrong PIN, so neither can be probed.
     if (!user || !verifyPin(pin, user.pinHash!, this.pinSecret)) {
       throw new AppError(422, "INVALID_ATTENDANT", "Wrong phone number or PIN");
