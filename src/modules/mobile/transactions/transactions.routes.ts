@@ -44,7 +44,8 @@ const routes: FastifyPluginAsync = async (app) => {
   app.addHook("onClose", async () => clearInterval(sweep));
   const code = (params: unknown) => parseInput(transactionCodeParamsSchema, params).code;
 
-  app.post("/", { preHandler: [authenticateDevice] }, async (request, reply) =>
+  // Starting a sale checks the attendant's PIN too, so it is limited the same way.
+  app.post("/", { preHandler: [authenticateDevice], config: { rateLimit: CONFIRM_LIMIT } }, async (request, reply) =>
     created(reply, await service.initiate(request)));
 
   // The site's 50 newest sales in one status (`?status=`, initiated by default).

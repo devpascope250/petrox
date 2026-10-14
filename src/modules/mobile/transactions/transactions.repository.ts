@@ -2,10 +2,13 @@ import { Prisma, type GeneralTransactionStatus, type PrismaClient } from "../../
 import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js";
 import { verifyPin } from "../../../utils/crypto.js";
 import { staticUrl } from "../../../utils/static-url.js";
+import { dayOfWeek, fromTime } from "../../shifts/shift-scope.js";
 import type { ConfirmTransactionInput, InitiateTransactionInput } from "./transactions.schema.js";
 
 const money = (value: number | Prisma.Decimal) => new Prisma.Decimal(value).toDecimalPlaces(2);
 const CODE_PREFIX = "PSST";
+/** Rwanda keeps UTC+2 all year; shift hours are local times. */
+const BUSINESS_OFFSET_MS = 2 * 60 * 60_000;
 
 /** A plate compared by its letters and digits only, so `RAD 123 A`, `rad123a` and `RAD-123-A` are one car. */
 const plateKey = (plate: string) => plate.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -206,9 +209,10 @@ export class MobileTransactionsRepository {
    * client active, and the card type's plate rules are applied. The price is
    * the product's price in force, fixed now for the rest of the sale. A copy
    * spends from its main card, so the main card must have a balance, unless
-   * its type allows credit.
+   * its type allows credit. The attendant must be on that pump and nozzle in
+   * the shift running now, which the sale is then recorded under.
    */
-  async initiate(input: InitiateTransactionInput & { platePictureUrl?: string }, siteId: string, deviceId: string) {
+  async initiate(input: Omit<InitiateTransactionInput, "phone" | "pin"> & { platePictureUrl?: string }, siteId: string, deviceId: string, attendantId: string) {
     const nozzle = await this.db.tblNozzle.findFirst({
       where: { id: input.nozzleId },
       select: {
@@ -230,6 +234,7 @@ export class MobileTransactionsRepository {
     if (nozzle.status !== "active") throw new BusinessError("NOZZLE_INACTIVE", `${nozzle.name} is not active`);
     if (nozzle.cuve.status !== "active") throw new BusinessError("CUVE_INACTIVE", `${nozzle.cuve.name} is not active`);
     if (nozzle.cuve.item.status !== "active") throw new BusinessError("ITEM_INACTIVE", `${nozzle.cuve.item.name} is not active`);
+    const siteShiftId = await this.pumpAssignment(attendantId, siteId, nozzle);
 
     let clientId: string | null = null;
     let mainCardId: bigint | null = null;
@@ -301,7 +306,7 @@ export class MobileTransactionsRepository {
           data: {
             transactionCode: transactionCode(new Date(startedAt + attempt)),
             itemId: input.itemId, cuveId: input.cuveId, pumpId: input.pumpId, nozzleId: input.nozzleId,
-            cardCopyId: input.cardCopyId ?? null, clientId,
+            cardCopyId: input.cardCopyId ?? null, clientId, shiftId: siteShiftId,
             platNumber: input.platNumber ?? null, platePictureUrl: input.platePictureUrl ?? null,
             siteId, deviceId, unitPrice: price.price, appVersion: input.appVersion ?? null,
           },
@@ -317,20 +322,59 @@ export class MobileTransactionsRepository {
   }
 
   /**
-   * The attendant signing with phone and PIN: an active user working at the
-   * site — on its staff list or based there — whose PIN matches. Phone
-   * numbers are not unique, so every match at the site is tried.
+   * The attendant signing with phone and PIN: the active user with that phone
+   * number (phones are unique), working at the site — on its staff list or
+   * based there — whose PIN matches.
    */
   async attendant(phone: string, pin: string, siteId: string) {
-    const candidates = await this.db.user.findMany({
+    const user = await this.db.user.findFirst({
       where: { phone, isActive: true, pinHash: { not: null },
         OR: [{ siteId }, { sites: { some: { siteId, status: "active" } } }] },
       select: { id: true, pinHash: true },
     });
-    const match = candidates.find((user) => verifyPin(pin, user.pinHash!, this.pinSecret));
     // One answer for an unknown phone and a wrong PIN, so neither can be probed.
-    if (!match) throw new AppError(422, "INVALID_ATTENDANT", "Wrong phone number or PIN");
-    return match.id;
+    if (!user || !verifyPin(pin, user.pinHash!, this.pinSecret)) {
+      throw new AppError(422, "INVALID_ATTENDANT", "Wrong phone number or PIN");
+    }
+    return user.id;
+  }
+
+  /**
+   * The site shift an attendant is working that nozzle in right now, from the
+   * pump rota (`TblPumpAttendant`): their row for this pump, on today's
+   * weekday, in a site shift that is switched on and whose hours include the
+   * time now in Rwanda, with the nozzle among theirs. A shift that runs past
+   * midnight belongs to the weekday it started on, so in its small hours
+   * yesterday's rota applies.
+   */
+  private async pumpAssignment(userId: string, siteId: string,
+    nozzle: { id: string; name: string; pump: { id: string; name: string } }, now = new Date()) {
+    const local = new Date(now.getTime() + BUSINESS_OFFSET_MS);
+    const clock = local.toISOString().slice(11, 16);
+    const today = dayOfWeek(local);
+    const yesterday = today === 1 ? 7 : today - 1;
+    const rows = await this.db.tblPumpAttendant.findMany({
+      where: { userId, siteId, pumpId: nozzle.pump.id, day: { in: [today, yesterday] }, siteShift: { status: 1 } },
+      select: { day: true, siteShiftId: true,
+        siteShift: { select: { shift: { select: { name: true, startAt: true, endAt: true } } } },
+        pumpAttendantNozzles: { select: { nozzleId: true } } },
+    });
+    const working = rows.filter(({ day, siteShift: { shift } }) => {
+      const start = fromTime(shift.startAt);
+      const end = fromTime(shift.endAt);
+      if (start < end) return day === today && clock >= start && clock < end;
+      // Overnight: the evening part on its own day, the small hours on the next.
+      return (day === today && clock >= start) || (day === yesterday && clock < end);
+    });
+    if (working.length === 0) {
+      throw new BusinessError("ATTENDANT_NOT_ON_PUMP",
+        `You are not on the rota for ${nozzle.pump.name} in the shift running now (${clock})`);
+    }
+    const onNozzle = working.find((row) => row.pumpAttendantNozzles.some(({ nozzleId }) => nozzleId === nozzle.id));
+    if (!onNozzle) {
+      throw new BusinessError("ATTENDANT_NOT_ON_NOZZLE", `${nozzle.name} is not one of your nozzles on ${nozzle.pump.name} in this shift`);
+    }
+    return onNozzle.siteShiftId;
   }
 
   /**
@@ -447,7 +491,8 @@ export class MobileTransactionsRepository {
       const row = await tx.generalTransaction.update({
         where: { id: sale.id },
         data: {
-          quantity, amount, shiftId: input.shiftId ?? null, displayPictureUrl: input.displayPictureUrl ?? null,
+          // The shift was recorded when the sale started; one sent now overrides it.
+          quantity, amount, ...(input.shiftId ? { shiftId: input.shiftId } : {}), displayPictureUrl: input.displayPictureUrl ?? null,
           comments: input.comments ?? null, ...(input.appVersion ? { appVersion: input.appVersion } : {}),
           ...(input.printStatus !== undefined ? { printStatus: input.printStatus } : {}),
         },

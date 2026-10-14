@@ -16,6 +16,9 @@ const text = (max: number) => z.string().trim().min(1).max(max);
  * from its credential, and a `siteId` field is refused.
  */
 export const initiateTransactionSchema = z.object({
+  /** The attendant starting the sale; they must be on that pump in the shift running now. */
+  phone: phoneSchema.transform((value) => value.replace(/\s+/g, "")),
+  pin: pinSchema,
   itemId: uuidSchema,
   cuveId: uuidSchema,
   pumpId: uuidSchema,
