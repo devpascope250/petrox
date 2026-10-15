@@ -69,6 +69,11 @@ export const cancelTransactionSchema = z.object({
   reason: text(255),
 }).strict();
 
+/** Whether the receipt was printed; marks it printed when left out. Form data sends text, JSON a boolean. */
+export const printStatusSchema = z.object({
+  printStatus: z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).default(true),
+}).strict();
+
 /** Which sales to list; `initiated` (still open) when not given. */
 export const listTransactionsQuerySchema = z.object({
   status: z.enum(["initiated", "confirmed", "cancelled"]).default("initiated"),
@@ -81,3 +86,4 @@ export const transactionCodeParamsSchema = z.object({
 export type InitiateTransactionInput = z.infer<typeof initiateTransactionSchema>;
 export type ConfirmTransactionInput = z.infer<typeof confirmTransactionSchema>;
 export type CancelTransactionInput = z.infer<typeof cancelTransactionSchema>;
+export type PrintStatusInput = z.infer<typeof printStatusSchema>;

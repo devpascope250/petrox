@@ -62,6 +62,7 @@ export const MODULE_TREE: ModuleNode[] = [
       { id: "479396de-59be-487e-8210-8d35e44f4b59", code: "MODULES", name: "Modules", icon: "Blocks", prefix: "modules" },
       { id: "dd8b6546-baca-4f59-aa5f-c4df163bf354", code: "ROLES", name: "Roles", icon: "ShieldCheck", prefix: "roles" },
       { id: "099b14e7-d52d-4f8b-b5be-64bbae585ffe", code: "USERS", name: "Users", icon: "Users", prefix: "users" },
+      { code: "BACKUPS", name: "Backups", icon: "DatabaseBackup", prefix: "backups" },
       { id: "a5ef8f60-cf84-4b2e-9b66-370f01be08a8", code: "ITEMS", name: "Items", icon: "Boxes", prefix: "items" },
       { code: "ITEM_PRICE", name: "Item Price", icon: "Tags", prefix: "item.price" },
       { code: "ITEM_UNITS", name: "Item Units", icon: "Layers", prefix: "item.units" },

@@ -16,6 +16,7 @@
         "prisma:deploy": "prisma migrate deploy",
         "prisma:seed": "tsx prisma/seed.ts",
     "prisma:seed:demo": "tsx prisma/seed.ts --demo",
+        "backup:decrypt": "tsx scripts/decrypt-backup.ts",
         "postinstall": "prisma generate"
     },
     "engines": {

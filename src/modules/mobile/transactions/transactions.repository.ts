@@ -553,6 +553,21 @@ export class MobileTransactionsRepository {
     });
   }
 
+  /**
+   * Records whether the receipt of a sale was printed. Only a confirmed sale
+   * has a receipt; setting it again to the same value is harmless, so a POS
+   * can retry after a lost answer.
+   */
+  async setPrintStatus(code: string, siteId: string, printStatus: boolean) {
+    const sale = await this.db.generalTransaction.findFirst({ where: { transactionCode: code, siteId }, select: { id: true, status: true } });
+    if (!sale) throw new NotFoundError("Transaction");
+    if (sale.status !== "confirmed") {
+      throw new AppError(409, "TRANSACTION_NOT_CONFIRMED", `Only a confirmed sale has a receipt; this one is ${sale.status}`);
+    }
+    await this.db.generalTransaction.update({ where: { id: sale.id }, data: { printStatus } });
+    return this.find(code, siteId);
+  }
+
   /** Drops a sale that was started but never served, and frees its card. Confirmed sales stay. */
   async cancel(code: string, siteId: string, reason: string) {
     await this.db.$transaction(async (tx) => {

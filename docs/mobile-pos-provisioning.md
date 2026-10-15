@@ -336,6 +336,10 @@ listing, so the initiated list only holds sales that can still be confirmed.
 **Also:** `GET /mobile/transactions/:code` reads a sale back, and
 `POST /mobile/transactions/:code/cancel` with `reason` cancels a sale that is still
 initiated. A cancelled sale cannot be confirmed (`409 TRANSACTION_CANCELLED`).
+`PATCH /mobile/transactions/:code/print-status` records whether the receipt of a confirmed sale
+was printed: `printStatus` (`true`/`false`, as form data or JSON), `true` when left out. It returns
+the sale; sending the same value again is harmless. A sale that is not confirmed gets
+`409 TRANSACTION_NOT_CONFIRMED`.
 
 | Status | Code | Meaning |
 |---|---|---|

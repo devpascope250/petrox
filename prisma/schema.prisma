@@ -117,6 +117,9 @@ model User {
   itemPrices                 ItemPrice[]
   generalTransactions        GeneralTransaction[]
 
+  backupsRequested  Backup[] @relation("BackupCreator")
+  backupsDownloaded Backup[] @relation("BackupDownloader")
+
   @@index([roleId])
   @@index([siteId])
 }
@@ -1650,4 +1653,50 @@ model GeneralTransactionPayment {
   @@unique([transactionId, accountId])
   @@index([transactionId])
   @@index([accountId])
+}
+
+enum BackupStatus {
+  queued
+  running
+  completed
+  failed
+  /// The file was deleted: its retention ran out, or someone removed it.
+  expired
+}
+
+enum BackupTrigger {
+  manual
+  scheduled
+}
+
+/// A database backup: the job and, once done, the encrypted file it produced.
+/// The row stays after the file is gone, as a record of who made and fetched it.
+model Backup {
+  id               String        @id @default(uuid())
+  status           BackupStatus  @default(queued)
+  trigger          BackupTrigger @default(manual)
+  /// The file's name inside BACKUP_DIR; never a path or a URL.
+  fileName         String?
+  sizeBytes        BigInt?
+  /// SHA-256 of the encrypted file, to check a download arrived whole.
+  sha256           String?       @db.Char(64)
+  /// Which encryption key sealed it (BACKUP_KEY_ID at the time).
+  keyId            String?
+  error            String?       @db.Text
+  /// Who asked for it; empty for a nightly backup.
+  createdBy        String?
+  creator          User?         @relation("BackupCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  createdAt        DateTime      @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
+  /// When the file is deleted.
+  expiresAt        DateTime?
+  downloadCount    Int           @default(0)
+  lastDownloadedAt DateTime?
+  lastDownloadedBy String?
+  lastDownloader   User?         @relation("BackupDownloader", fields: [lastDownloadedBy], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([createdBy])
+  @@index([lastDownloadedBy])
 }

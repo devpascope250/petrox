@@ -16,7 +16,8 @@ import { MobileTransactionsService } from "./transactions.service.js";
  *    payments are recorded.
  *
  * Both take multipart/form-data. A sale never served is cancelled with
- * `POST /:code/cancel`. Every route is for a provisioned device, and only
+ * `POST /:code/cancel`; once its receipt is printed, `PATCH /:code/print-status`
+ * records it. Every route is for a provisioned device, and only
  * ever sees its own site's sales.
  */
 const CONFIRM_LIMIT = {
@@ -61,6 +62,10 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.post("/:code/cancel", { preHandler: [authenticateDevice] }, async (request) =>
     success(await service.cancel(request, code(request.params))));
+
+  // After printing (or failing to print) the receipt of a confirmed sale.
+  app.patch("/:code/print-status", { preHandler: [authenticateDevice] }, async (request) =>
+    success(await service.printStatus(request, code(request.params))));
 };
 
 export default routes;

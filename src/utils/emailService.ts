@@ -207,6 +207,32 @@ class EmailService {
     });
   }
 
+  /** Tells whoever asked for a backup that it is ready, or why it failed. */
+  async sendBackupReportEmail(
+    userEmail: string,
+    userName: string,
+    report:
+      | { id: string; ok: true; fileName: string; sizeBytes: number; expiresAt: Date }
+      | { id: string; ok: false; error: string }
+  ): Promise<void> {
+    const html = await this.renderTemplate('backup-report', {
+      userName,
+      ok: report.ok,
+      fileName: report.ok ? report.fileName : '',
+      size: report.ok ? `${(report.sizeBytes / 1024 / 1024).toFixed(2)} MB` : '',
+      expiresAt: report.ok ? report.expiresAt.toLocaleString() : '',
+      error: report.ok ? '' : report.error,
+      backupsLink: `${this.config.FRONTEND_URL}/backups`,
+    });
+
+    await this.sendEmail({
+      from: `"${this.config.COMPANY_NAME}" <${this.config.FROM_EMAIL}>`,
+      to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : userEmail,
+      subject: report.ok ? 'Your database backup is ready' : 'Your database backup failed',
+      html,
+    });
+  }
+
   // Utility method to verify transporter connection
   async verifyConnection(): Promise<boolean> {
     try {

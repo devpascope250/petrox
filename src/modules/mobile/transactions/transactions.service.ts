@@ -4,7 +4,7 @@ import { deviceSite } from "../auth/device-auth.js";
 import { readMobileForm } from "./transaction-form.js";
 import { MobileTransactionsRepository } from "./transactions.repository.js";
 import {
-  cancelTransactionSchema, confirmTransactionSchema, initiateTransactionSchema, listTransactionsQuerySchema,
+  cancelTransactionSchema, confirmTransactionSchema, initiateTransactionSchema, listTransactionsQuerySchema, printStatusSchema,
 } from "./transactions.schema.js";
 
 const REFERENCE_DOC = /^referenceDoc\.(\d+)$/;
@@ -64,5 +64,12 @@ export class MobileTransactionsService {
     const siteId = deviceSite(request);
     const fields = request.isMultipart() ? (await readMobileForm(request, [], 0)).fields : request.body ?? {};
     return this.repo.cancel(code, siteId, parseInput(cancelTransactionSchema, fields).reason);
+  }
+
+  /** Accepts `printStatus` as form data or JSON; an empty body marks the receipt printed. */
+  async printStatus(request: FastifyRequest, code: string) {
+    const siteId = deviceSite(request);
+    const fields = request.isMultipart() ? (await readMobileForm(request, [], 0)).fields : request.body ?? {};
+    return this.repo.setPrintStatus(code, siteId, parseInput(printStatusSchema, fields).printStatus);
   }
 }

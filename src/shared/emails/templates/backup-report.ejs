@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= ok ? 'Backup ready' : 'Backup failed' %></title>
+  </head>
+  <body style="margin: 0; padding: 0; font-family: &quot;Segoe UI&quot;, Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6fb">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f4f6fb">
+      <tr>
+        <td align="center" style="padding: 40px 20px">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+            style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); overflow: hidden">
+            <tr>
+              <td style="padding: 32px 40px; background-color: <%= ok ? '#034EA2' : '#B91C1C' %>; color: #ffffff">
+                <h1 style="margin: 0; font-size: 22px; font-weight: 600">
+                  <%= ok ? 'Your database backup is ready' : 'Your database backup failed' %>
+                </h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 32px 40px; color: #333333; font-size: 15px; line-height: 1.6">
+                <p style="margin: 0 0 16px 0">Hello <%= userName %>,</p>
+                <% if (ok) { %>
+                <p style="margin: 0 0 20px 0">The backup you asked for has been made and encrypted. Download it from the Backups page.</p>
+                <table role="presentation" cellspacing="0" cellpadding="6" border="0" width="100%"
+                  style="background-color: #f4f6fb; border-radius: 6px; font-size: 13px; margin-bottom: 24px">
+                  <tr><td style="color: #666666">File</td><td style="font-family: monospace"><%= fileName %></td></tr>
+                  <tr><td style="color: #666666">Size</td><td><%= size %></td></tr>
+                  <tr><td style="color: #666666">Deleted on</td><td><%= expiresAt %></td></tr>
+                </table>
+                <% } else { %>
+                <p style="margin: 0 0 12px 0">The backup you asked for could not be made. The server said:</p>
+                <p style="margin: 0 0 24px 0; padding: 12px; background-color: #fef2f2; border-radius: 6px; font-family: monospace; font-size: 13px; color: #991b1b"><%= error %></p>
+                <% } %>
+                <p style="margin: 0 0 24px 0">
+                  <a href="<%= backupsLink %>"
+                    style="display: inline-block; padding: 12px 28px; background-color: #034EA2; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600">
+                    Open Backups
+                  </a>
+                </p>
+                <p style="margin: 0; font-size: 13px; color: #666666">
+                  The file is encrypted. Opening it needs the backup key kept by your administrators.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 20px 40px; background-color: #f8f9fa; color: #999999; font-size: 12px; text-align: center">
+                &copy; <%= currentYear %> <%= companyName %> · <%= companyAddress %>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
