@@ -111,7 +111,18 @@ export class DriverRepository {
     return await this.db.driverVehicles.findMany({where: {driverId: id, status: "active"}});
   }
 
+  /** A driver only drives the trucks of the transporter he works for. */
   async assignVehicles(vehicleId: string, driverId: string) {
+    const [driver, vehicle] = await Promise.all([
+      this.db.driver.findUnique({ where: { id: driverId }, select: { transporterId: true, transport: { select: { name: true } } } }),
+      this.db.vehicle.findUnique({ where: { id: vehicleId }, select: { transporterId: true, platNumber: true } }),
+    ]);
+    if (!driver) throw new NotFoundError("Driver");
+    if (!vehicle) throw new NotFoundError("Vehicle");
+    if (vehicle.transporterId !== driver.transporterId) {
+      throw new BusinessError("VEHICLE_OTHER_TRANSPORTER",
+        `${vehicle.platNumber} does not belong to ${driver.transport?.name ?? "the driver's transporter"}`, 422);
+    }
     const vehicles = await this.getAllVehiclesByid(driverId);
     return await this.db.$transaction( async(tx) => {
       if(vehicles.length > 0) {

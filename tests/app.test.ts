@@ -19,7 +19,8 @@ import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config/env.js";
 import { BusinessError } from "../src/utils/errors.js";
 
-const config = loadConfig();
+// Backups off: this suite is about HTTP handling, not the backup worker.
+const config = loadConfig({ ...process.env, BACKUP_ENCRYPTION_KEY: "" });
 
 describe("HTTP API", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;

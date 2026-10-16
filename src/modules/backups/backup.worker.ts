@@ -101,7 +101,10 @@ export function startBackupWorker(app: FastifyInstance, config: AppConfig) {
   }
 
   // A restart mid-backup leaves a row "running" that nothing is working on.
-  repo.failInterrupted("The server restarted while this backup was being made")
+  // Started inside a promise, so even a synchronous error is logged and never
+  // stops the API from booting.
+  Promise.resolve()
+    .then(() => repo.failInterrupted("The server restarted while this backup was being made"))
     .then(deleteExpired)
     .catch((error) => log.error({ err: error }, "Backup worker start-up failed"));
 
