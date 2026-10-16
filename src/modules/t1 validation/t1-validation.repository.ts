@@ -15,6 +15,9 @@ export class T1ValidationRepository {
       select: {
         id: true,
         exportingCountry: true,
+        // What the T1 clears, at 20 °C: what can go into stock, not the
+        // nomination's ambient quantity.
+        quantityAt20C: true,
         extraValidations: true,
         supportingDocUrl: true,
         nomination: {
@@ -50,6 +53,9 @@ export class T1ValidationRepository {
       select: {
         id: true,
         exportingCountry: true,
+        // What the T1 clears, at 20 °C: what can go into stock, not the
+        // nomination's ambient quantity.
+        quantityAt20C: true,
         extraValidations: true,
         supportingDocUrl: true,
         nomination: {
