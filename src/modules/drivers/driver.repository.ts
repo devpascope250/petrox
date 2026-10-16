@@ -24,6 +24,9 @@ export class DriverRepository {
        phone: true,
        status: true,
        createdAt: true,
+       transporterId: true,
+       // The company the driver works for, shown on the list.
+       transport: { select: { id: true, name: true } },
        vehicles: {
          where: {
           status: "active"

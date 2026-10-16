@@ -15,6 +15,7 @@ export class CargoRepository {
         quantityInLitre: true,
         outurnRef: true,
         receivedDate: true,
+        expirationDate: true,
         supportingDocUrl: true,
         tansisRef: true,
         vesselName: true,
