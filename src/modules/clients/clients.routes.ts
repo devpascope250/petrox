@@ -4,6 +4,7 @@ import { idParamsSchema, paginationQuerySchema, parseInput } from "../../shared/
 import { ClientRepository } from "./clients.repository.js";
 import {
   createClientUserSchema,
+  updateOrganizationSchema,
   updateUserSchema
 } from "./clients.schema.js";
 import { ClientService } from "./clients.service.js";
@@ -16,6 +17,13 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.get("/organizations", { preHandler: [app.authenticate, app.authorize("clients.read")] }, async (request) =>
     success(await service.organizations(parseInput(paginationQuerySchema, request.query), request.contextUser!)));
+
+  app.put("/organizations/:id", { preHandler: [app.authenticate, app.authorize("clients.edit")] }, async (request) =>
+    success(await service.updateOrganization(
+      parseInput(idParamsSchema, request.params).id,
+      parseInput(updateOrganizationSchema, request.body),
+      request.contextUser!
+    )));
 
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("clients.read")] }, async (request) =>
     success(await service.get(parseInput(idParamsSchema, request.params).id, request.contextUser!)));

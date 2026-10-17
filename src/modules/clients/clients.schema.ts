@@ -117,6 +117,9 @@ export const updateUserSchema = z.object({
   clientDetails: updateClientDetailsSchema.optional()
 }).refine((data) => Object.keys(data).length > 0, "At least one field is required");
 
+/** Editing an organisation itself, users or not. */
+export const updateOrganizationSchema = updateClientDetailsSchema;
+
 export const assignUserSiteSchema = z.object({
   siteId: uuidSchema
 });

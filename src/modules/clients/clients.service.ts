@@ -6,8 +6,13 @@ import type { PaginationQuery } from "../../shared/validation/index.js";
 import { generateTemporaryPin, hashPin } from "../../utils/crypto.js";
 import { hashClientPin } from "./client-pin.js";
 import { BusinessError, NotFoundError, forbidden } from "../../utils/errors.js";
-import type { CreateUserInput, UpdateUserInput } from "./clients.schema.js";
+import type { CreateUserInput, UpdateClientDetailsInput, UpdateUserInput } from "./clients.schema.js";
 import { ClientRepository } from "./clients.repository.js";
+
+/** An organisation as shown: whether it has a coupon PIN, never the PIN itself. */
+function presentOrganization<T extends { pinHash: string | null; users: unknown[] }>({ pinHash, ...client }: T) {
+  return { ...client, hasPin: Boolean(pinHash), userCount: client.users.length };
+}
 
 export class ClientService {
   constructor(private repo: ClientRepository, private config: AppConfig) {}
@@ -20,8 +25,14 @@ export class ClientService {
   /** The organisations, each with its users and whether it has a coupon PIN (never the PIN itself). */
   async organizations(query: PaginationQuery, actor: AuthUser) {
     const [rows, total] = await this.repo.organizations(query, actor);
-    const items = rows.map(({ pinHash, ...client }) => ({ ...client, hasPin: Boolean(pinHash), userCount: client.users.length }));
-    return paginatedData(items, total, query);
+    return paginatedData(rows.map(presentOrganization), total, query);
+  }
+
+  /** Edits an organisation's own details, PIN included. A client admin may only edit their own. */
+  async updateOrganization(id: string, input: UpdateClientDetailsInput, actor: AuthUser) {
+    if (!(await this.repo.findOrganization(id))) throw new NotFoundError("Client");
+    this.assertCanManage({ clientId: id }, actor);
+    return presentOrganization(await this.repo.updateOrganization(id, this.clientData(input)));
   }
 
   async find(id: string) {

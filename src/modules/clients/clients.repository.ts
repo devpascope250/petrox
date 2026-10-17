@@ -23,6 +23,16 @@ const publicUserSelect = {
   updatedAt: true
 } satisfies Prisma.UserSelect;
 
+const organizationSelect = {
+  id: true, clientCode: true, name: true, phone: true, email: true, idTino: true,
+  province: true, district: true, sector: true, status: true, subsidyAllowed: true,
+  pinHash: true,
+  users: {
+    orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+    select: { id: true, firstName: true, lastName: true, email: true, phone: true, position: true, isActive: true },
+  },
+} satisfies Prisma.ClientSelect;
+
 export class ClientRepository {
   constructor(private db: PrismaClient) {}
 
@@ -46,18 +56,18 @@ export class ClientRepository {
     const where: Prisma.ClientWhereInput = actor.position === "clientAdmin" ? { id: actor.clientId ?? "" } : {};
     return this.db.$transaction([
       this.db.client.findMany({
-        ...paginationArgs(query), where, orderBy: [{ name: "asc" }, { clientCode: "asc" }],
-        select: {
-          id: true, clientCode: true, name: true, phone: true, email: true, idTino: true, status: true, subsidyAllowed: true,
-          pinHash: true,
-          users: {
-            orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-            select: { id: true, firstName: true, lastName: true, email: true, phone: true, position: true, isActive: true },
-          },
-        },
+        ...paginationArgs(query), where, orderBy: [{ name: "asc" }, { clientCode: "asc" }], select: organizationSelect,
       }),
       this.db.client.count({ where }),
     ]);
+  }
+
+  findOrganization(id: string) {
+    return this.db.client.findUnique({ where: { id }, select: { id: true } });
+  }
+
+  updateOrganization(id: string, data: Prisma.ClientUpdateInput) {
+    return this.db.client.update({ where: { id }, data, select: organizationSelect });
   }
 
   /** `clientPinHash`: the new client's own PIN, already hashed, when one was given. */
