@@ -329,7 +329,7 @@ including one sent at the same moment, gets `409 TRANSACTION_ALREADY_CONFIRMED`.
 **Listing:** `GET /mobile/transactions?status=initiated|confirmed|cancelled` returns the site's
 50 newest sales in that status, newest first; without `status`, the open (`initiated`) ones.
 Each has the same full detail as a single sale: product, tank, pump, nozzle and its display,
-site, the POS that recorded it, card, client (and `clientName` at the top level, `null` without a card), attendant (`doneBy`), shift, payments with
+site, the POS that recorded it, card, client (and `clientName` at the top level, `null` without a card), the attendant who confirmed it (`attendant`: `id`, `firstName`, `lastName`, `names`, and `attendantName` ready to print; `null` until confirmed), shift, payments with
 their accounts, pictures and documents, and `expiresAt`. Overdue sales are cancelled before
 listing, so the initiated list only holds sales that can still be confirmed.
 
@@ -339,7 +339,7 @@ initiated. A cancelled sale cannot be confirmed (`409 TRANSACTION_CANCELLED`).
 **Receipts:** reading a sale (`GET /mobile/transactions/:code`), confirming it and updating its
 print status each return a `company` block for the receipt header and footer, kept on the web
 under System Settings → Company Settings: `name`, `address`, `phone`, `email`, `taxId` (TIN),
-`website`, `currency`, `logoUrl` (full URL) and `receiptFooter`. Each is `null` when not set, and
+`website`, `currency`, `logoUrl` (full URL) and `receiptFooter`. The sale itself carries the attendant who confirmed it as `attendantName`. Each is `null` when not set, and
 `company` itself is `null` until the profile has been saved. Lists of sales do not carry it.
 
 `PATCH /mobile/transactions/:code/print-status` records whether the receipt of a confirmed sale

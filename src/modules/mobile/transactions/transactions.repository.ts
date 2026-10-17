@@ -106,7 +106,8 @@ const transactionSelect = {
      card: { select: { cardNumber: true, serialNumber: true , cardType: { select: { name: true, status: true}}} }, copyCard: { select: { cardNumber: true, serialNumber: true } } } },
   client: { select: { id: true, clientCode: true, name: true, phone: true } },
   // shift: { select: { id: true, shift: { select: { id: true, name: true } } } },
-  // user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+  /** The attendant who confirmed it (`doneBy`); not their phone, which signs them in. */
+  user: { select: { id: true, firstName: true, lastName: true } },
   generalTransactionPayments: {
     select: { id: true, amount: true, reference: true, referenceDocUrl: true,
       account: { select: { id: true, code: true, name: true, type: true } } },
@@ -116,7 +117,7 @@ const transactionSelect = {
 
 type TransactionRow = Prisma.GeneralTransactionGetPayload<{ select: typeof transactionSelect }>;
 
-function presentRow({  generalTransactionPayments, ...row }: TransactionRow) {
+function presentRow({  generalTransactionPayments, user, ...row }: TransactionRow) {
   return {
     ...row,
     cardCopyId: row.cardCopyId?.toString() ?? null,
@@ -131,8 +132,10 @@ function presentRow({  generalTransactionPayments, ...row }: TransactionRow) {
     subsidyRate: Number(row.subsidyRate),
     subsidyAmount: Number(row.subsidyAmount),
     // shift: shift ? { id: shift.id, name: shift.shift.name } : null,
-    /** The attendant who confirmed it. */
-    // doneBy: user,
+    /** The attendant who confirmed it; `null` until the sale is confirmed. */
+    attendant: user ? { ...user, names: `${user.firstName} ${user.lastName}`.trim() } : null,
+    /** The same name, ready to print, as `clientName` is. */
+    attendantName: user ? `${user.firstName} ${user.lastName}`.trim() : null,
     payments: generalTransactionPayments.map((payment) => ({ ...payment, amount: Number(payment.amount) })),
   };
 }
