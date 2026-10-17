@@ -33,8 +33,30 @@ export class ClientRepository {
       
     }
     return this.db.$transaction([
-      this.db.user.findMany({ ...paginationArgs(query), orderBy: { createdAt: "desc" }, select: publicUserSelect }),
+      this.db.user.findMany({ ...paginationArgs(query), where: whereClause, orderBy: { createdAt: "desc" }, select: publicUserSelect }),
       this.db.user.count({where: whereClause})
+    ]);
+  }
+
+  /**
+   * The client organisations themselves, with their users, so one with no
+   * user left still shows. A client admin sees only their own.
+   */
+  organizations(query: PaginationQuery, actor: AuthUser) {
+    const where: Prisma.ClientWhereInput = actor.position === "clientAdmin" ? { id: actor.clientId ?? "" } : {};
+    return this.db.$transaction([
+      this.db.client.findMany({
+        ...paginationArgs(query), where, orderBy: [{ name: "asc" }, { clientCode: "asc" }],
+        select: {
+          id: true, clientCode: true, name: true, phone: true, email: true, idTino: true, status: true, subsidyAllowed: true,
+          pinHash: true,
+          users: {
+            orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+            select: { id: true, firstName: true, lastName: true, email: true, phone: true, position: true, isActive: true },
+          },
+        },
+      }),
+      this.db.client.count({ where }),
     ]);
   }
 

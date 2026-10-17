@@ -14,6 +14,9 @@ const routes: FastifyPluginAsync = async (app) => {
   app.get("/", { preHandler: [app.authenticate, app.authorize("clients.read")] }, async (request) =>
     success(await service.list(parseInput(paginationQuerySchema, request.query), request.contextUser!)));
 
+  app.get("/organizations", { preHandler: [app.authenticate, app.authorize("clients.read")] }, async (request) =>
+    success(await service.organizations(parseInput(paginationQuerySchema, request.query), request.contextUser!)));
+
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("clients.read")] }, async (request) =>
     success(await service.get(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
 

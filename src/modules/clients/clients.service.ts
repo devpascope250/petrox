@@ -17,6 +17,13 @@ export class ClientService {
     return paginatedData(items, total, query);
   }
 
+  /** The organisations, each with its users and whether it has a coupon PIN (never the PIN itself). */
+  async organizations(query: PaginationQuery, actor: AuthUser) {
+    const [rows, total] = await this.repo.organizations(query, actor);
+    const items = rows.map(({ pinHash, ...client }) => ({ ...client, hasPin: Boolean(pinHash), userCount: client.users.length }));
+    return paginatedData(items, total, query);
+  }
+
   async find(id: string) {
     const user = await this.repo.find(id);
     if (!user) throw new NotFoundError("User");
