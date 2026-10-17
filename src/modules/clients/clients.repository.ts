@@ -33,7 +33,7 @@ export class ClientRepository {
       
     }
     return this.db.$transaction([
-      this.db.user.findMany({ ...paginationArgs(query), where: whereClause, orderBy: { createdAt: "desc" }, select: publicUserSelect }),
+      this.db.user.findMany({ ...paginationArgs(query), orderBy: { createdAt: "desc" }, select: publicUserSelect }),
       this.db.user.count({where: whereClause})
     ]);
   }
