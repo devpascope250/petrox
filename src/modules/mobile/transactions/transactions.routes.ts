@@ -6,6 +6,7 @@ import { deviceAuthenticator } from "../auth/device-auth.js";
 import { MobileTransactionsRepository } from "./transactions.repository.js";
 import { transactionCodeParamsSchema } from "./transactions.schema.js";
 import { MobileTransactionsService } from "./transactions.service.js";
+import { CompanySettingsRepository } from "../../company-settings/company-settings.repository.js";
 
 /**
  * Sales recorded by a POS (`GeneralTransaction`), in two steps:
@@ -33,7 +34,9 @@ const routes: FastifyPluginAsync = async (app) => {
   app.decorateRequest("device", null);
   const authenticateDevice = deviceAuthenticator(app, app.prisma);
   const repo = new MobileTransactionsRepository(app.prisma, app.config.PIN_HMAC_SECRET, app.config.MOBILE_SALE_TIMEOUT_MINUTES, app.config.STATIC_URL);
-  const service = new MobileTransactionsService(repo);
+  // Receipts print the company profile kept on the web (Company Settings).
+  const company = new CompanySettingsRepository(app.prisma);
+  const service = new MobileTransactionsService(repo, () => company.receipt(app.config.STATIC_URL));
 
   // Every minute, sales left initiated past the timeout are cancelled and their cards freed.
   const sweep = setInterval(() => {

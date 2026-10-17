@@ -41,6 +41,7 @@ import MobileTransactionRoutes from "./modules/mobile/transactions/transactions.
 import PosTransactionRoutes from "./modules/pos-transactions/pos-transaction.routes.js";
 import DashboardRoutes from "./modules/dashboard/dashboard.routes.js";
 import BackupRoutes from "./modules/backups/backup.routes.js";
+import CompanySettingsRoutes from "./modules/company-settings/company-settings.routes.js";
 import ClientCarsRoutes from "./modules/client-cars/client-car.routes.js";
 import PumpRoutes from "./modules/pump/pump.routes.js";
 import DisplayRoutes from "./modules/display/display.routes.js";
@@ -134,6 +135,7 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(PosTransactionRoutes, { prefix: "/api/v1/pos-transactions" });
   await app.register(DashboardRoutes, { prefix: "/api/v1/dashboard" });
   await app.register(BackupRoutes, { prefix: "/api/v1/backups" });
+  await app.register(CompanySettingsRoutes, { prefix: "/api/v1/company-settings" });
   await app.register(ClientCarsRoutes, { prefix: "/api/v1/client-cars" });
   await app.register(PumpRoutes, { prefix: "/api/v1/pumps" });
   await app.register(DisplayRoutes, { prefix: "/api/v1/displays" });

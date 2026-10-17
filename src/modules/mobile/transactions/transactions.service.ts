@@ -9,15 +9,24 @@ import {
 
 const REFERENCE_DOC = /^referenceDoc\.(\d+)$/;
 
+/** The company details a receipt prints; `null` until the company profile is saved. */
+export type ReceiptCompany = () => Promise<Record<string, unknown> | null>;
+
 export class MobileTransactionsService {
-  constructor(private repo: MobileTransactionsRepository) {}
+  constructor(private repo: MobileTransactionsRepository, private receiptCompany: ReceiptCompany = async () => null) {}
+
+  /** A single sale, with the company it is printed under. */
+  private async withCompany<T extends object>(sale: Promise<T>) {
+    const [row, company] = await Promise.all([sale, this.receiptCompany()]);
+    return { ...row, company };
+  }
 
   list(request: FastifyRequest) {
     return this.repo.list(deviceSite(request), parseInput(listTransactionsQuerySchema, request.query).status);
   }
 
   find(request: FastifyRequest, code: string) {
-    return this.repo.find(code, deviceSite(request));
+    return this.withCompany(this.repo.find(code, deviceSite(request)));
   }
 
   /** Form fields as listed in the schema; the `platePicture` file becomes `platePictureUrl`. */
@@ -52,7 +61,7 @@ export class MobileTransactionsService {
         if (index !== undefined) referenceDocs[Number(index)] = url;
       }
       const doneBy = await this.repo.attendant(input.phone, input.pin, siteId);
-      return await this.repo.confirm(code, siteId, { ...input, displayPictureUrl: form.files.displayPicture, referenceDocs }, doneBy);
+      return await this.withCompany(this.repo.confirm(code, siteId, { ...input, displayPictureUrl: form.files.displayPicture, referenceDocs }, doneBy));
     } catch (error) {
       await form.discard();
       throw error;
@@ -70,6 +79,6 @@ export class MobileTransactionsService {
   async printStatus(request: FastifyRequest, code: string) {
     const siteId = deviceSite(request);
     const fields = request.isMultipart() ? (await readMobileForm(request, [], 0)).fields : request.body ?? {};
-    return this.repo.setPrintStatus(code, siteId, parseInput(printStatusSchema, fields).printStatus);
+    return this.withCompany(this.repo.setPrintStatus(code, siteId, parseInput(printStatusSchema, fields).printStatus));
   }
 }

@@ -336,6 +336,12 @@ listing, so the initiated list only holds sales that can still be confirmed.
 **Also:** `GET /mobile/transactions/:code` reads a sale back, and
 `POST /mobile/transactions/:code/cancel` with `reason` cancels a sale that is still
 initiated. A cancelled sale cannot be confirmed (`409 TRANSACTION_CANCELLED`).
+**Receipts:** reading a sale (`GET /mobile/transactions/:code`), confirming it and updating its
+print status each return a `company` block for the receipt header and footer, kept on the web
+under System Settings → Company Settings: `name`, `address`, `phone`, `email`, `taxId` (TIN),
+`website`, `currency`, `logoUrl` (full URL) and `receiptFooter`. Each is `null` when not set, and
+`company` itself is `null` until the profile has been saved. Lists of sales do not carry it.
+
 `PATCH /mobile/transactions/:code/print-status` records whether the receipt of a confirmed sale
 was printed: `printStatus` (`true`/`false`, as form data or JSON), `true` when left out. It returns
 the sale; sending the same value again is harmless. A sale that is not confirmed gets

@@ -20,16 +20,21 @@ model Role {
   authorizers Authorizers[]
 }
 
+/// The company's own details, printed on POS receipts. One row only.
 model CompanySettings {
-  id          String   @id @default(uuid())
-  companyName String   @default("")
-  address     String?
-  phone       String?
-  email       String?
-  taxId       String?
-  currency    String   @default("USD")
-  logoPath    String?
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(uuid())
+  companyName   String   @default("")
+  address       String?
+  phone         String?
+  email         String?
+  /// TIN, printed on receipts.
+  taxId         String?
+  website       String?
+  currency      String   @default("USD")
+  logoPath      String?
+  /// A line at the bottom of every receipt, e.g. "Thank you for your business".
+  receiptFooter String?  @db.VarChar(255)
+  updatedAt     DateTime @updatedAt
 }
 
 model Module {
