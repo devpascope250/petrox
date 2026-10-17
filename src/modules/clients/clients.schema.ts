@@ -18,7 +18,9 @@ const clientDetailsSchema = z.object({
   province: uuidSchema.optional(),
   district: uuidSchema.optional(),
   sector: uuidSchema.optional(),
-  subsidyAllowed: z.boolean().default(false)
+  subsidyAllowed: z.boolean().default(false),
+  /** The client's PIN (4–8 digits), entered at the pump to pay with its coupons. */
+  pin: pinSchema.optional()
 });
 
 const userProfileSchema = z.object({
@@ -99,7 +101,9 @@ const updateClientDetailsSchema = z.object({
   district: uuidSchema.optional(),
   sector: uuidSchema.optional(),
   subsidyAllowed: z.boolean().optional(),
-  status: z.boolean().optional()
+  status: z.boolean().optional(),
+  /** A new client PIN; `null` removes it, so its coupons can no longer pay at the pump. */
+  pin: pinSchema.nullable().optional()
 }).refine((data) => Object.keys(data).length > 0, "At least one client detail is required");
 
 export const updateUserSchema = z.object({

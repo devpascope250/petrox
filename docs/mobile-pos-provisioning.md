@@ -302,7 +302,7 @@ is cancelled automatically with reason `Not confirmed in time`, and its card is 
 sale returned carries `expiresAt`: when that happens, or `null` once the sale is no longer
 initiated, so the POS can show a countdown. A background sweep runs every minute, and an
 overdue sale is also cancelled on the spot when it is read, confirmed, or when its card is
-used for a new sale. Confirming it then gets `409 TRANSACTION_EXPIRED`: start a new sale.
+used for a new sale. Confirming it then gets `409 TRANSACTION_EXPIRED`: start a new sale. A sale paid with coupons (below) never times out: its `expiresAt` is `null`.
 
 **2. `POST /mobile/transactions/:code/confirm`** closes the sale. In one database
 transaction it takes the litres out of the tank, writes a `CuveTransaction` (sold/OUT),
@@ -341,6 +341,75 @@ print status each return a `company` block for the receipt header and footer, ke
 under System Settings → Company Settings: `name`, `address`, `phone`, `email`, `taxId` (TIN),
 `website`, `currency`, `logoUrl` (full URL) and `receiptFooter`. The sale itself carries the attendant who confirmed it as `attendantName`. Each is `null` when not set, and
 `company` itself is `null` until the profile has been saved. Lists of sales do not carry it.
+
+### Fuel sales paid with coupons — `/mobile/coupon-sales`
+
+A coupon sale is a `GeneralTransaction` like any other, so it is read, listed and printed through
+`/mobile/transactions` (`GET /mobile/transactions`, `GET /mobile/transactions/:code`,
+`PATCH /mobile/transactions/:code/print-status`). Starting, confirming and cancelling it have routes
+of their own. The client's coupons pay the **whole** amount: no card, no other payment. The payment
+is recorded against the company account of type `coupon` (this site's, else the shared one), which
+must exist and be active (`COUPON_ACCOUNT_MISSING`). The client must have a PIN, set on the web
+(Clients → edit the client admin → Organisation PIN).
+
+**1. `GET /mobile/coupon-sales/clients?search=`** lists up to 50 active clients holding coupons they
+can still spend, most first: `id`, `clientCode`, `name`, `phone`, `hasPin` (without a PIN the client
+cannot pay with coupons), `spendableAmount`, `couponCount`. `search` matches name, code or phone.
+
+**2. `POST /mobile/coupon-sales/clients/:clientId/verify`** with `{"pin"}` checks the client's PIN
+and returns `{client, spendableAmount, couponCount}`. It never returns coupon codes: only the paper
+pays. A wrong PIN, no PIN set and an inactive client all get `422 INVALID_CLIENT_PIN`. 20 a minute per device.
+
+**3. `POST /mobile/coupon-sales`** (multipart, 20 a minute per device) starts the sale and fixes
+everything about the fuel. Returns `201` with the sale, status `initiated`, `expiresAt: null`:
+a coupon sale **never times out**, and the ordinary confirm refuses it (`409 COUPON_SALE`).
+
+| Field | | |
+|---|---|---|
+| `clientId`, `clientPin` | required | The client, checked with their PIN again. |
+| `itemId`, `cuveId`, `pumpId`, `nozzleId` | required | Checked as for a POS sale. |
+| `quantity`, `amount` | required | As the pump shows them. The unit price is the price in force; `amount` must be within 0.01 litre's worth of quantity × price (`AMOUNT_MISMATCH`). |
+| `displayPicture` (file) | **required** | Picture of the pump display (`DISPLAY_PICTURE_REQUIRED`). |
+| `platNumber`, `appVersion` | optional | |
+
+The client's spendable coupons must cover `amount`, or it is refused with `422 COUPONS_SHORT`
+(`data.spendableAmount`, `data.amount`).
+
+**4. `POST /mobile/coupon-sales/:code/confirm`** (JSON or form data, 20 a minute per device) checks
+only the coupons and the attendant, then records everything in one database transaction — or
+nothing at all:
+
+| Field | | |
+|---|---|---|
+| `clientId` | required | Must be the sale's client (`CLIENT_MISMATCH`). |
+| `coupons` | required | Array (or JSON array in a form field) of scanned codes or QR tokens, in the order scanned, 1–50. Each must belong to that client (`COUPON_OTHER_CLIENT`). |
+| `phone`, `pin` | required | The attendant, on the rota for the sale's pump and nozzle in the shift running now (as for confirm). Becomes `doneBy`. |
+| `comments`, `appVersion`, `printStatus` | optional | |
+
+The coupons pay in the order scanned, each as much as is still owed: all but the last are used
+whole and the last keeps what it does not need (five 1,000 coupons on a 4,500 sale use four and
+leave 500 on the fifth). Together they must pay exactly `amount` (`COUPONS_SHORT` otherwise), and a
+coupon that is not needed is refused (`COUPON_NOT_NEEDED`). Then the payment is recorded on the
+coupon account, the litres leave the tank (`CuveTransaction` sold/OUT), and a `FuelSale` is written
+for the web. The answer is the sale with `coupons` (each `code`, `amount` taken, `remainingAmount`,
+`usage`), `attendantName` and the `company` block for the receipt.
+
+**`POST /mobile/coupon-sales/:code/cancel`** with `reason` cancels a coupon sale not yet confirmed;
+no coupon was spent, so nothing is given back.
+
+| Status | Code | Meaning |
+|---|---|---|
+| 422 | `INVALID_CLIENT_PIN` | Wrong client PIN, no PIN set, or client inactive. |
+| 422 | `COUPON_ACCOUNT_MISSING` | No active company account of type `coupon`. |
+| 422 | `COUPONS_SHORT` | The coupons cannot pay the whole amount. |
+| 422 | `CLIENT_MISMATCH`, `COUPON_OTHER_CLIENT` | The sale or a coupon belongs to another client. |
+| 404 | `COUPON_NOT_FOUND` | No coupon matches a scan; `data.coupon` names it. |
+| 422 | `COUPON_USED`, `COUPON_EXPIRED`, `COUPON_CANCELLED`, `DUPLICATE_COUPON` | A scanned coupon cannot pay. |
+| 422 | `COUPON_NOT_NEEDED` | The sale was already covered before this coupon; nothing was spent. |
+| 409 | `COUPON_IN_USE` | Another pump spent the coupon at the same moment; scan it again. |
+| 409 | `NOT_A_COUPON_SALE` / `COUPON_SALE` | A coupon route used for an ordinary sale, or the reverse. |
+| 422 | `INVALID_ATTENDANT`, `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE`, `INSUFFICIENT_CUVE_STOCK`, `AMOUNT_MISMATCH`, `PRICE_NOT_SET` | As for POS sales. |
+| 409 | `TRANSACTION_ALREADY_CONFIRMED`, `TRANSACTION_CANCELLED` | The sale is no longer open. |
 
 `PATCH /mobile/transactions/:code/print-status` records whether the receipt of a confirmed sale
 was printed: `printStatus` (`true`/`false`, as form data or JSON), `true` when left out. It returns

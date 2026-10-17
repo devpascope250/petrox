@@ -4,6 +4,7 @@ import type { AuthUser } from "../../shared/auth/context-user.js";
 import { paginatedData } from "../../shared/pagination/index.js";
 import type { PaginationQuery } from "../../shared/validation/index.js";
 import { generateTemporaryPin, hashPin } from "../../utils/crypto.js";
+import { hashClientPin } from "./client-pin.js";
 import { BusinessError, NotFoundError, forbidden } from "../../utils/errors.js";
 import type { CreateUserInput, UpdateUserInput } from "./clients.schema.js";
 import { ClientRepository } from "./clients.repository.js";
@@ -43,10 +44,12 @@ export class ClientService {
 
     // The PIN entered on the form; without one, a generated PIN is shown once.
     const temporaryPin = input.pin ? undefined : generateTemporaryPin();
+    const clientPin = input.position === "clientAdmin" ? input.clientDetails.pin : undefined;
     const user = await this.repo.create(
       input,
       await bcrypt.hash(input.password, 12),
-      hashPin(input.pin ?? temporaryPin!, this.config.PIN_HMAC_SECRET)
+      hashPin(input.pin ?? temporaryPin!, this.config.PIN_HMAC_SECRET),
+      clientPin ? hashClientPin(clientPin, this.config.PIN_HMAC_SECRET) : undefined
     );
     return { ...user, ...(temporaryPin ? { temporaryPin } : {}) };
   }
@@ -78,9 +81,17 @@ export class ClientService {
           : {})
       },
       clientDetails && target.clientId
-        ? { id: target.clientId, data: clientDetails }
+        ? { id: target.clientId, data: this.clientData(clientDetails) }
         : undefined
     );
+  }
+
+  /** Client details as stored: a new PIN becomes its hash, `null` removes it. */
+  private clientData({ pin, ...details }: NonNullable<UpdateUserInput["clientDetails"]>) {
+    return {
+      ...details,
+      ...(pin !== undefined ? { pinHash: pin ? hashClientPin(pin, this.config.PIN_HMAC_SECRET) : null } : {}),
+    };
   }
 
   /** A client administrator may only reach users inside its own client. */

@@ -122,8 +122,9 @@ model User {
   itemPrices                 ItemPrice[]
   generalTransactions        GeneralTransaction[]
 
-  backupsRequested  Backup[] @relation("BackupCreator")
-  backupsDownloaded Backup[] @relation("BackupDownloader")
+  backupsRequested  Backup[]           @relation("BackupCreator")
+  backupsDownloaded Backup[]           @relation("BackupDownloader")
+  couponRedemptions CouponRedemption[] @relation("CouponRedeemer")
 
   @@index([roleId])
   @@index([siteId])
@@ -153,6 +154,8 @@ model Client {
   sectorLocation      Location?            @relation("SectorLocationRef", fields: [sector], references: [id], onDelete: SetNull)
   status              Boolean              @default(true)
   subsidyAllowed      Boolean              @default(false)
+  /// The client's PIN, hashed: they enter it at the pump to pay with their coupons.
+  pinHash             String?
   users               User[]
   clientWallets       ClientWallet[]
   cardCopies          CardCopy[]
@@ -890,6 +893,8 @@ model TblSite {
   generalTransactions GeneralTransaction[]
   homeUsers           User[]                @relation("UserHomeSite")
 
+  couponRedemptions CouponRedemption[]
+
   @@index([id])
 }
 
@@ -1181,6 +1186,7 @@ enum CompanyAccountType {
   mobileMoney
   transfer
   card
+  coupon
 }
 
 model ClientWallet {
@@ -1433,6 +1439,8 @@ model CouponPlan {
   name          String
   number        Int
   amount        Decimal        @db.Decimal(18, 2)
+  /// Days a coupon of this plan stays valid after it is issued; empty = never expires.
+  validityDays  Int?
   status        StatusType     @default(active)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -1442,19 +1450,28 @@ model CouponPlan {
 }
 
 model ClientCoupon {
-  id           String             @id @default(uuid())
-  couponPlanId String
-  couponPlan   CouponPlan         @relation(fields: [couponPlanId], references: [id])
-  clientId     String
-  client       Client             @relation(fields: [clientId], references: [id])
-  code         String             @unique
-  token        String
-  export       Boolean            @default(false)
-  amount       Decimal            @db.Decimal(18, 2)
-  generatedAt  DateTime           @default(now())
-  printedAt    DateTime?
-  scannedAt    DateTime?
-  status       ClientCouponStatus @default(available)
+  id              String             @id @default(uuid())
+  couponPlanId    String
+  couponPlan      CouponPlan         @relation(fields: [couponPlanId], references: [id])
+  clientId        String
+  client          Client             @relation(fields: [clientId], references: [id])
+  code            String             @unique
+  token           String
+  export          Boolean            @default(false)
+  /// Face value: what the coupon was worth when issued.
+  amount          Decimal            @db.Decimal(18, 2)
+  /// What is left to spend; goes down with each redemption.
+  remainingAmount Decimal            @db.Decimal(18, 2)
+  generatedAt     DateTime           @default(now())
+  printedAt       DateTime?
+  scannedAt       DateTime?
+  /// The paper coupon itself: issued, printed, or cancelled.
+  status          ClientCouponStatus @default(available)
+  /// How much of its value is spent.
+  usage           ClientCouponUsage  @default(unused)
+  /// After this it can no longer be spent; empty = never.
+  expiresAt       DateTime?
+  redemptions     CouponRedemption[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1464,14 +1481,41 @@ model ClientCoupon {
   @@index([code])
 }
 
+/// The paper coupon. How much of it is spent is `ClientCouponUsage`.
 enum ClientCouponStatus {
   available
   printed
-  scanned
-  expired
-  used
-  called
   cancelled
+}
+
+/// How much of a coupon's value is spent.
+enum ClientCouponUsage {
+  unused
+  partiallyUsed
+  used
+  expired
+}
+
+/// One coupon spent, wholly or in part, on one POS sale.
+model CouponRedemption {
+  id                   String             @id @default(uuid())
+  clientCouponId       String
+  clientCoupon         ClientCoupon       @relation(fields: [clientCouponId], references: [id])
+  generalTransactionId String
+  generalTransaction   GeneralTransaction @relation(fields: [generalTransactionId], references: [id])
+  siteId               String
+  site                 TblSite            @relation(fields: [siteId], references: [id])
+  /// What this sale took from the coupon.
+  amount               Decimal            @db.Decimal(18, 2)
+  /// The attendant who took it.
+  redeemedBy           String
+  user                 User               @relation("CouponRedeemer", fields: [redeemedBy], references: [id])
+  createdAt            DateTime           @default(now())
+
+  @@unique([clientCouponId, generalTransactionId])
+  @@index([generalTransactionId])
+  @@index([siteId])
+  @@index([redeemedBy])
 }
 
 model TblShift {
@@ -1621,6 +1665,9 @@ model GeneralTransaction {
   subsidyAmount              Decimal                     @default(0.0) @db.Decimal(18, 2)
   /// initiated by the POS, then confirmed once (or cancelled).
   status                     GeneralTransactionStatus    @default(initiated)
+  /// When an initiated sale is cancelled if not confirmed by then; empty = never
+  /// (a sale paid with coupons waits as long as it takes).
+  expiresAt                  DateTime?
   confirmedAt                DateTime?
   /// The POS that recorded it.
   deviceId                   String?
@@ -1630,6 +1677,7 @@ model GeneralTransaction {
   generalTransactionPayments GeneralTransactionPayment[]
   /// The tank ledger row written when the sale is confirmed.
   cuveTransaction            CuveTransaction?
+  couponRedemptions          CouponRedemption[]
 
   @@index([siteId, createdAt])
   @@index([siteId, id])

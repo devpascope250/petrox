@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ClientCouponStatus } from "../../../prisma/generated/prisma/enums.js";
+import { ClientCouponStatus, ClientCouponUsage } from "../../../prisma/generated/prisma/enums.js";
 import { paginationQuerySchema, uuidSchema } from "../../shared/validation/index.js";
 import { couponAmountSchema } from "../coupon-plans/coupon-plan.schema.js";
 
@@ -30,6 +30,8 @@ export const clientCouponQuerySchema = paginationQuerySchema.extend({
   couponPlanId: uuidSchema.optional(),
   clientId: uuidSchema.optional(),
   status: z.enum(ClientCouponStatus).optional(),
+  /** How much of it is spent: unused, partiallyUsed, used or expired. */
+  usage: z.enum(ClientCouponUsage).optional(),
   // Searched as typed, so a lower-case entry still finds the coupon.
   code: z.string().trim().toUpperCase().min(1).max(191).optional(),
   export: z.enum(["true", "false"]).transform(value => value === "true").optional(),

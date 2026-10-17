@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { generateCouponCode } from "../../utils/randomCodegen.js";
-import { NotFoundError } from "../../utils/errors.js";
+import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { ClientCouponRepository } from "./client-coupon.repository.js";
+import { couponExpiry } from "./coupon-rules.js";
 import type { CreateClientCouponInput, UpdateClientCouponInput, ClientCouponQuery, ClientCouponClientQuery } from "./client-coupon.schema.js";
 
 export class ClientCouponService {
@@ -22,16 +23,27 @@ export class ClientCouponService {
     const couponPlan = await this.repo.findPlan(input.couponPlanId);
     if (!couponPlan) throw new NotFoundError("Coupon plan");
     if (input.couponPlanId && !couponPlan) throw new NotFoundError("Coupon plan");
-    return this.repo.create({ ...input, amount: String(couponPlan.amount ?? input.amount), code: input.code ?? generateCouponCode(), token: input.token ?? randomBytes(32).toString("hex") });
+    return this.repo.create({
+      ...input, amount: String(couponPlan.amount ?? input.amount), expiresAt: couponExpiry(couponPlan.validityDays),
+      code: input.code ?? generateCouponCode(), token: input.token ?? randomBytes(32).toString("hex"),
+    });
   }
   async update(id: string, input: UpdateClientCouponInput) {
-    await this.find(id);
+    const coupon = await this.find(id);
+    // Once spent, the face value is history: changing it would rewrite what was paid.
+    if (input.amount !== undefined && coupon.redemptions.length > 0) {
+      throw new BusinessError("COUPON_ALREADY_SPENT", "This coupon has been spent; its value can no longer change");
+    }
     if (input.clientId && !(await this.repo.findClient(input.clientId))) throw new NotFoundError("Client");
     if (input.couponPlanId && !(await this.repo.findPlan(input.couponPlanId))) throw new NotFoundError("Coupon plan");
     return this.repo.update(id, input);
   }
   async delete(id: string) {
-    await this.find(id);
+    const coupon = await this.find(id);
+    // Its spending history must stay: cancel it instead.
+    if (coupon.redemptions.length > 0) {
+      throw new BusinessError("COUPON_ALREADY_SPENT", "This coupon has been spent and cannot be deleted; cancel it instead");
+    }
     
     await this.repo.delete(id);
     return { id };

@@ -38,12 +38,15 @@ export class ClientRepository {
     ]);
   }
 
-  create(input: CreateUserInput, passwordHash: string, pinHash: string) {
+  /** `clientPinHash`: the new client's own PIN, already hashed, when one was given. */
+  create(input: CreateUserInput, passwordHash: string, pinHash: string, clientPinHash?: string) {
     return this.db.$transaction(async (tx) => {
       let clientId: string | undefined;
       if (input.position === "clientAdmin") {
+        // The plain PIN is never stored: only its hash.
+        const { pin: _pin, ...details } = input.clientDetails;
         const client = await tx.client.create({
-          data: { ...input.clientDetails, clientCode: generateClientCode() }
+          data: { ...details, clientCode: generateClientCode(), pinHash: clientPinHash ?? null }
         });
         clientId = client.id;
         if (input.cars?.length) {

@@ -12,8 +12,11 @@ describe("coupon CRUD", () => {
   async function setup(permission = true) {
     const app = Fastify();
     const delegate = () => ({
-      findUnique: vi.fn().mockResolvedValue({ id }),
+      // A coupon carries its spending history; this one has none, so it can still be edited.
+      findUnique: vi.fn().mockResolvedValue({ id, redemptions: [] }),
       findMany: vi.fn().mockResolvedValue([{ id }]),
+      // Expired coupons are marked before every list.
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn().mockImplementation(async ({ data }) => ({ id, ...data })),
       update: vi.fn().mockImplementation(async ({ data }) => ({ id, ...data })),
@@ -88,5 +91,20 @@ describe("coupon CRUD", () => {
     try {
       expect((await allowed.app.inject({ url: "/coupons/invalid", headers: { authorization: "test" } })).statusCode).toBe(400);
     } finally { await allowed.app.close(); }
+  });
+
+  it("keeps a spent coupon's value and history: no new amount, no delete", async () => {
+    const { app, db } = await setup();
+    try {
+      db.clientCoupon.findUnique.mockResolvedValue({ id, redemptions: [{ id: "spent" }] });
+      const headers = { authorization: "test" };
+      const changed = await app.inject({ method: "PUT", url: `/coupons/${id}`, headers, payload: { amount: "30.00" } });
+      expect(changed.json().error.code).toBe("COUPON_ALREADY_SPENT");
+      const deleted = await app.inject({ method: "DELETE", url: `/coupons/${id}`, headers });
+      expect(deleted.json().error.code).toBe("COUPON_ALREADY_SPENT");
+      expect(db.clientCoupon.delete).not.toHaveBeenCalled();
+      // Other edits, such as cancelling, still go through.
+      expect((await app.inject({ method: "PATCH", url: `/coupons/${id}/status`, headers, payload: { status: "cancelled" } })).statusCode).toBe(200);
+    } finally { await app.close(); }
   });
 });

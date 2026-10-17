@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { randomBytes } from "node:crypto";
+import { couponExpiry } from "../client-coupons/coupon-rules.js";
 import { generateCouponCode } from "../../utils/randomCodegen.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PaginationQuery } from "../../shared/validation/index.js";
@@ -372,7 +373,7 @@ export class ClientWalletRepository {
       const planIds = input.items.map((item) => item.couponPlanId);
       const plans = await tx.couponPlan.findMany({
         where: { id: { in: planIds }, status: "active" },
-        select: { id: true, name: true, number: true, amount: true, _count: { select: { clientCoupons: true } } }
+        select: { id: true, name: true, number: true, amount: true, validityDays: true, _count: { select: { clientCoupons: true } } }
       });
       const planById = new Map(plans.map((plan) => [plan.id, plan]));
       let amount = new Prisma.Decimal(0);
@@ -398,7 +399,8 @@ export class ClientWalletRepository {
         for (let index = 0; index < item.quantity; index++) {
           const coupon = await tx.clientCoupon.create({
             data: {
-              couponPlanId: plan.id, clientId: wallet.clientId, amount: plan.amount,
+              couponPlanId: plan.id, clientId: wallet.clientId, amount: plan.amount, remainingAmount: plan.amount,
+              expiresAt: couponExpiry(plan.validityDays),
               code: generateCouponCode(), token: randomBytes(32).toString("hex"), status: "available"
             }
           });

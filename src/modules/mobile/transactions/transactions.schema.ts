@@ -2,12 +2,12 @@ import { z } from "zod";
 import { phoneSchema, pinSchema, uuidSchema } from "../../../shared/validation/index.js";
 
 /** At most two decimals: what the columns hold, so nothing is rounded away silently. */
-const twoDecimals = (label: string) => z.coerce.number({ message: `${label} must be a number` })
+export const twoDecimals = (label: string) => z.coerce.number({ message: `${label} must be a number` })
   .positive(`${label} must be more than 0`)
   .max(1_000_000_000, `${label} is too large`)
   .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, `${label} can have at most 2 decimals`);
 
-const text = (max: number) => z.string().trim().min(1).max(max);
+export const text = (max: number) => z.string().trim().min(1).max(max);
 
 /**
  * Starts a sale at the pump: what is being sold, from where, and — for a card
@@ -36,7 +36,7 @@ const paymentSchema = z.object({
  * `payments` arrives as a JSON array in one form field; each payment's
  * document as the file `referenceDoc.<n>`, `n` its position in that array.
  */
-const paymentsField = z.string().transform((value, ctx) => {
+export const paymentsField = z.string().transform((value, ctx) => {
   try {
     return JSON.parse(value) as unknown;
   } catch {

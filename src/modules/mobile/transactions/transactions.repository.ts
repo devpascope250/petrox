@@ -1,14 +1,10 @@
 import { Prisma, type GeneralTransactionStatus, type PrismaClient } from "../../../../prisma/generated/prisma/client.js";
 import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js";
-import { verifyPin } from "../../../utils/crypto.js";
 import { staticUrl } from "../../../utils/static-url.js";
-import { dayOfWeek, fromTime } from "../../shifts/shift-scope.js";
+import { attendantBy, checkAmount, checkPayments, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "./sale-rules.js";
 import type { ConfirmTransactionInput, InitiateTransactionInput } from "./transactions.schema.js";
 
-const money = (value: number | Prisma.Decimal) => new Prisma.Decimal(value).toDecimalPlaces(2);
 const CODE_PREFIX = "PSST";
-/** Rwanda keeps UTC+2 all year; shift hours are local times. */
-const BUSINESS_OFFSET_MS = 2 * 60 * 60_000;
 
 /** A plate compared by its letters and digits only, so `RAD 123 A`, `rad123a` and `RAD-123-A` are one car. */
 const plateKey = (plate: string) => plate.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -93,7 +89,7 @@ const transactionSelect = {
   platNumber: true, platePictureUrl: true, displayPictureUrl: true,
   quantity: true, unitPrice: true, amount: true, discountAmount: true, subsidyRate: true, subsidyAmount: true,
   reason: true, comments: true, printStatus: true, appVersion: true, deviceId: true,
-  createdAt: true, confirmedAt: true, updatedAt: true,
+  createdAt: true, confirmedAt: true, updatedAt: true, expiresAt: true,
   item: { select: { id: true, name: true } },
   // cuve: { select: { id: true, name: true } },
   // pump: { select: { id: true, name: true } },
@@ -108,6 +104,11 @@ const transactionSelect = {
   // shift: { select: { id: true, shift: { select: { id: true, name: true } } } },
   /** The attendant who confirmed it (`doneBy`); not their phone, which signs them in. */
   user: { select: { id: true, firstName: true, lastName: true } },
+  /** The coupons that paid it (a coupon sale), and what each has left now. */
+  couponRedemptions: {
+    select: { id: true, amount: true, clientCoupon: { select: { code: true, amount: true, remainingAmount: true, usage: true } } },
+    orderBy: { createdAt: "asc" },
+  },
   generalTransactionPayments: {
     select: { id: true, amount: true, reference: true, referenceDocUrl: true,
       account: { select: { id: true, code: true, name: true, type: true } } },
@@ -117,7 +118,7 @@ const transactionSelect = {
 
 type TransactionRow = Prisma.GeneralTransactionGetPayload<{ select: typeof transactionSelect }>;
 
-function presentRow({  generalTransactionPayments, user, ...row }: TransactionRow) {
+function presentRow({  generalTransactionPayments, couponRedemptions, user, ...row }: TransactionRow) {
   return {
     ...row,
     cardCopyId: row.cardCopyId?.toString() ?? null,
@@ -137,6 +138,11 @@ function presentRow({  generalTransactionPayments, user, ...row }: TransactionRo
     /** The same name, ready to print, as `clientName` is. */
     attendantName: user ? `${user.firstName} ${user.lastName}`.trim() : null,
     payments: generalTransactionPayments.map((payment) => ({ ...payment, amount: Number(payment.amount) })),
+    /** A coupon sale's coupons: what each paid, and what is left on it. Empty for other sales. */
+    coupons: couponRedemptions.map(({ id, amount, clientCoupon }) => ({
+      id, code: clientCoupon.code, amount: Number(amount),
+      faceValue: Number(clientCoupon.amount), remainingAmount: Number(clientCoupon.remainingAmount), usage: clientCoupon.usage,
+    })),
   };
 }
 
@@ -166,12 +172,9 @@ export class MobileTransactionsRepository {
       platePictureUrl: url(sale.platePictureUrl),
       displayPictureUrl: url(sale.displayPictureUrl),
       payments: sale.payments.map((payment) => ({ ...payment, referenceDocUrl: url(payment.referenceDocUrl) })),
-      expiresAt: row.status === "initiated" ? new Date(row.createdAt.getTime() + this.timeoutMs) : null,
+      // Only an initiated sale can lapse; a coupon sale (no expiry) never does.
+      expiresAt: row.status === "initiated" ? row.expiresAt : null,
     };
-  }
-
-  private cutoff() {
-    return new Date(Date.now() - this.timeoutMs);
   }
 
   /**
@@ -184,7 +187,8 @@ export class MobileTransactionsRepository {
   async expire(only: { transactionCode?: string; cardId?: bigint } = {}) {
     const stale = await this.db.generalTransaction.findMany({
       where: {
-        status: "initiated", createdAt: { lt: this.cutoff() },
+        // A sale with no expiry (paid with coupons) is never picked: null is not before now.
+        status: "initiated", expiresAt: { lt: new Date() },
         ...(only.transactionCode ? { transactionCode: only.transactionCode } : {}),
         ...(only.cardId !== undefined ? { cardCopy: { cardId: only.cardId } } : {}),
       },
@@ -237,27 +241,7 @@ export class MobileTransactionsRepository {
    * its type allows credit.
    */
   async initiate(input: InitiateTransactionInput & { platePictureUrl?: string }, siteId: string, deviceId: string) {
-    const nozzle = await this.db.tblNozzle.findFirst({
-      where: { id: input.nozzleId },
-      select: {
-        id: true, name: true, status: true,
-        pump: { select: { id: true, name: true, siteId: true, status: true } },
-        cuve: { select: { id: true, name: true, siteId: true, status: true,
-          item: { select: { id: true, name: true, status: true, baseUnitId: true } } } },
-      },
-    });
-    if (!nozzle || nozzle.pump.siteId !== siteId) throw new NotFoundError("Nozzle at this site");
-    if (nozzle.pump.id !== input.pumpId) throw new BusinessError("NOZZLE_NOT_ON_PUMP", `${nozzle.name} is not on that pump`);
-    if (nozzle.cuve.id !== input.cuveId) {
-      throw new BusinessError("NOZZLE_CUVE_MISMATCH", `${nozzle.name} draws from ${nozzle.cuve.name}, not the tank sent`);
-    }
-    if (nozzle.cuve.item.id !== input.itemId) {
-      throw new BusinessError("ITEM_CUVE_MISMATCH", `${nozzle.cuve.name} holds ${nozzle.cuve.item.name}, not the product sent`);
-    }
-    if (nozzle.pump.status !== "active") throw new BusinessError("PUMP_INACTIVE", `${nozzle.pump.name} is not active`);
-    if (nozzle.status !== "active") throw new BusinessError("NOZZLE_INACTIVE", `${nozzle.name} is not active`);
-    if (nozzle.cuve.status !== "active") throw new BusinessError("CUVE_INACTIVE", `${nozzle.cuve.name} is not active`);
-    if (nozzle.cuve.item.status !== "active") throw new BusinessError("ITEM_INACTIVE", `${nozzle.cuve.item.name} is not active`);
+    const nozzle = await loadSaleNozzle(this.db, input, siteId);
 
     let clientId: string | null = null;
     let mainCardId: bigint | null = null;
@@ -307,13 +291,7 @@ export class MobileTransactionsRepository {
     }
 
     // The price in force for the product, in the unit its tank is measured in.
-    const price = await this.db.itemPrice.findFirst({
-      where: { status: "active", itemUnit: { status: "active", itemId: nozzle.cuve.item.id,
-        ...(nozzle.cuve.item.baseUnitId ? { unitId: nozzle.cuve.item.baseUnitId } : {}) } },
-      orderBy: { createdAt: "desc" },
-      select: { price: true },
-    });
-    if (!price) throw new BusinessError("PRICE_NOT_SET", `${nozzle.cuve.item.name} has no price in force`);
+    const price = { price: await priceInForce(this.db, nozzle.cuve.item) };
 
     // Two sales opened in the same millisecond would share a code; the
     // unique index catches it and the next millisecond is tried.
@@ -332,6 +310,7 @@ export class MobileTransactionsRepository {
             cardCopyId: input.cardCopyId ?? null, clientId,
             platNumber: input.platNumber ?? null, platePictureUrl: input.platePictureUrl ?? null,
             siteId, deviceId, unitPrice: price.price, appVersion: input.appVersion ?? null,
+            expiresAt: new Date(startedAt + this.timeoutMs),
           },
           select: transactionSelect,
           });
@@ -349,20 +328,8 @@ export class MobileTransactionsRepository {
    * number (phones are unique), working at the site — on its staff list or
    * based there — whose PIN matches.
    */
-  async attendant(phone: string, pin: string, siteId: string) {
-    const user = await this.db.user.findFirst({
-      where: { phone, isActive: true, pinHash: { not: null },
-        OR: [{ siteId }, { sites: { some: { siteId, status: "active" } } }] },
-      select: { id: true, pinHash: true },
-    });
-
-    console.log(user);
-    console.log(verifyPin(pin, user?.pinHash!, this.pinSecret));
-    // One answer for an unknown phone and a wrong PIN, so neither can be probed.
-    if (!user || !verifyPin(pin, user.pinHash!, this.pinSecret)) {
-      throw new AppError(422, "INVALID_ATTENDANT", "Wrong phone number or PIN");
-    }
-    return user.id;
+  attendant(phone: string, pin: string, siteId: string) {
+    return attendantBy(this.db, phone, pin, siteId, this.pinSecret);
   }
 
   /**
@@ -373,37 +340,9 @@ export class MobileTransactionsRepository {
    * midnight belongs to the weekday it started on, so in its small hours
    * yesterday's rota applies.
    */
-  private async pumpAssignment(db: Tx | PrismaClient, userId: string, siteId: string,
+  private pumpAssignment(db: Tx | PrismaClient, userId: string, siteId: string,
     nozzle: { id: string; name: string; pump: { id: string; name: string } }, now = new Date()) {
-    const local = new Date(now.getTime() + BUSINESS_OFFSET_MS);
-    const clock = local.toISOString().slice(11, 16);
-    const today = dayOfWeek(local);
-    const yesterday = today === 1 ? 7 : today - 1;
-    const rows = await db.tblPumpAttendant.findMany({
-      where: { userId, siteId, pumpId: nozzle.pump.id, day: { in: [today, yesterday] }, siteShift: { status: 1 } },
-      select: { day: true, siteShiftId: true,
-        siteShift: { select: { shift: { select: { name: true, startAt: true, endAt: true } } } },
-        pumpAttendantNozzles: { select: { nozzleId: true } } },
-    });
-    const working = rows.filter(({ day, siteShift: { shift } }) => {
-      const start = fromTime(shift.startAt);
-      const end = fromTime(shift.endAt);
-      if (start < end) return day === today && clock >= start && clock < end;
-      // Overnight: the evening part on its own day, the small hours on the next.
-      return (day === today && clock >= start) || (day === yesterday && clock < end);
-    });
-    if (working.length === 0) {
-      throw new BusinessError("ATTENDANT_NOT_ON_PUMP",
-        `You are not on the rota for ${nozzle.pump.name} in the shift running now (${clock})`);
-    }
-    const onNozzle = working.find((row) => row.pumpAttendantNozzles.some(({ nozzleId }) => nozzleId === nozzle.id));
-    if (!onNozzle) {
-      throw new BusinessError("ATTENDANT_NOT_ON_NOZZLE", `${nozzle.name} is not one of your nozzles on ${nozzle.pump.name} in this shift`);
-    }
-    // A night shift's small hours count towards the day it started, as on the web.
-    const localDay = local.toISOString().slice(0, 10);
-    const workingDay = onNozzle.day === today ? localDay : new Date(Date.parse(localDay) - 86_400_000).toISOString().slice(0, 10);
-    return { siteShiftId: onNozzle.siteShiftId, workingDay };
+    return pumpAssignment(db, userId, siteId, nozzle, now);
   }
 
   /**
@@ -419,18 +358,21 @@ export class MobileTransactionsRepository {
   async confirm(code: string, siteId: string, input: ConfirmTransactionInput & { displayPictureUrl?: string; referenceDocs: Record<number, string> }, doneBy: string) {
     // An overdue sale is cancelled now rather than at the next sweep, so it cannot be confirmed late.
     await this.expire({ transactionCode: code });
-    const cutoff = this.cutoff();
     return this.db.$transaction(async (tx) => {
       const sale = await tx.generalTransaction.findFirst({
         where: { transactionCode: code, siteId },
-        select: { id: true, status: true, unitPrice: true, cuveId: true, cardCopyId: true,
+        select: { id: true, status: true, unitPrice: true, cuveId: true, cardCopyId: true, expiresAt: true,
           cuve: { select: { name: true } },
           nozzle: { select: { id: true, name: true, pump: { select: { id: true, name: true } } } },
           cardCopy: { select: { cardId: true, card: { select: { cardType: { select: { setting: settingSelect } } } } } } },
       });
       if (!sale) throw new NotFoundError("Transaction");
+      // A sale paid with coupons has its own confirm; it is the one with no expiry.
+      if (sale.status === "initiated" && sale.expiresAt === null) {
+        throw new AppError(409, "COUPON_SALE", "This sale is paid with coupons: confirm it through coupon sales");
+      }
       const claimed = await tx.generalTransaction.updateMany({
-        where: { id: sale.id, status: "initiated", createdAt: { gte: cutoff } },
+        where: { id: sale.id, status: "initiated", expiresAt: { gte: new Date() } },
         data: { status: "confirmed", confirmedAt: new Date(), doneBy },
       });
       if (claimed.count === 0) {
@@ -465,52 +407,20 @@ export class MobileTransactionsRepository {
           `The price of this sale is ${sale.unitPrice.toString()}, not ${unitPrice.toString()}`,
           422, { unitPrice: sale.unitPrice.toFixed(2) });
       }
-      // The pump rounds what it shows, so the amount may be off quantity × price
-      // by up to what 0.01 of a unit costs — never more.
-      const expected = money(quantity.times(unitPrice));
-      if (amount.minus(expected).abs().greaterThan(unitPrice.times("0.01"))) {
-        throw new BusinessError("AMOUNT_MISMATCH",
-          `${quantity.toString()} × ${unitPrice.toString()} is ${expected.toString()}, not ${amount.toString()}`,
-          422, { expectedAmount: expected.toFixed(2) });
-      }
+      checkAmount(quantity, unitPrice, amount);
       const payments = input.payments ?? [];
       // A card sale is charged to the card; any other sale must say how it was paid.
       if (!sale.cardCopyId && payments.length === 0) {
         throw new BusinessError("PAYMENTS_REQUIRED", "A sale without a card needs its payments");
       }
       if (payments.length > 0) {
-        const accountIds = payments.map((payment) => payment.accountId);
-        if (new Set(accountIds).size !== accountIds.length) {
-          throw new BusinessError("DUPLICATE_PAYMENT_ACCOUNT", "Each account can only be used once per sale");
-        }
-        const accounts = await tx.companyAccount.findMany({ where: { id: { in: accountIds } } });
-        let paid = new Prisma.Decimal(0);
-        for (const payment of payments) {
-          const account = accounts.find((row) => row.id === payment.accountId);
-          if (!account) throw new NotFoundError("Company account");
-          if (account.status !== "active") throw new BusinessError("ACCOUNT_INACTIVE", `${account.name} is not active`);
-          if (account.siteId && account.siteId !== siteId) {
-            throw new BusinessError("ACCOUNT_NOT_AT_SITE", `${account.name} belongs to another site`);
-          }
-          if (account.requiredReference && !payment.reference) {
-            throw new BusinessError("PAYMENT_REFERENCE_REQUIRED", `${account.name} needs a reference number`);
-          }
-          paid = paid.plus(money(payment.amount));
-        }
+        const paid = await checkPayments(tx, payments, siteId);
         if (!paid.equals(amount)) {
           throw new BusinessError("PAYMENTS_DO_NOT_MATCH", `The payments add up to ${paid.toString()}, but the sale is ${amount.toString()}`);
         }
       }
 
-      // Decrement only if there is enough, so two sales at once cannot overdraw the tank.
-      const drawn = await tx.tblCuve.updateMany({
-        where: { id: sale.cuveId, balance: { gte: quantity } },
-        data: { balance: { decrement: quantity } },
-      });
-      if (drawn.count === 0) {
-        const current = await tx.tblCuve.findUniqueOrThrow({ where: { id: sale.cuveId }, select: { balance: true } });
-        throw new BusinessError("INSUFFICIENT_CUVE_STOCK", `${sale.cuve.name} only holds ${current.balance.toString()}; cannot sell ${quantity.toString()}`);
-      }
+      await drawFromTank(tx, { id: sale.cuveId, name: sale.cuve.name }, quantity);
       // Also recorded as a fuel sale, as if entered on the web, so the Fuel
       // sales pages and report include it. One tank movement serves both
       // records, so the litres are never counted twice.

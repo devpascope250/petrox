@@ -11,6 +11,8 @@ export const createCouponPlanSchema = z.object({
   name: z.string().trim().min(1).max(191),
   number: z.number().int().positive().max(2147483647),
   amount: couponAmountSchema,
+  /** Days a coupon stays valid after it is issued; null = never expires. */
+  validityDays: z.number().int().positive().max(3650).nullable().optional(),
   status: z.enum(StatusType).optional(),
 }).strict();
 export const updateCouponPlanSchema = createCouponPlanSchema.partial()
