@@ -21,12 +21,13 @@ describe("client PIN", () => {
 describe("coupon sale input", () => {
   const initiate = {
     clientId: id(1), clientPin: "2468", itemId: id(2), cuveId: id(3), pumpId: id(4), nozzleId: id(5),
-    quantity: "1.5", amount: "2250",
+    quantity: "1.5", unitPrice: "1500", amount: "2250",
   };
 
   it("takes the fuel and the client's PIN at initiate, and nothing about payment", () => {
     expect(initiateCouponSaleSchema.safeParse(initiate).success).toBe(true);
     expect(initiateCouponSaleSchema.safeParse({ ...initiate, clientPin: undefined }).success).toBe(false);
+    expect(initiateCouponSaleSchema.safeParse({ ...initiate, unitPrice: undefined }).success).toBe(false);
     expect(initiateCouponSaleSchema.safeParse({ ...initiate, payments: [] }).success).toBe(false);
   });
 

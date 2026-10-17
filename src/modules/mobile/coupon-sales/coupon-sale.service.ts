@@ -26,9 +26,10 @@ export class CouponSaleService {
     return this.repo.clients(parseInput(couponClientsQuerySchema, request.query).search);
   }
 
-  async verifyClient(request: FastifyRequest, clientId: string) {
+  async verifyClient(request: FastifyRequest) {
     deviceSite(request);
-    return this.repo.verifyClient(clientId, parseInput(verifyClientSchema, await fieldsOf(request)).pin);
+    const { clientId, pin } = parseInput(verifyClientSchema, await fieldsOf(request));
+    return this.repo.verifyClient(clientId, pin);
   }
 
   /** Multipart: the fields, and the picture of the pump display as `displayPicture` — required. */

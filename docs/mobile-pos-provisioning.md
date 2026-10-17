@@ -356,7 +356,7 @@ must exist and be active (`COUPON_ACCOUNT_MISSING`). The client must have a PIN,
 can still spend, most first: `id`, `clientCode`, `name`, `phone`, `hasPin` (without a PIN the client
 cannot pay with coupons), `spendableAmount`, `couponCount`. `search` matches name, code or phone.
 
-**2. `POST /mobile/coupon-sales/clients/:clientId/verify`** with `{"pin"}` checks the client's PIN
+**2. `POST /mobile/coupon-sales/clients/verify`** with `{"clientId", "pin"}` checks the client's PIN
 and returns `{client, spendableAmount, couponCount}`. It never returns coupon codes: only the paper
 pays. A wrong PIN, no PIN set and an inactive client all get `422 INVALID_CLIENT_PIN`. 20 a minute per device.
 
@@ -368,7 +368,7 @@ a coupon sale **never times out**, and the ordinary confirm refuses it (`409 COU
 |---|---|---|
 | `clientId`, `clientPin` | required | The client, checked with their PIN again. |
 | `itemId`, `cuveId`, `pumpId`, `nozzleId` | required | Checked as for a POS sale. |
-| `quantity`, `amount` | required | As the pump shows them. The unit price is the price in force; `amount` must be within 0.01 litre's worth of quantity × price (`AMOUNT_MISMATCH`). |
+| `quantity`, `unitPrice`, `amount` | required | As the pump shows them. `unitPrice` must be the price in force (`UNIT_PRICE_MISMATCH`, `data.unitPrice` gives it); `amount` must be within 0.01 litre's worth of quantity × price (`AMOUNT_MISMATCH`). |
 | `displayPicture` (file) | **required** | Picture of the pump display (`DISPLAY_PICTURE_REQUIRED`). |
 | `platNumber`, `appVersion` | optional | |
 
@@ -408,7 +408,7 @@ no coupon was spent, so nothing is given back.
 | 422 | `COUPON_NOT_NEEDED` | The sale was already covered before this coupon; nothing was spent. |
 | 409 | `COUPON_IN_USE` | Another pump spent the coupon at the same moment; scan it again. |
 | 409 | `NOT_A_COUPON_SALE` / `COUPON_SALE` | A coupon route used for an ordinary sale, or the reverse. |
-| 422 | `INVALID_ATTENDANT`, `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE`, `INSUFFICIENT_CUVE_STOCK`, `AMOUNT_MISMATCH`, `PRICE_NOT_SET` | As for POS sales. |
+| 422 | `INVALID_ATTENDANT`, `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE`, `INSUFFICIENT_CUVE_STOCK`, `UNIT_PRICE_MISMATCH`, `AMOUNT_MISMATCH`, `PRICE_NOT_SET` | As for POS sales. |
 | 409 | `TRANSACTION_ALREADY_CONFIRMED`, `TRANSACTION_CANCELLED` | The sale is no longer open. |
 
 `PATCH /mobile/transactions/:code/print-status` records whether the receipt of a confirmed sale

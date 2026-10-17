@@ -7,10 +7,8 @@ export const couponClientsQuerySchema = z.object({
   search: z.string().trim().min(1).max(100).optional(),
 });
 
-export const clientParamsSchema = z.object({ clientId: uuidSchema });
-
-/** The client's own PIN, which they enter at the pump. */
-export const verifyClientSchema = z.object({ pin: pinSchema }).strict();
+/** The client and their own PIN, which they enter at the pump. */
+export const verifyClientSchema = z.object({ clientId: uuidSchema, pin: pinSchema }).strict();
 
 /**
  * Starts a fuel sale paid with coupons. Everything about the fuel is fixed
@@ -26,6 +24,7 @@ export const initiateCouponSaleSchema = z.object({
   pumpId: uuidSchema,
   nozzleId: uuidSchema,
   quantity: twoDecimals("Quantity"),
+  unitPrice: twoDecimals("Unit price"),
   amount: twoDecimals("Amount"),
   platNumber: text(20).transform((value) => value.toUpperCase().replace(/\s+/g, " ")).optional(),
   appVersion: text(50).optional(),

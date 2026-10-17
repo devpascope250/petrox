@@ -7,7 +7,7 @@ import { CompanySettingsRepository } from "../../company-settings/company-settin
 import { MobileTransactionsRepository } from "../transactions/transactions.repository.js";
 import { attendantBy } from "../transactions/sale-rules.js";
 import { CouponSaleRepository } from "./coupon-sale.repository.js";
-import { clientParamsSchema, couponSaleCodeSchema } from "./coupon-sale.schema.js";
+import { couponSaleCodeSchema } from "./coupon-sale.schema.js";
 import { CouponSaleService } from "./coupon-sale.service.js";
 
 /**
@@ -15,7 +15,7 @@ import { CouponSaleService } from "./coupon-sale.service.js";
  * listed and printed through `/mobile/transactions`, but with their own steps:
  *
  * 1. `GET /clients` — clients with coupons they can spend;
- * 2. `POST /clients/:clientId/verify` — the client's PIN, and what their coupons can pay;
+ * 2. `POST /clients/verify` — `{clientId, pin}`: the client's PIN, and what their coupons can pay;
  * 3. `POST /` — start the sale: client and PIN, the fuel, the amount, the
  *    picture of the pump display (required). It never lapses;
  * 4. `POST /:code/confirm` — the client, the coupons scanned and the
@@ -49,8 +49,8 @@ const routes: FastifyPluginAsync = async (app) => {
   app.get("/clients", { preHandler: [authenticateDevice] }, async (request) =>
     success(await service.clients(request)));
 
-  app.post("/clients/:clientId/verify", pinChecked, async (request) =>
-    success(await service.verifyClient(request, parseInput(clientParamsSchema, request.params).clientId)));
+  app.post("/clients/verify", pinChecked, async (request) =>
+    success(await service.verifyClient(request)));
 
   app.post("/", pinChecked, async (request, reply) =>
     created(reply, await service.initiate(request)));

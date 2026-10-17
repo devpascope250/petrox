@@ -109,6 +109,11 @@ export class CouponSaleRepository {
     const client = await this.verify(this.db, input.clientId, input.clientPin);
     const nozzle = await loadSaleNozzle(this.db, input, siteId);
     const unitPrice = await priceInForce(this.db, nozzle.cuve.item);
+    // The POS charges the price it shows; it must be the one in force.
+    if (!money(input.unitPrice).equals(unitPrice)) {
+      throw new BusinessError("UNIT_PRICE_MISMATCH", `The price in force is ${unitPrice.toString()}, not ${money(input.unitPrice).toString()}`,
+        422, { unitPrice: unitPrice.toFixed(2) });
+    }
     const quantity = money(input.quantity);
     const amount = money(input.amount);
     checkAmount(quantity, unitPrice, amount);
