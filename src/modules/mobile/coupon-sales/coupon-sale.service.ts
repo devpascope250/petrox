@@ -32,18 +32,27 @@ export class CouponSaleService {
     return this.repo.verifyClient(clientId, pin);
   }
 
-  /** Multipart: the fields, and the picture of the pump display as `displayPicture` — required. */
+  /**
+   * Multipart: the fields, the picture of the pump display as `displayPicture`
+   * (required) and the picture of the car's plate as `platePicture` (optional).
+   */
   async initiate(request: FastifyRequest) {
     const siteId = deviceSite(request);
-    const form = await readMobileForm(request, [{ field: /^displayPicture$/, kind: "image" }], 1);
+    const form = await readMobileForm(request, [
+      { field: /^displayPicture$/, kind: "image" },
+      { field: /^platePicture$/, kind: "image" },
+    ], 2);
     try {
       const input = parseInput(initiateCouponSaleSchema, form.fields);
       if (!form.files.displayPicture) {
         throw new AppError(400, "DISPLAY_PICTURE_REQUIRED", "A coupon sale needs a picture of the pump display (displayPicture)");
       }
-      return await this.repo.initiate({ ...input, displayPictureUrl: form.files.displayPicture }, siteId, request.device!.deviceId);
+      return await this.repo.initiate(
+        { ...input, displayPictureUrl: form.files.displayPicture, platePictureUrl: form.files.platePicture },
+        siteId, request.device!.deviceId,
+      );
     } catch (error) {
-      // Nothing was recorded, so the picture it came with is not kept.
+      // Nothing was recorded, so the pictures it came with are not kept.
       await form.discard();
       throw error;
     }

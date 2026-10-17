@@ -370,6 +370,7 @@ a coupon sale **never times out**, and the ordinary confirm refuses it (`409 COU
 | `itemId`, `cuveId`, `pumpId`, `nozzleId` | required | Checked as for a POS sale. |
 | `quantity`, `unitPrice`, `amount` | required | As the pump shows them. `unitPrice` must be the price in force (`UNIT_PRICE_MISMATCH`, `data.unitPrice` gives it); `amount` must be within 0.01 litre's worth of quantity × price (`AMOUNT_MISMATCH`). |
 | `displayPicture` (file) | **required** | Picture of the pump display (`DISPLAY_PICTURE_REQUIRED`). |
+| `platePicture` (file) | optional | PNG, JPG or WEBP picture of the car's plate. Stored as `platePictureUrl`. |
 | `platNumber`, `appVersion` | optional | |
 
 The client's spendable coupons must cover `amount`, or it is refused with `422 COUPONS_SHORT`

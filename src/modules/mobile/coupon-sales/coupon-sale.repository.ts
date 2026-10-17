@@ -104,7 +104,7 @@ export class CouponSaleRepository {
    * is checked and fixed now — the price in force, the amount as the pump
    * shows it — and the sale waits, without lapsing, for its confirmation.
    */
-  async initiate(input: InitiateCouponSaleInput & { displayPictureUrl: string }, siteId: string, deviceId: string) {
+  async initiate(input: InitiateCouponSaleInput & { displayPictureUrl: string; platePictureUrl?: string }, siteId: string, deviceId: string) {
     await expireCoupons(this.db);
     const client = await this.verify(this.db, input.clientId, input.clientPin);
     const nozzle = await loadSaleNozzle(this.db, input, siteId);
@@ -135,6 +135,7 @@ export class CouponSaleRepository {
             itemId: input.itemId, cuveId: input.cuveId, pumpId: input.pumpId, nozzleId: input.nozzleId,
             clientId: client.id, siteId, deviceId, quantity, unitPrice, amount,
             platNumber: input.platNumber ?? null, displayPictureUrl: input.displayPictureUrl,
+            platePictureUrl: input.platePictureUrl ?? null,
             appVersion: input.appVersion ?? null,
             // Never lapses: a coupon sale waits as long as its confirmation takes.
             expiresAt: null,
