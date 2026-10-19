@@ -52,7 +52,7 @@ export const confirmCouponSaleSchema = z.object({
   pin: pinSchema,
   comments: text(500).optional().nullable(),
   appVersion: text(50).optional().nullable(),
-  printStatus: z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).optional().default(false),
+  printStatus: z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).optional(),
 }).strict();
 
 export const cancelCouponSaleSchema = z.object({ reason: text(255) }).strict();
