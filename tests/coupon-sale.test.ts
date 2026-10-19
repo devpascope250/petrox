@@ -31,6 +31,19 @@ describe("coupon sale input", () => {
     expect(initiateCouponSaleSchema.safeParse({ ...initiate, payments: [] }).success).toBe(false);
   });
 
+  it("takes what pays the rest as a JSON form field or an array", () => {
+    const confirm = { clientId: id(1), coupons: ["CPN-A"], phone: "0788 000 000", pin: "1234" };
+    expect(confirmCouponSaleSchema.parse({ ...confirm, payments: '[{"accountId":"acc-1","amount":"1500","reference":"RC-1"}]' }).payments)
+      // The amount is coerced to a number, as every money field is.
+      .toEqual([{ accountId: "acc-1", amount: 1500, reference: "RC-1" }]);
+    expect(confirmCouponSaleSchema.parse({ ...confirm, payments: [{ accountId: "acc-1", amount: 1500 }] }).payments)
+      .toEqual([{ accountId: "acc-1", amount: 1500 }]);
+    // Optional: coupons alone are enough when they cover the sale.
+    expect(confirmCouponSaleSchema.parse(confirm).payments).toBeUndefined();
+    expect(confirmCouponSaleSchema.safeParse({ ...confirm, payments: "not json" }).success).toBe(false);
+    expect(confirmCouponSaleSchema.safeParse({ ...confirm, payments: [{ accountId: "acc-1" }] }).success).toBe(false);
+  });
+
   it("reads the coupons from a JSON form field or an array, at least one", () => {
     const confirm = { clientId: id(1), phone: "0788 000 000", pin: "1234" };
     expect(confirmCouponSaleSchema.parse({ ...confirm, coupons: '["CPN-A","CPN-B"]' }).coupons).toEqual(["CPN-A", "CPN-B"]);

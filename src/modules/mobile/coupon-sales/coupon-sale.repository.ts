@@ -3,7 +3,7 @@ import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js
 import { verifyClientPin } from "../../clients/client-pin.js";
 import { expireCoupons, redeemCoupons } from "../../client-coupons/coupon-rules.js";
 import { MobileTransactionsRepository, transactionCode } from "../transactions/transactions.repository.js";
-import { accountOfType, checkAmount, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "../transactions/sale-rules.js";
+import { accountOfType, checkAmount, checkPayments, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "../transactions/sale-rules.js";
 import type { ConfirmCouponSaleInput, InitiateCouponSaleInput } from "./coupon-sale.schema.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -105,11 +105,9 @@ export class CouponSaleRepository {
     const amount = money(input.amount);
     checkAmount(quantity, unitPrice, amount);
     await accountOfType(this.db, siteId, "coupon");
-    const { amount: available } = await this.spendableOf(this.db, client.id);
-    if (available.lessThan(amount)) {
-      throw new BusinessError("COUPONS_SHORT", `${client.name ?? "The client"}'s coupons can pay ${available.toString()}; the sale is ${amount.toString()}`,
-        422, { spendableAmount: available.toFixed(2), amount: amount.toFixed(2) });
-    }
+    // Not refused when the coupons fall short: the fuel is already in the car.
+    // The answer says what they can pay, and confirming collects the rest.
+    const funds = await this.spendableOf(this.db, client.id);
 
     const startedAt = Date.now();
     // Two sales started in the same millisecond would share a code; the next
@@ -128,7 +126,16 @@ export class CouponSaleRepository {
             expiresAt: null,
           },
         });
-        return this.sales.find(transactionCode(new Date(startedAt + attempt)), siteId);
+        const sale = await this.sales.find(transactionCode(new Date(startedAt + attempt)), siteId);
+        return {
+          ...sale,
+          /** What this client's coupons can pay, and what is left to collect. */
+          couponFunds: {
+            spendableAmount: Number(funds.amount),
+            couponCount: funds.count,
+            dueFromClient: Number(Prisma.Decimal.max(amount.minus(funds.amount), 0)),
+          },
+        };
       } catch (error) {
         const clash = error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
         if (!clash || attempt >= 20) throw error;
@@ -157,12 +164,14 @@ export class CouponSaleRepository {
   /**
    * Confirms a coupon sale, all or nothing, in one database transaction: the
    * attendant must be on the rota for its nozzle now; every coupon must belong
-   * to the sale's client and be spendable, and together they must pay the
-   * whole amount (the last keeps what it does not need); the payment is
-   * recorded against the coupon account; the litres leave the tank, with its
+   * to the sale's client and be spendable (the last keeps what it does not
+   * need); the coupons and whatever `payments` collect must together pay the
+   * sale exactly; the coupon part is recorded against the coupon account and
+   * the rest against the accounts named; the litres leave the tank, with its
    * ledger row and a fuel sale for the web. Any failure leaves nothing behind.
    */
-  async confirm(code: string, siteId: string, input: Omit<ConfirmCouponSaleInput, "phone" | "pin">, doneBy: string) {
+  async confirm(code: string, siteId: string,
+    input: Omit<ConfirmCouponSaleInput, "phone" | "pin"> & { referenceDocs?: Record<number, string> }, doneBy: string) {
     await this.db.$transaction(async (tx) => {
       const sale = await this.openSale(tx, code, siteId);
       if (sale.clientId !== input.clientId) {
@@ -176,17 +185,55 @@ export class CouponSaleRepository {
       if (claimed.count === 0) throw new AppError(409, "TRANSACTION_ALREADY_CONFIRMED", "This sale was just confirmed or cancelled");
 
       const rota = await pumpAssignment(tx, doneBy, siteId, sale.nozzle);
+      // What is collected on top of the coupons — cash, mobile money, whatever
+      // the site takes. Checked before a coupon is spent.
+      const rest = input.payments ?? [];
+      const paid = rest.length > 0 ? await checkPayments(tx, rest, siteId) : new Prisma.Decimal(0);
+      if (rest.length > 0) {
+        const couponAccount = await tx.companyAccount.findFirst({
+          where: { id: { in: rest.map((payment) => payment.accountId) }, type: "coupon" },
+          select: { name: true },
+        });
+        // The coupon part is recorded on its own, so naming a coupon account
+        // here would count the same money twice.
+        if (couponAccount) {
+          throw new BusinessError("COUPON_ACCOUNT_IN_PAYMENTS",
+            `${couponAccount.name} is a coupon account: the coupons scanned are recorded against it already`);
+        }
+      }
       const { covered } = await redeemCoupons(tx, {
         scans: input.coupons, saleAmount: sale.amount, generalTransactionId: sale.id, siteId, redeemedBy: doneBy, clientId: input.clientId,
       });
-      // Coupons pay the whole sale: nothing else is taken.
-      if (!covered.equals(sale.amount)) {
-        throw new BusinessError("COUPONS_SHORT", `The coupons scanned pay ${covered.toString()}; the sale is ${sale.amount.toString()}`,
-          422, { couponAmount: covered.toFixed(2), amount: sale.amount.toFixed(2) });
+      // The coupons and the rest must pay the sale exactly.
+      const total = covered.plus(paid);
+      if (!total.equals(sale.amount)) {
+        const due = sale.amount.minus(total);
+        const data = {
+          couponAmount: covered.toFixed(2), paidAmount: paid.toFixed(2),
+          amount: sale.amount.toFixed(2), due: due.toFixed(2),
+        };
+        if (rest.length === 0) {
+          throw new BusinessError("COUPONS_SHORT",
+            `The coupons scanned pay ${covered.toString()} of ${sale.amount.toString()}: collect ${due.toString()} to finish this sale`,
+            422, data);
+        }
+        throw new BusinessError("PAYMENTS_DO_NOT_MATCH",
+          `The coupons and the payments add up to ${total.toString()}, but the sale is ${sale.amount.toString()}`,
+          422, data);
       }
       const account = await accountOfType(tx, siteId, "coupon");
-      await tx.generalTransactionPayment.create({
-        data: { transactionId: sale.id, accountId: account.id, amount: covered, reference: `${input.coupons.length} coupon(s)` },
+      // The coupon part first, then what was collected for the rest.
+      const paymentRows = [
+        ...(covered.greaterThan(0)
+          ? [{ accountId: account.id, amount: covered, reference: `${input.coupons.length} coupon(s)`, referenceDocUrl: null as string | null }]
+          : []),
+        ...rest.map((payment, index) => ({
+          accountId: payment.accountId, amount: money(payment.amount),
+          reference: payment.reference ?? null, referenceDocUrl: input.referenceDocs?.[index] ?? null,
+        })),
+      ];
+      await tx.generalTransactionPayment.createMany({
+        data: paymentRows.map((payment) => ({ transactionId: sale.id, ...payment })),
       });
 
       await drawFromTank(tx, { id: sale.cuveId, name: sale.cuve.name }, sale.quantity);
@@ -197,7 +244,7 @@ export class CouponSaleRepository {
           siteId, pumpId: sale.nozzle.pump.id, nozzleId: sale.nozzle.id, shiftId: rota.siteShiftId,
           quantity: sale.quantity, unitPrice: sale.unitPrice, amount: sale.amount, createdBy: doneBy,
           note: `Coupon sale ${code}`, dateOn: new Date(`${rota.workingDay}T00:00:00.000Z`),
-          payments: { create: { accountId: account.id, amount: covered } },
+          payments: { create: paymentRows },
         },
         select: { id: true },
       });

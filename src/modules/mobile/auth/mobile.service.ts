@@ -134,16 +134,20 @@ export class MobileService {
   }
 
   /**
-   * The site data a POS keeps on the device: the site and its equipment —
-   * pumps, their displays and nozzles — with a `version` fingerprinting it,
-   * so `/mobile/sync` can tell the POS when any of it changes.
+   * The site data a POS keeps on the device: the site, its equipment — pumps,
+   * their displays and nozzles — and the accounts a sale's money may go into,
+   * with a `version` fingerprinting all of it, so `/mobile/sync` can tell the
+   * POS when any of it changes.
    */
   private async snapshot(deviceId: string) {
     const { site, ...device } = await this.repo.deviceWithSite(deviceId);
-    const equipment = await this.repo.siteEquipment(site.id);
+    const [equipment, accounts] = await Promise.all([
+      this.repo.siteEquipment(site.id),
+      this.repo.paymentAccounts(site.id),
+    ]);
     // Every list arrives in a fixed order, so equal data always gives the same version.
-    const version = createHash("sha256").update(JSON.stringify({ site, equipment })).digest("hex").slice(0, 32);
-    return { device, site, equipment, version };
+    const version = createHash("sha256").update(JSON.stringify({ site, equipment, accounts })).digest("hex").slice(0, 32);
+    return { device, site, equipment, accounts, version };
   }
 
   /**
@@ -152,15 +156,16 @@ export class MobileService {
    * own site, taken from its credential.
    */
   async bootstrap(deviceId: string) {
-    const { device, site, equipment, version } = await this.snapshot(deviceId);
-    return { device, site, equipment, serverTime: new Date().toISOString(), version };
+    const { device, site, equipment, accounts, version } = await this.snapshot(deviceId);
+    return { device, site, equipment, accounts, serverTime: new Date().toISOString(), version };
   }
 
   /**
    * Whether the site data the POS holds is still current. With the version the
    * POS last received: `{ changed: false }` when nothing moved, otherwise
-   * everything provisioning gave it — device, site, equipment, server time and
-   * version, built by `bootstrap` so the two cannot drift apart — to replace
+   * everything provisioning gave it — device, site, equipment, accounts,
+   * server time and version, built by `bootstrap` so the two cannot drift
+   * apart — to replace
    * the local copy whole. Only the credentials are not sent again.
    */
   async sync(deviceId: string, knownVersion?: string) {

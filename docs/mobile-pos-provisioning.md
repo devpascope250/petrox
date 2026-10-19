@@ -147,9 +147,9 @@ from cookies.
 
 ## 4. POS: keep the local site data current
 
-At provisioning (and `GET /mobile/bootstrap`) the POS receives its site data — `site`
-and `catalog` — and a `version`, a fingerprint of that data. The POS stores all three
-locally and works from the local copy. To find out whether the server's data has
+At provisioning (and `GET /mobile/bootstrap`) the POS receives its site data — `site`,
+`equipment` and `accounts` — and a `version`, a fingerprint of that data. The POS stores
+it all locally and works from the local copy. To find out whether the server's data has
 changed since, it asks:
 
 ```http
@@ -166,9 +166,16 @@ Nothing changed — a small answer, nothing to do:
 Something changed — replace the local copy whole and store the new version:
 
 ```json
-{ "success": true, "data": { "changed": true, "version": "7a01…", "serverTime": "…", "site": { … }, "catalog": { … } } }
+{ "success": true, "data": { "changed": true, "version": "7a01…", "serverTime": "…", "site": { … }, "equipment": { … }, "accounts": [ … ] } }
 ```
 
+- `accounts` are the company accounts a sale's money may go into at this site: active, the
+  site's own or the company's, each with `id`, `code`, `name`, `type`, `requiredReference`
+  and `siteId` (`null` = the whole company). **This is where the `accountId` in a sale's
+  `payments` comes from** — the POS offers these and nothing else, and asks for a reference
+  number when `requiredReference` is set. Accounts of type `coupon` and `card` are left out:
+  the server records those itself when a sale is paid with coupons or a client's card, and
+  naming one in `payments` is refused.
 - Any change to what the POS stores — a pump, nozzle, tank, price, shift, payment account
   or the site's details, added, edited, switched off or removed — gives a new version.
 - Tank **levels** are not in the stored data (`catalog.cuves` carries no `balance`): they
@@ -351,10 +358,12 @@ under System Settings → Company Settings: `name`, `address`, `phone`, `email`,
 A coupon sale is a `GeneralTransaction` like any other, so it is read, listed and printed through
 `/mobile/transactions` (`GET /mobile/transactions`, `GET /mobile/transactions/:code`,
 `PATCH /mobile/transactions/:code/print-status`). Starting, confirming and cancelling it have routes
-of their own. The client's coupons pay the **whole** amount: no card, no other payment. The payment
-is recorded against the company account of type `coupon` (this site's, else the shared one), which
-must exist and be active (`COUPON_ACCOUNT_MISSING`). The client must have a PIN, set on the web
-(Clients → edit the client admin → Organisation PIN).
+of their own. The coupons pay as much of the sale as they can and the client pays the rest in cash,
+mobile money or anything else the site takes. The coupon part is recorded against the company
+account of type `coupon` (this site's, else the shared one), which must exist and be active
+(`COUPON_ACCOUNT_MISSING`); the rest is recorded against the accounts named, which may not be
+coupon accounts. The client must have a PIN, set on the web (Clients → edit the client admin →
+Organisation PIN).
 
 **1. `GET /mobile/coupon-sales/clients?search=`** lists up to 50 active clients holding coupons they
 can still spend, most first: `id`, `clientCode`, `name`, `phone`, `hasPin` (without a PIN the client
@@ -368,6 +377,11 @@ pays. A wrong PIN, no PIN set and an inactive client all get `422 INVALID_CLIENT
 everything about the fuel. Returns `201` with the sale, status `initiated`, `expiresAt: null`:
 a coupon sale **never times out**, and the ordinary confirm refuses it (`409 COUPON_SALE`).
 
+The fuel is already in the car by now — the amount is what the pump display shows — so a sale is
+started **even when the client's coupons cannot pay all of it**. The answer carries `couponFunds`:
+`spendableAmount` (what their coupons can pay), `couponCount`, and `dueFromClient` (what to collect
+on top, `0` when the coupons cover it). Show that to the attendant before confirming.
+
 | Field | | |
 |---|---|---|
 | `clientId`, `clientPin` | required | The client, checked with their PIN again. |
@@ -377,9 +391,6 @@ a coupon sale **never times out**, and the ordinary confirm refuses it (`409 COU
 | `platePicture` (file) | optional | PNG, JPG or WEBP picture of the car's plate. Stored as `platePictureUrl`. |
 | `platNumber`, `appVersion` | optional | |
 
-The client's spendable coupons must cover `amount`, or it is refused with `422 COUPONS_SHORT`
-(`data.spendableAmount`, `data.amount`).
-
 **4. `POST /mobile/coupon-sales/:code/confirm`** (JSON or form data, 20 a minute per device) checks
 only the coupons and the attendant, then records everything in one database transaction — or
 nothing at all:
@@ -388,16 +399,25 @@ nothing at all:
 |---|---|---|
 | `clientId` | required | Must be the sale's client (`CLIENT_MISMATCH`). |
 | `coupons` | required | Array (or JSON array in a form field) of scanned codes or QR tokens, in the order scanned, 1–50. Each must belong to that client (`COUPON_OTHER_CLIENT`). |
+| `payments` | JSON array | `[{"accountId","amount","reference"?}]` — cash, mobile money and the like, for whatever the coupons do not cover. Omit it when the coupons pay the whole sale. A coupon account is refused here (`422 COUPON_ACCOUNT_IN_PAYMENTS`): the coupons are recorded against it already. |
+| `referenceDoc.<n>` (file) | optional | PDF or picture for payment `n`, as for an ordinary sale. Send the request as form data to use it. |
 | `phone`, `pin` | required | The attendant, on the time table for the shift running now and on the rota for the sale's pump and nozzle (as for confirm). Becomes `doneBy`. |
 | `comments`, `appVersion`, `printStatus` | optional | |
 
 The coupons pay in the order scanned, each as much as is still owed: all but the last are used
 whole and the last keeps what it does not need (five 1,000 coupons on a 4,500 sale use four and
-leave 500 on the fifth). Together they must pay exactly `amount` (`COUPONS_SHORT` otherwise), and a
-coupon that is not needed is refused (`COUPON_NOT_NEEDED`). Then the payment is recorded on the
-coupon account, the litres leave the tank (`CuveTransaction` sold/OUT), and a `FuelSale` is written
-for the web. The answer is the sale with `coupons` (each `code`, `amount` taken, `remainingAmount`,
-`usage`), `attendantName` and the `company` block for the receipt.
+leave 500 on the fifth). A coupon that is not needed at all is refused (`COUPON_NOT_NEEDED`).
+
+**The coupons and the payments must pay the sale exactly.** If the coupons fall short and no
+payments were sent, it is refused with `422 COUPONS_SHORT`, whose `data.due` says how much to
+collect — so the POS can ask for it and confirm again. If payments were sent but the total is
+wrong, it is `422 PAYMENTS_DO_NOT_MATCH`, with the same `data` (`couponAmount`, `paidAmount`,
+`amount`, `due`). Nothing is spent either way.
+
+Then the coupon part is recorded on the coupon account and each payment on its own account, the
+litres leave the tank (`CuveTransaction` sold/OUT), and a `FuelSale` is written for the web with
+the same payments. The answer is the sale with `coupons` (each `code`, `amount` taken,
+`remainingAmount`, `usage`), `payments`, `attendantName` and the `company` block for the receipt.
 
 **`POST /mobile/coupon-sales/:code/cancel`** with `reason` cancels a coupon sale not yet confirmed;
 no coupon was spent, so nothing is given back.
@@ -406,7 +426,10 @@ no coupon was spent, so nothing is given back.
 |---|---|---|
 | 422 | `INVALID_CLIENT_PIN` | Wrong client PIN, no PIN set, or client inactive. |
 | 422 | `COUPON_ACCOUNT_MISSING` | No active company account of type `coupon`. |
-| 422 | `COUPONS_SHORT` | The coupons cannot pay the whole amount. |
+| 422 | `COUPONS_SHORT` | The coupons do not pay the whole sale and nothing was sent for the rest; `data.due` is what to collect. |
+| 422 | `PAYMENTS_DO_NOT_MATCH` | The coupons and the payments do not add up to the sale; `data.due` is what is still owed. |
+| 422 | `COUPON_ACCOUNT_IN_PAYMENTS` | A payment names a coupon account, which the coupons are recorded against already. |
+| 422 | `PAYMENT_REFERENCE_REQUIRED`, `ACCOUNT_INACTIVE`, `ACCOUNT_NOT_AT_SITE`, `DUPLICATE_PAYMENT_ACCOUNT` | The payments collected for the rest, as for an ordinary sale. |
 | 422 | `CLIENT_MISMATCH`, `COUPON_OTHER_CLIENT` | The sale or a coupon belongs to another client. |
 | 404 | `COUPON_NOT_FOUND` | No coupon matches a scan; `data.coupon` names it. |
 | 422 | `COUPON_USED`, `COUPON_EXPIRED`, `COUPON_CANCELLED`, `DUPLICATE_COUPON` | A scanned coupon cannot pay. |

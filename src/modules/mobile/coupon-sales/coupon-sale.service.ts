@@ -9,6 +9,9 @@ import {
   cancelCouponSaleSchema, confirmCouponSaleSchema, couponClientsQuerySchema, initiateCouponSaleSchema, verifyClientSchema,
 } from "./coupon-sale.schema.js";
 
+/** A payment's supporting document, by its place in the `payments` array. */
+const REFERENCE_DOC = /^referenceDoc\.(\d+)$/;
+
 /** A JSON body, or the text fields of a multipart form. */
 async function fieldsOf(request: FastifyRequest) {
   return request.isMultipart() ? (await readMobileForm(request, [], 0)).fields : request.body ?? {};
@@ -58,13 +61,32 @@ export class CouponSaleService {
     }
   }
 
-  /** JSON or form fields. Returns the sale with the company it is printed under. */
+  /**
+   * JSON, or a form carrying a document per payment (`referenceDoc.<n>`, `n`
+   * its place in `payments`). Returns the sale with the company it is printed
+   * under.
+   */
   async confirm(request: FastifyRequest, code: string) {
     const siteId = deviceSite(request);
-    const { phone, pin, ...input } = parseInput(confirmCouponSaleSchema, await fieldsOf(request));
-    const doneBy = await this.attendant(phone, pin, siteId);
-    const [sale, company] = await Promise.all([this.repo.confirm(code, siteId, input, doneBy), this.receiptCompany()]);
-    return { ...sale, company };
+    const form = request.isMultipart() ? await readMobileForm(request, [{ field: REFERENCE_DOC, kind: "document" }]) : null;
+    try {
+      const { phone, pin, ...input } = parseInput(confirmCouponSaleSchema, form ? form.fields : request.body ?? {});
+      const referenceDocs: Record<number, string> = {};
+      for (const [field, url] of Object.entries(form?.files ?? {})) {
+        const index = REFERENCE_DOC.exec(field)?.[1];
+        if (index !== undefined) referenceDocs[Number(index)] = url;
+      }
+      const doneBy = await this.attendant(phone, pin, siteId);
+      const [sale, company] = await Promise.all([
+        this.repo.confirm(code, siteId, { ...input, referenceDocs }, doneBy),
+        this.receiptCompany(),
+      ]);
+      return { ...sale, company };
+    } catch (error) {
+      // Nothing was recorded, so the documents it came with are not kept.
+      await form?.discard();
+      throw error;
+    }
   }
 
   async cancel(request: FastifyRequest, code: string) {

@@ -210,11 +210,13 @@ describe("device authentication and site isolation", () => {
 });
 
 describe("site data sync", () => {
-  function service(equipment: { pumps: unknown[] }) {
+  const ACCOUNTS = [{ id: "a1", code: "CASH-NYA", name: "Cash", type: "cash", requiredReference: false, siteId: null }];
+  function service(equipment: { pumps: unknown[] }, accounts: unknown[] = ACCOUNTS) {
     const repo = {
       deviceWithSite: vi.fn().mockResolvedValue({ id: "d", deviceUuid: "u", deviceName: "POS", status: "active",
         provisionedAt: new Date(), site: { id: SITE_A, name: "A", address: null, phone: null, email: null } }),
       siteEquipment: vi.fn().mockResolvedValue(equipment),
+      paymentAccounts: vi.fn().mockResolvedValue(accounts),
     };
     return { svc: new MobileService(repo as never, { config, prisma: {} } as never), repo };
   }
@@ -225,10 +227,13 @@ describe("site data sync", () => {
     const { svc, repo } = service(base);
     const first = await svc.bootstrap("d");
     expect(repo.siteEquipment).toHaveBeenCalledWith(SITE_A);
+    expect(repo.paymentAccounts).toHaveBeenCalledWith(SITE_A);
+    // The accounts a sale's payments may name, so the POS never has to guess an id.
+    expect(first.accounts).toEqual(ACCOUNTS);
     expect(first.version).toMatch(/^[0-9a-f]{32}$/);
     expect(first.equipment.pumps[0]).toMatchObject({ name: "PUMP1", displays: [{ code: "D1", nozzles: [{ nozzleCode: "NZ1" }] }] });
     expect(await svc.sync("d", first.version)).toEqual({ changed: false, version: first.version, serverTime: expect.any(String) });
-    expect(await svc.sync("d")).toMatchObject({ changed: true, version: first.version, site: { id: SITE_A }, equipment: base });
+    expect(await svc.sync("d")).toMatchObject({ changed: true, version: first.version, site: { id: SITE_A }, equipment: base, accounts: ACCOUNTS });
   });
 
   it("changes version when the equipment changes", async () => {
@@ -239,5 +244,12 @@ describe("site data sync", () => {
     expect(changed.changed).toBe(true);
     expect(changed.version).not.toBe(v0);
     expect((await service({ pumps: [] }).svc.sync("d", v0)).changed).toBe(true);
+  });
+
+  it("changes version when a payment account changes, so the POS reloads them", async () => {
+    const v0 = (await service(base).svc.bootstrap("d")).version;
+    const renamed = [{ ...ACCOUNTS[0], name: "Cash drawer" }];
+    expect((await service(base, renamed).svc.sync("d", v0)).changed).toBe(true);
+    expect((await service(base, []).svc.sync("d", v0)).changed).toBe(true);
   });
 });
