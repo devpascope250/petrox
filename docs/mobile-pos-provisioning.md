@@ -314,14 +314,14 @@ shows in the Fuel sales pages and report. If any check fails, nothing changes.
 
 | Field | | |
 |---|---|---|
-| `phone`, `pin` | required | The attendant. Must be an active user at the site, and on the pump rota (`TblPumpAttendant`) for the sale's pump and nozzle, on today's weekday, in a switched-on site shift whose hours include now (Rwanda time). A night shift past midnight counts on the weekday it started. Becomes `doneBy`, and that site shift is recorded on the sale. |
+| `phone`, `pin` | required | The attendant. Must be an active user at the site, **on the time table** for a shift running now, and on the pump rota for the sale's pump and nozzle — see "Who may confirm a sale" below. Becomes `doneBy`, and that site shift is recorded on the sale. |
 | `quantity` | required | Litres, at most 2 decimals. |
 | `unitPrice` | required | The price per litre. Must equal the price fixed when the sale started (`unitPrice` in the initiate response). |
 | `amount` | required | What the pump display shows. May differ from `quantity` × `unitPrice` by at most the price of 0.01 litre (the pump's rounding). Stored as the sale's amount. |
 | `payments` | JSON array | `[{"accountId","amount","reference"?}]`. Required without a card; when sent, the amounts must add up to `amount`. |
 | `referenceDoc.<n>` (file) | optional | PDF or picture for payment `n`. |
 | `displayPicture` (file) | optional | Picture of the pump display. Required when the card type has `captureDisplay`. |
-| `shiftId`, `comments`, `appVersion`, `printStatus` (`true`/`false`) | optional | `shiftId` overrides the shift taken from the rota. |
+| `shiftId`, `comments`, `appVersion`, `printStatus` (`true`/`false`) | optional | `shiftId` overrides the shift taken from the time table. |
 
 Limited to 20 a minute per device. A sale can only be confirmed once: a second confirm,
 including one sent at the same moment, gets `409 TRANSACTION_ALREADY_CONFIRMED`.
@@ -384,7 +384,7 @@ nothing at all:
 |---|---|---|
 | `clientId` | required | Must be the sale's client (`CLIENT_MISMATCH`). |
 | `coupons` | required | Array (or JSON array in a form field) of scanned codes or QR tokens, in the order scanned, 1–50. Each must belong to that client (`COUPON_OTHER_CLIENT`). |
-| `phone`, `pin` | required | The attendant, on the rota for the sale's pump and nozzle in the shift running now (as for confirm). Becomes `doneBy`. |
+| `phone`, `pin` | required | The attendant, on the time table for the shift running now and on the rota for the sale's pump and nozzle (as for confirm). Becomes `doneBy`. |
 | `comments`, `appVersion`, `printStatus` | optional | |
 
 The coupons pay in the order scanned, each as much as is still owed: all but the last are used
@@ -409,8 +409,32 @@ no coupon was spent, so nothing is given back.
 | 422 | `COUPON_NOT_NEEDED` | The sale was already covered before this coupon; nothing was spent. |
 | 409 | `COUPON_IN_USE` | Another pump spent the coupon at the same moment; scan it again. |
 | 409 | `NOT_A_COUPON_SALE` / `COUPON_SALE` | A coupon route used for an ordinary sale, or the reverse. |
-| 422 | `INVALID_ATTENDANT`, `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE`, `INSUFFICIENT_CUVE_STOCK`, `UNIT_PRICE_MISMATCH`, `AMOUNT_MISMATCH`, `PRICE_NOT_SET` | As for POS sales. |
+| 422 | `INVALID_ATTENDANT`, `ATTENDANT_NOT_ON_SHIFT`, `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE`, `INSUFFICIENT_CUVE_STOCK`, `UNIT_PRICE_MISMATCH`, `AMOUNT_MISMATCH`, `PRICE_NOT_SET` | As for POS sales. |
 | 409 | `TRANSACTION_ALREADY_CONFIRMED`, `TRANSACTION_CANCELLED` | The sale is no longer open. |
+
+### Who may confirm a sale
+
+Two records answer two different questions, and a sale checks both.
+
+**The time table (`TblTimeTable`) says when.** It rosters people onto a site
+shift for a **date**, and carries their attendance (`status`: 0 planned, 1
+present, 2 absent). Confirming looks for a row putting that attendant on a
+shift at this site whose hours include the time now in Rwanda, on the date that
+shift belongs to, and not marked absent. A shift running past midnight belongs
+to the date it started on, so in its small hours yesterday's roster applies —
+and that date is the working day the sale counts towards (the `dateOn` of the
+`FuelSale` written alongside it).
+
+**The pump rota (`TblPumpAttendant`) says where.** One row per attendant, pump
+and shift, holding the nozzles they handle. It has **no weekday**: which days
+someone works is the time table's job. Because of that, several attendants may
+hold the same nozzle in one shift — the time table decides which of them is
+there on a given date.
+
+So a site must keep its time table filled in: an attendant with no row for the
+shift running now cannot confirm a sale (`422 ATTENDANT_NOT_ON_SHIFT`), even
+with a rota entry for the pump. Rostering is on the web, under Shifts → Time
+table, which can copy a week onto the next.
 
 `PATCH /mobile/transactions/:code/print-status` records whether the receipt of a confirmed sale
 was printed: `printStatus` (`true`/`false`, as form data or JSON), `true` when left out. It returns
@@ -423,7 +447,8 @@ the sale; sending the same value again is harmless. A sale that is not confirmed
 | 400 | `UNSUPPORTED_FILE` / `VALIDATION_ERROR` | Wrong file type, or a field is missing or malformed. |
 | 404 | `RESOURCE_NOT_FOUND` | Unknown nozzle, card or transaction code at this site. |
 | 422 | `INVALID_ATTENDANT` | Wrong phone number or PIN (one answer for both). |
-| 422 | `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE` | Confirming: the attendant is not on the rota for the sale's pump in the shift running now, or its nozzle is not one of theirs. |
+| 422 | `ATTENDANT_NOT_ON_SHIFT` | Confirming: the time table does not put the attendant on any shift running now at this site, or it marks them absent. |
+| 422 | `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE` | Confirming: the attendant is on the shift but not on the rota for the sale's pump, or its nozzle is not one of theirs. |
 | 422 | `NOZZLE_NOT_ON_PUMP`, `NOZZLE_CUVE_MISMATCH`, `ITEM_CUVE_MISMATCH`, `*_INACTIVE`, `PRICE_NOT_SET` | The sale does not match the site's equipment. |
 | 422 | `PLATE_NUMBER_REQUIRED`, `PLATE_PICTURE_REQUIRED`, `DISPLAY_PICTURE_REQUIRED` | The card type's rules. |
 | 422 | `CAR_NOT_ASSIGNED_TO_CARD` | The plate is not one of the active cars assigned to the card. |

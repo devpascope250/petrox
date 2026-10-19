@@ -4,7 +4,6 @@ import { presentShift, shiftWithHours } from "./shift-scope.js";
 
 const pumpAttendantSelect = {
   id: true,
-  day: true,
   siteId: true,
   siteShiftId: true,
   pumpId: true,
@@ -44,9 +43,10 @@ export class PumpAttendantRepository {
       where: {
         ...(query.siteId && { siteId: query.siteId }),
         ...(query.siteShiftId && { siteShiftId: query.siteShiftId }),
-        ...(query.day && { day: query.day }),
+        ...(query.pumpId && { pumpId: query.pumpId }),
+        ...(query.userId && { userId: query.userId }),
       },
-      orderBy: [{ day: "asc" }, { siteShift: { shift: { startAt: "asc" } } }, { pump: { name: "asc" } }],
+      orderBy: [{ siteShift: { shift: { startAt: "asc" } } }, { pump: { name: "asc" } }, { user: { firstName: "asc" } }],
       select: pumpAttendantSelect,
     });
     return rows.map(present);
@@ -80,33 +80,14 @@ export class PumpAttendantRepository {
     });
   }
 
-  /** The same attendant already on the same pump, day and shift. */
+  /** The same attendant already on the same pump and shift. */
   findDuplicate(data: CreatePumpAttendantSchema, excludeId?: string) {
     return this.db.tblPumpAttendant.findFirst({
       where: {
         userId: data.userId,
         pumpId: data.pumpId,
-        day: data.day,
         siteShiftId: data.siteShiftId,
         ...(excludeId && { id: { not: excludeId } }),
-      },
-    });
-  }
-
-  /** Nozzles already handled by someone else on the same day and shift. */
-  findTakenNozzles(data: CreatePumpAttendantSchema, excludeId?: string) {
-    return this.db.pumpAttendantNozzle.findMany({
-      where: {
-        nozzleId: { in: data.nozzleIds },
-        pumpAttendant: {
-          day: data.day,
-          siteShiftId: data.siteShiftId,
-          ...(excludeId && { id: { not: excludeId } }),
-        },
-      },
-      select: {
-        nozzle: { select: { name: true } },
-        pumpAttendant: { select: { user: { select: { firstName: true, lastName: true } } } },
       },
     });
   }
@@ -117,7 +98,6 @@ export class PumpAttendantRepository {
         siteShiftId: data.siteShiftId,
         pumpId: data.pumpId,
         userId: data.userId,
-        day: data.day,
         siteId,
         pumpAttendantNozzles: { create: data.nozzleIds.map((nozzleId) => ({ nozzleId })) },
       },
@@ -136,7 +116,6 @@ export class PumpAttendantRepository {
           siteShiftId: data.siteShiftId,
           pumpId: data.pumpId,
           userId: data.userId,
-          day: data.day,
           siteId,
           pumpAttendantNozzles: { create: data.nozzleIds.map((nozzleId) => ({ nozzleId })) },
         },

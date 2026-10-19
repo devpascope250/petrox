@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from "../../../../prisma/generated/prisma/client.js";
 import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js";
 import { verifyPin } from "../../../utils/crypto.js";
-import { dayOfWeek, fromTime } from "../../shifts/shift-scope.js";
+import { fromDate, fromTime, toDate } from "../../shifts/shift-scope.js";
 
 /**
  * The rules every sale at the pump follows, whatever pays for it: ordinary
@@ -125,43 +125,60 @@ export async function drawFromTank(db: Db, cuve: { id: string; name: string }, q
   }
 }
 
+/** `TblTimeTable.status`: 0 planned, 1 present, 2 absent. */
+const ABSENT = 2;
+
 /**
- * The site shift an attendant is working that nozzle in right now, from the
- * pump rota (`TblPumpAttendant`): their row for this pump, on today's
- * weekday, in a site shift that is switched on and whose hours include the
- * time now in Rwanda, with the nozzle among theirs. A shift that runs past
- * midnight belongs to the weekday it started on, so in its small hours
- * yesterday's rota applies — and the sale counts towards that working day.
+ * The site shift an attendant is working that nozzle in right now, in two steps.
+ *
+ * **When** comes from the time table (`TblTimeTable`), which is the roster: a
+ * row putting this attendant on a site shift on this date, not marked absent,
+ * in a shift that is switched on at the site and whose hours include the time
+ * now in Rwanda. A shift that runs past midnight belongs to the date it
+ * started on, so in its small hours yesterday's roster applies — and its own
+ * date is the working day the sale counts towards.
+ *
+ * **Where** comes from the pump rota (`TblPumpAttendant`), which now says only
+ * which pump and nozzles an attendant handles in a shift, not which days he
+ * works: the roster decides that.
  */
 export async function pumpAssignment(db: Db, userId: string, siteId: string,
   nozzle: { id: string; name: string; pump: { id: string; name: string } }, now = new Date()) {
   const local = new Date(now.getTime() + BUSINESS_OFFSET_MS);
   const clock = local.toISOString().slice(11, 16);
-  const today = dayOfWeek(local);
-  const yesterday = today === 1 ? 7 : today - 1;
-  const rows = await db.tblPumpAttendant.findMany({
-    where: { userId, siteId, pumpId: nozzle.pump.id, day: { in: [today, yesterday] }, siteShift: { status: 1 } },
-    select: { day: true, siteShiftId: true,
-      siteShift: { select: { shift: { select: { name: true, startAt: true, endAt: true } } } },
-      pumpAttendantNozzles: { select: { nozzleId: true } } },
+  const today = local.toISOString().slice(0, 10);
+  const yesterday = new Date(Date.parse(today) - 86_400_000).toISOString().slice(0, 10);
+  const rostered = await db.tblTimeTable.findMany({
+    where: { userId, siteId, dateOn: { in: [toDate(today), toDate(yesterday)] }, status: { not: ABSENT }, shiftSite: { status: 1 } },
+    select: { dateOn: true, siteShiftId: true,
+      shiftSite: { select: { shift: { select: { name: true, startAt: true, endAt: true } } } } },
   });
-  const working = rows.filter(({ day, siteShift: { shift } }) => {
+  const working = rostered.filter(({ dateOn, shiftSite: { shift } }) => {
+    const day = fromDate(dateOn);
     const start = fromTime(shift.startAt);
     const end = fromTime(shift.endAt);
     if (start < end) return day === today && clock >= start && clock < end;
-    // Overnight: the evening part on its own day, the small hours on the next.
+    // Overnight: the evening part on its own date, the small hours on the next.
     return (day === today && clock >= start) || (day === yesterday && clock < end);
   });
   if (working.length === 0) {
+    throw new BusinessError("ATTENDANT_NOT_ON_SHIFT",
+      `You are not on the time table for the shift running now (${clock})`);
+  }
+  const assignments = await db.tblPumpAttendant.findMany({
+    where: { userId, siteId, pumpId: nozzle.pump.id, siteShiftId: { in: working.map((row) => row.siteShiftId) } },
+    select: { siteShiftId: true, pumpAttendantNozzles: { select: { nozzleId: true } } },
+  });
+  if (assignments.length === 0) {
     throw new BusinessError("ATTENDANT_NOT_ON_PUMP",
       `You are not on the rota for ${nozzle.pump.name} in the shift running now (${clock})`);
   }
-  const onNozzle = working.find((row) => row.pumpAttendantNozzles.some(({ nozzleId }) => nozzleId === nozzle.id));
+  const onNozzle = assignments.find((row) => row.pumpAttendantNozzles.some(({ nozzleId }) => nozzleId === nozzle.id));
   if (!onNozzle) {
     throw new BusinessError("ATTENDANT_NOT_ON_NOZZLE", `${nozzle.name} is not one of your nozzles on ${nozzle.pump.name} in this shift`);
   }
-  const localDay = local.toISOString().slice(0, 10);
-  const workingDay = onNozzle.day === today ? localDay : new Date(Date.parse(localDay) - 86_400_000).toISOString().slice(0, 10);
+  // The roster row's own date: a night shift's small hours still count towards the day it started.
+  const workingDay = fromDate(working.find((row) => row.siteShiftId === onNozzle.siteShiftId)!.dateOn);
   return { siteShiftId: onNozzle.siteShiftId, workingDay };
 }
 

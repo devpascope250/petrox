@@ -74,16 +74,10 @@ export class PumpAttendantService {
     }
 
     if (await this.repo.findDuplicate(input, excludeId)) {
-      throw new ConflictError("ATTENDANT_EXISTS", "This attendant is already on this pump for that day and shift");
+      throw new ConflictError("ATTENDANT_EXISTS", "This attendant is already on this pump for that shift");
     }
-    // A nozzle is handled by one person per shift, or its readings have no owner.
-    const taken = await this.repo.findTakenNozzles({ ...input, nozzleIds }, excludeId);
-    if (taken.length) {
-      const who = taken
-        .map((row) => `${row.nozzle.name} (${row.pumpAttendant.user.firstName} ${row.pumpAttendant.user.lastName})`)
-        .join(", ");
-      throw new ConflictError("NOZZLE_TAKEN", `Already assigned for that day and shift: ${who}`);
-    }
+    // Several attendants may hold the same nozzle in a shift: the time table
+    // says which of them is on which date, so they never work it at once.
     return siteShift.siteId;
   }
 }

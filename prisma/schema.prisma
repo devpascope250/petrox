@@ -1546,11 +1546,13 @@ model TblShiftSite {
   @@index([siteId])
 }
 
+/// Which pump and nozzles an attendant handles in a site shift. Not which
+/// days he works: the time table (`TblTimeTable`) rosters people by date, and
+/// that is what a sale checks.
 model TblPumpAttendant {
   id                   String                @id @default(uuid())
   pumpId               String
   pump                 TblPump               @relation(fields: [pumpId], references: [id])
-  day                  Int
   siteShiftId          String
   siteShift            TblShiftSite          @relation(fields: [siteShiftId], references: [id])
   userId               String
@@ -1560,6 +1562,7 @@ model TblPumpAttendant {
   createdAt            DateTime              @default(now())
   pumpAttendantNozzles PumpAttendantNozzle[]
 
+  @@unique([userId, siteShiftId, pumpId])
   @@index([pumpId])
   @@index([siteShiftId])
   @@index([userId])
@@ -1574,6 +1577,7 @@ model PumpAttendantNozzle {
   nozzle          TblNozzle        @relation(fields: [nozzleId], references: [id])
   createdAt       DateTime         @default(now())
 
+  @@unique([pumpAttendantId, nozzleId])
   @@index([pumpAttendantId])
 }
 
