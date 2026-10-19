@@ -3,7 +3,7 @@ import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js
 import { verifyClientPin } from "../../clients/client-pin.js";
 import { expireCoupons, redeemCoupons } from "../../client-coupons/coupon-rules.js";
 import { MobileTransactionsRepository, transactionCode } from "../transactions/transactions.repository.js";
-import { checkAmount, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "../transactions/sale-rules.js";
+import { accountOfType, checkAmount, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "../transactions/sale-rules.js";
 import type { ConfirmCouponSaleInput, InitiateCouponSaleInput } from "./coupon-sale.schema.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -85,19 +85,6 @@ export class CouponSaleRepository {
     return { client, spendableAmount: Number(amount), couponCount: count };
   }
 
-  /** The account a coupon sale is paid into: this site's coupon account, or the company's. */
-  private async couponAccount(db: Db, siteId: string) {
-    const account = await db.companyAccount.findFirst({
-      where: { type: "coupon", status: "active", OR: [{ siteId }, { siteId: null }] },
-      orderBy: [{ siteId: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
-      select: { id: true, name: true },
-    });
-    if (!account) {
-      throw new BusinessError("COUPON_ACCOUNT_MISSING", "No active coupon account: add a company account of type coupon on the web");
-    }
-    return account;
-  }
-
   /**
    * Starts a coupon sale. The client must confirm with their PIN, and their
    * coupons must be able to pay the whole amount. Everything about the fuel
@@ -117,7 +104,7 @@ export class CouponSaleRepository {
     const quantity = money(input.quantity);
     const amount = money(input.amount);
     checkAmount(quantity, unitPrice, amount);
-    await this.couponAccount(this.db, siteId);
+    await accountOfType(this.db, siteId, "coupon");
     const { amount: available } = await this.spendableOf(this.db, client.id);
     if (available.lessThan(amount)) {
       throw new BusinessError("COUPONS_SHORT", `${client.name ?? "The client"}'s coupons can pay ${available.toString()}; the sale is ${amount.toString()}`,
@@ -197,7 +184,7 @@ export class CouponSaleRepository {
         throw new BusinessError("COUPONS_SHORT", `The coupons scanned pay ${covered.toString()}; the sale is ${sale.amount.toString()}`,
           422, { couponAmount: covered.toFixed(2), amount: sale.amount.toFixed(2) });
       }
-      const account = await this.couponAccount(tx, siteId);
+      const account = await accountOfType(tx, siteId, "coupon");
       await tx.generalTransactionPayment.create({
         data: { transactionId: sale.id, accountId: account.id, amount: covered, reference: `${input.coupons.length} coupon(s)` },
       });

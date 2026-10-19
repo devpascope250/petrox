@@ -1,7 +1,7 @@
 import { Prisma, type GeneralTransactionStatus, type PrismaClient } from "../../../../prisma/generated/prisma/client.js";
 import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js";
 import { staticUrl } from "../../../utils/static-url.js";
-import { attendantBy, checkAmount, checkPayments, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "./sale-rules.js";
+import { accountOfType, attendantBy, checkAmount, checkPayments, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "./sale-rules.js";
 import type { ConfirmTransactionInput, InitiateTransactionInput } from "./transactions.schema.js";
 
 const CODE_PREFIX = "PSST";
@@ -61,6 +61,15 @@ async function chargeCard(tx: Tx, mainCardId: bigint, cardCopyId: bigint, amount
   await tx.cardCopyTransaction.create({
     data: { carfdCopyId: cardCopyId, type: "PAYMENT", direction: "OUT", amount, createdById },
   });
+}
+
+/** How a card is named on a payment: its number, or its serial number. */
+function cardLabel(cardCopy: {
+  card: { cardNumber: string | null; serialNumber: string | null };
+  copyCard: { cardNumber: string | null; serialNumber: string | null } | null;
+}) {
+  const card = cardCopy.copyCard ?? cardCopy.card;
+  return card.cardNumber ?? card.serialNumber ?? "—";
 }
 
 /** Frees a main card once its sale is confirmed or cancelled. */
@@ -364,7 +373,9 @@ export class MobileTransactionsRepository {
         select: { id: true, status: true, unitPrice: true, cuveId: true, cardCopyId: true, expiresAt: true,
           cuve: { select: { name: true } },
           nozzle: { select: { id: true, name: true, pump: { select: { id: true, name: true } } } },
-          cardCopy: { select: { cardId: true, card: { select: { cardType: { select: { setting: settingSelect } } } } } } },
+          cardCopy: { select: { cardId: true,
+            card: { select: { cardNumber: true, serialNumber: true, cardType: { select: { setting: settingSelect } } } },
+            copyCard: { select: { cardNumber: true, serialNumber: true } } } } },
       });
       if (!sale) throw new NotFoundError("Transaction");
       // A sale paid with coupons has its own confirm; it is the one with no expiry.
@@ -409,7 +420,11 @@ export class MobileTransactionsRepository {
       }
       checkAmount(quantity, unitPrice, amount);
       const payments = input.payments ?? [];
-      // A card sale is charged to the card; any other sale must say how it was paid.
+      // A card sale is paid by the card, in full, and by nothing else: taking
+      // payments as well would charge the client twice.
+      if (sale.cardCopyId && payments.length > 0) {
+        throw new BusinessError("PAYMENTS_NOT_FOR_CARD", "This sale is paid with the client's card: send no payments");
+      }
       if (!sale.cardCopyId && payments.length === 0) {
         throw new BusinessError("PAYMENTS_REQUIRED", "A sale without a card needs its payments");
       }
@@ -419,6 +434,15 @@ export class MobileTransactionsRepository {
           throw new BusinessError("PAYMENTS_DO_NOT_MATCH", `The payments add up to ${paid.toString()}, but the sale is ${amount.toString()}`);
         }
       }
+      // What the card pays is recorded like any other payment, so the sale is
+      // never short on the receipt or in a by-account total.
+      const cardPayment = sale.cardCopy
+        ? [{
+            accountId: (await accountOfType(tx, siteId, "card")).id,
+            // The card the client handed over: the copy when there is one, else the main card.
+            amount, reference: `Card ${cardLabel(sale.cardCopy)}`, referenceDocUrl: null,
+          }]
+        : [];
 
       await drawFromTank(tx, { id: sale.cuveId, name: sale.cuve.name }, quantity);
       // Also recorded as a fuel sale, as if entered on the web, so the Fuel
@@ -429,7 +453,7 @@ export class MobileTransactionsRepository {
           siteId, pumpId: sale.nozzle.pump.id, nozzleId: sale.nozzle.id, shiftId: input.shiftId ?? rotaShiftId,
           quantity, unitPrice: sale.unitPrice, amount, note: `POS sale ${code}`, createdBy: doneBy,
           dateOn: new Date(`${workingDay}T00:00:00.000Z`),
-          payments: { create: payments.map((payment, index) => ({
+          payments: { create: cardPayment.length ? cardPayment : payments.map((payment, index) => ({
             accountId: payment.accountId, amount: money(payment.amount),
             reference: payment.reference ?? null, referenceDocUrl: input.referenceDocs[index] ?? null,
           })) },
@@ -440,14 +464,14 @@ export class MobileTransactionsRepository {
         data: { cuveId: sale.cuveId, quantity, type: "sold", direction: "OUT", createdBy: doneBy,
           generalTransactionId: sale.id, saleId: fuelSale.id },
       });
-      if (payments.length > 0) {
-        await tx.generalTransactionPayment.createMany({
-          data: payments.map((payment, index) => ({
+      await tx.generalTransactionPayment.createMany({
+        data: cardPayment.length
+          ? cardPayment.map((payment) => ({ transactionId: sale.id, ...payment }))
+          : payments.map((payment, index) => ({
             transactionId: sale.id, accountId: payment.accountId, amount: money(payment.amount),
             reference: payment.reference ?? null, referenceDocUrl: input.referenceDocs[index] ?? null,
           })),
-        });
-      }
+      });
       if (sale.cardCopy && sale.cardCopyId) {
         await chargeCard(tx, sale.cardCopy.cardId, sale.cardCopyId, amount, Boolean(setting?.allowCredit), doneBy);
         await releaseCard(tx, sale.cardCopy.cardId);

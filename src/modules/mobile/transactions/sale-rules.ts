@@ -70,6 +70,27 @@ export function checkAmount(quantity: Prisma.Decimal, unitPrice: Prisma.Decimal,
 }
 
 /**
+ * The company account a sale paid with a client's card or coupons is recorded
+ * against: this site's account of that type, or the company's. Such a sale is
+ * not paid at the pump — the card or the paper is — but it still has to say
+ * how it was paid, or it reads as unpaid on the receipt and in every
+ * by-account total.
+ */
+export async function accountOfType(db: Db, siteId: string, type: "card" | "coupon") {
+  const account = await db.companyAccount.findFirst({
+    where: { type, status: "active", OR: [{ siteId }, { siteId: null }] },
+    // This site's own account first, then the company-wide one.
+    orderBy: [{ siteId: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
+    select: { id: true, name: true },
+  });
+  if (!account) {
+    throw new BusinessError(type === "card" ? "CARD_ACCOUNT_MISSING" : "COUPON_ACCOUNT_MISSING",
+      `No active company account of type ${type}: add one on the web before selling against ${type === "card" ? "cards" : "coupons"}`);
+  }
+  return account;
+}
+
+/**
  * Checks payments into company accounts — each account once, active, at this
  * site or shared, with a reference when it needs one — and returns their total.
  */

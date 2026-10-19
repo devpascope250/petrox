@@ -308,7 +308,11 @@ used for a new sale. Confirming it then gets `409 TRANSACTION_EXPIRED`: start a 
 transaction it takes the litres out of the tank, writes a `CuveTransaction` (sold/OUT),
 records the payments and marks the sale `confirmed`. For a card sale it also charges `amount`
 to the card's main card (refused if the balance is short, unless the card type has
-`allowCredit`) and writes a `CardCopyTransaction` (PAYMENT/OUT). Every sale is also recorded as
+`allowCredit`) and writes a `CardCopyTransaction` (PAYMENT/OUT). What the card paid is
+recorded as the sale's payment too, against the company account of type `card` — this site's,
+else the company's — with the card's number as its reference, so a card sale is never short on
+the receipt or in a by-account total. One active account of that type must exist
+(`422 CARD_ACCOUNT_MISSING`); coupon sales work the same way with a `coupon` account. Every sale is also recorded as
 a `FuelSale` with its payments, as if entered on the web, sharing the same tank movement, so it
 shows in the Fuel sales pages and report. If any check fails, nothing changes.
 
@@ -318,7 +322,7 @@ shows in the Fuel sales pages and report. If any check fails, nothing changes.
 | `quantity` | required | Litres, at most 2 decimals. |
 | `unitPrice` | required | The price per litre. Must equal the price fixed when the sale started (`unitPrice` in the initiate response). |
 | `amount` | required | What the pump display shows. May differ from `quantity` × `unitPrice` by at most the price of 0.01 litre (the pump's rounding). Stored as the sale's amount. |
-| `payments` | JSON array | `[{"accountId","amount","reference"?}]`. Required without a card; when sent, the amounts must add up to `amount`. |
+| `payments` | JSON array | `[{"accountId","amount","reference"?}]`. Required **without** a card, and the amounts must add up to `amount`. **Not allowed with a card** (`422 PAYMENTS_NOT_FOR_CARD`): the card pays the whole sale, so taking payments as well would charge the client twice. |
 | `referenceDoc.<n>` (file) | optional | PDF or picture for payment `n`. |
 | `displayPicture` (file) | optional | Picture of the pump display. Required when the card type has `captureDisplay`. |
 | `shiftId`, `comments`, `appVersion`, `printStatus` (`true`/`false`) | optional | `shiftId` overrides the shift taken from the time table. |
@@ -454,6 +458,8 @@ the sale; sending the same value again is harmless. A sale that is not confirmed
 | 422 | `CAR_NOT_ASSIGNED_TO_CARD` | The plate is not one of the active cars assigned to the card. |
 | 422 | `CAR_ITEM_MISMATCH` | That car runs on another product than `itemId`; `data.car.item` says which. |
 | 422 | `PAYMENTS_REQUIRED`, `PAYMENTS_DO_NOT_MATCH`, `PAYMENT_REFERENCE_REQUIRED`, `ACCOUNT_*` | Payments. |
+| 422 | `PAYMENTS_NOT_FOR_CARD` | The sale is paid with the client's card, so it takes no payments. |
+| 422 | `CARD_ACCOUNT_MISSING` | The company has no active account of type `card` for the card's payment to be recorded against. |
 | 422 | `INSUFFICIENT_CUVE_STOCK` | The tank holds less than the quantity. |
 | 422 | `UNIT_PRICE_MISMATCH` | `unitPrice` is not the sale's price; `data.unitPrice` gives it. |
 | 422 | `AMOUNT_MISMATCH` | `amount` is too far from `quantity` × `unitPrice`; `data.expectedAmount` gives the exact product. |
