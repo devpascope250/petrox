@@ -50,9 +50,9 @@ export const confirmCouponSaleSchema = z.object({
   coupons: couponsField,
   phone: phoneSchema.transform((value) => value.replace(/\s+/g, "")),
   pin: pinSchema,
-  comments: text(500).optional(),
-  appVersion: text(50).optional(),
-  printStatus: z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).optional(),
+  comments: text(500).optional().nullable(),
+  appVersion: text(50).optional().nullable(),
+  printStatus: z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).optional().default(false),
 }).strict();
 
 export const cancelCouponSaleSchema = z.object({ reason: text(255) }).strict();
