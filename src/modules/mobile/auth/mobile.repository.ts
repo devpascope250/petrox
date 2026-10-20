@@ -334,7 +334,9 @@ export class MobileRepository {
    */
   paymentAccounts(siteId: string) {
     return this.db.companyAccount.findMany({
-      where: { status: "active", type: { notIn: ["coupon", "card"] }, OR: [{ siteId }, { siteId: null }] },
+      where: { status: "active", type: { notIn: ["coupon", "card"] },
+      //  OR: [{ siteId }, { siteId: null }] 
+      },
       select: { id: true, code: true, name: true, type: true, requiredReference: true, siteId: true },
       orderBy: [{ siteId: { sort: "asc", nulls: "last" } }, { code: "asc" }],
     });
