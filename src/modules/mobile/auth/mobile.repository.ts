@@ -320,28 +320,27 @@ export class MobileRepository {
   }
 
   /**
+   * The accounts an attendant may put a sale's money into: every active account
+   * in the company, whichever site it belongs to, so a POS is not limited to
+   * its own site's accounts. Coupon and card accounts are left out — the server
+   * records those itself when a sale is paid with coupons or a card, and they
+   * are refused in `payments`.
+   */
+  paymentAccounts() {
+    return this.db.companyAccount.findMany({
+      where: { status: "active", type: { notIn: ["coupon", "card"] } },
+      select: { id: true, code: true, name: true, type: true, requiredReference: true, siteId: true },
+      orderBy: [{ siteId: { sort: "asc", nulls: "last" } }, { code: "asc" }],
+    });
+  }
+
+  /**
    * A site's active equipment, as the POS lays it out: each pump with its
    * displays, and each display with its nozzles — and for every nozzle, the
    * tank it draws from and the product in it. Switched-off pumps, displays,
    * nozzles and tanks are left out. Every list is in a fixed order, so the
    * same equipment always reads the same.
    */
-  /**
-   * The accounts an attendant may put a sale's money into at this site: active,
-   * the site's own or the company's. Coupon and card accounts are left out —
-   * the server records those itself when a sale is paid with coupons or a card,
-   * and they are refused in `payments`.
-   */
-  paymentAccounts(siteId: string) {
-    return this.db.companyAccount.findMany({
-      where: { status: "active", type: { notIn: ["coupon", "card"] },
-      //  OR: [{ siteId }, { siteId: null }] 
-      },
-      select: { id: true, code: true, name: true, type: true, requiredReference: true, siteId: true },
-      orderBy: [{ siteId: { sort: "asc", nulls: "last" } }, { code: "asc" }],
-    });
-  }
-
   async siteEquipment(siteId: string) {
     const pumps = await this.db.tblPump.findMany({
       where: { siteId, status: "active" },

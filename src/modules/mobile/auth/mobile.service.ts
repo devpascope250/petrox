@@ -135,15 +135,15 @@ export class MobileService {
 
   /**
    * The site data a POS keeps on the device: the site, its equipment — pumps,
-   * their displays and nozzles — and the accounts a sale's money may go into,
-   * with a `version` fingerprinting all of it, so `/mobile/sync` can tell the
+   * their displays and nozzles — and the company's accounts a sale's money may
+   * go into, with a `version` fingerprinting all of it, so `/mobile/sync` can tell the
    * POS when any of it changes.
    */
   private async snapshot(deviceId: string) {
     const { site, ...device } = await this.repo.deviceWithSite(deviceId);
     const [equipment, accounts] = await Promise.all([
       this.repo.siteEquipment(site.id),
-      this.repo.paymentAccounts(site.id),
+      this.repo.paymentAccounts(),
     ]);
     // Every list arrives in a fixed order, so equal data always gives the same version.
     const version = createHash("sha256").update(JSON.stringify({ site, equipment, accounts })).digest("hex").slice(0, 32);
