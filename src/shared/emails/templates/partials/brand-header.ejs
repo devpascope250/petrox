@@ -1,0 +1,15 @@
+<%# The company's own band, at the top of every email: its logo and its name. %>
+<tr>
+  <td style="padding: 20px 30px; background-color: #ffffff; border-bottom: 1px solid #eaecf0; text-align: center">
+    <% if (company.logoUrl) { %>
+      <img src="<%= company.logoUrl %>" alt="<%= company.name %>" width="140"
+        style="display: block; margin: 0 auto 10px auto; max-width: 140px; height: auto; border: 0" />
+    <% } %>
+    <p style="margin: 0; color: #034ea2; font-size: 17px; font-weight: 700; letter-spacing: 0.3px">
+      <%= company.name %>
+    </p>
+    <% if (company.address) { %>
+      <p style="margin: 4px 0 0 0; color: #98a2b3; font-size: 12px"><%= company.address %></p>
+    <% } %>
+  </td>
+</tr>

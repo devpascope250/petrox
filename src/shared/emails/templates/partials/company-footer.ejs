@@ -1,0 +1,18 @@
+<%# Who sent this email and how to reach them, at the foot of every one. %>
+<tr>
+  <td style="padding: 22px 30px; background-color: #f8f9fa; border-top: 1px solid #eaecf0; text-align: center">
+    <% if (company.logoUrl) { %>
+      <img src="<%= company.logoUrl %>" alt="<%= company.name %>" width="90"
+        style="display: block; margin: 0 auto 10px auto; max-width: 90px; height: auto; border: 0" />
+    <% } %>
+    <p style="margin: 0 0 6px 0; color: #475467; font-size: 13px; font-weight: 600"><%= company.name %></p>
+    <p style="margin: 0; color: #98a2b3; font-size: 12px; line-height: 19px">
+      <% if (company.address) { %><%= company.address %><br /><% } %>
+      <% if (company.phone) { %><%= company.phone %><% } %>
+      <% if (company.phone && company.email) { %> &bull; <% } %>
+      <% if (company.email) { %><a href="mailto:<%= company.email %>" style="color: #034ea2; text-decoration: none"><%= company.email %></a><% } %>
+      <% if (company.website) { %><br /><a href="<%= company.website %>" style="color: #034ea2; text-decoration: none"><%= company.website %></a><% } %>
+      <% if (company.taxId) { %><br />TIN: <%= company.taxId %><% } %>
+    </p>
+  </td>
+</tr>

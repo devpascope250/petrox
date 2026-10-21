@@ -6,7 +6,7 @@
     "type": "module",
     "scripts": {
         "dev": "tsx watch src/server.ts",
-        "build": "tsc -p tsconfig.json && cp -r src/shared/emails dist/src/shared",
+        "build": "tsc -p tsconfig.json && mkdir -p dist/src/shared/emails && cp -r src/shared/emails/templates dist/src/shared/emails/",
         "start": "node dist/src/server.js",
         "typecheck": "tsc -p tsconfig.json --noEmit",
         "test": "vitest run",

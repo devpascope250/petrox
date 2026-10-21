@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import type { AppConfig } from "../../config/env.js";
 import type { AuthUser } from "../../shared/auth/context-user.js";
+import { emailNewAccount } from "../../shared/emails/new-account-email.js";
 import { paginatedData } from "../../shared/pagination/index.js";
 import type { PaginationQuery } from "../../shared/validation/index.js";
 import { generateTemporaryPin, hashPin } from "../../utils/crypto.js";
@@ -69,6 +70,8 @@ export class ClientService {
       hashPin(input.pin ?? temporaryPin!, this.config.PIN_HMAC_SECRET),
       clientPin ? hashClientPin(clientPin, this.config.PIN_HMAC_SECRET) : undefined
     );
+    // The password is only ever known here, so this is the one chance to send it.
+    emailNewAccount(user, { password: input.password, pin: temporaryPin });
     return { ...user, ...(temporaryPin ? { temporaryPin } : {}) };
   }
 

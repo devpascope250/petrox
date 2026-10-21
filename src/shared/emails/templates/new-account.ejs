@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Your <%= company.name %> account</title>
+  </head>
+  <body style="margin: 0; padding: 0; font-family: &quot;Segoe UI&quot;, Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6fb">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f4f6fb">
+      <tr>
+        <td align="center" style="padding: 40px 20px">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+            style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); overflow: hidden">
+            <%- include('partials/brand-header') %>
+
+
+            <tr>
+              <td style="padding: 32px 40px; background-color: #034ea2; color: #ffffff">
+                <h1 style="margin: 0; font-size: 22px; font-weight: 600">Your account is ready</h1>
+                <p style="margin: 8px 0 0 0; font-size: 14px; color: rgba(255, 255, 255, 0.85)">
+                  <%= company.name %> · <%= accountType %>
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 32px 40px">
+                <p style="margin: 0 0 16px 0; color: #344054; font-size: 15px; line-height: 24px">
+                  Hello <%= userName %>,
+                </p>
+                <p style="margin: 0 0 24px 0; color: #475467; font-size: 14px; line-height: 23px">
+                  An account has been created for you on <%= company.name %>'s fuel management system.
+                  Sign in with the details below.
+                </p>
+
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                  style="margin-bottom: 24px; border: 1px solid #eaecf0; border-radius: 10px; background-color: #f9fafb">
+                  <tr>
+                    <td style="padding: 16px 20px; border-bottom: 1px solid #eaecf0">
+                      <p style="margin: 0 0 4px 0; color: #98a2b3; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px">Email</p>
+                      <p style="margin: 0; color: #101828; font-size: 15px; font-weight: 600"><%= loginEmail %></p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 16px 20px<%= pin ? '; border-bottom: 1px solid #eaecf0' : '' %>">
+                      <p style="margin: 0 0 4px 0; color: #98a2b3; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px">Password</p>
+                      <p style="margin: 0; color: #101828; font-size: 17px; font-weight: 700; font-family: &quot;Courier New&quot;, monospace; letter-spacing: 1px"><%= password %></p>
+                    </td>
+                  </tr>
+                  <% if (pin) { %>
+                    <tr>
+                      <td style="padding: 16px 20px">
+                        <p style="margin: 0 0 4px 0; color: #98a2b3; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px">PIN (for the pump terminal)</p>
+                        <p style="margin: 0; color: #101828; font-size: 17px; font-weight: 700; font-family: &quot;Courier New&quot;, monospace; letter-spacing: 2px"><%= pin %></p>
+                      </td>
+                    </tr>
+                  <% } %>
+                </table>
+
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-bottom: 24px">
+                  <tr>
+                    <td align="center">
+                      <a href="<%= loginLink %>"
+                        style="display: inline-block; padding: 14px 34px; background-color: #034ea2; color: #ffffff; text-decoration: none; border-radius: 8px; font-size: 15px; font-weight: 600">
+                        Sign in
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                  style="border-left: 4px solid #f79009; background-color: #fffaeb; border-radius: 6px">
+                  <tr>
+                    <td style="padding: 14px 18px">
+                      <p style="margin: 0; color: #93370d; font-size: 13px; line-height: 21px">
+                        Change this password as soon as you sign in — from your Profile page — and keep
+                        it to yourself. Nobody from <%= company.name %> will ever ask you for it.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <%- include('partials/company-footer') %>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

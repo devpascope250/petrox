@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { loadConfig } from '../config/env.js';
 import { loadMailConfig } from '../config/mail_config.js';
+import { companyBrand, type CompanyBrand } from '../shared/emails/company-brand.js';
 import { sendMail } from './mailer.js';
 
 // Get __dirname equivalent in ESM
@@ -18,6 +19,8 @@ interface BaseTemplateData {
   supportLink: string;
   companyAddress: string;
   unsubscribeLink: string;
+  /** Read by the brand header and company footer every template includes. */
+  company: CompanyBrand;
 }
 
 interface PasswordResetData {
@@ -53,6 +56,15 @@ interface AccountDetails {
   type: string;
 }
 
+interface NewAccountData {
+  userName: string;
+  loginEmail: string;
+  password: string;
+  pin: string | null;
+  accountType: string;
+  loginLink: string;
+}
+
 interface PasswordResetMetadata {
   location?: string;
   browser?: string;
@@ -81,6 +93,11 @@ class EmailService {
     return `"${this.config.COMPANY_NAME}" <${this.mail.from}>`;
   }
 
+  /** The saved company name for a subject line; the configured one until it is saved. */
+  private async companyName(): Promise<string> {
+    return (await companyBrand())?.name || this.config.COMPANY_NAME;
+  }
+
   private async renderTemplate<T extends Record<string, any>>(
     templateName: string,
     data: T
@@ -95,15 +112,29 @@ class EmailService {
         `${templateName}.ejs`
       );
 
+      // The saved company profile, with the environment as the fallback until
+      // it has been filled in. Its logo and details are shown in every email.
+      const saved = await companyBrand();
+      const company: CompanyBrand = {
+        name: saved?.name || this.config.COMPANY_NAME,
+        logoUrl: saved?.logoUrl ?? null,
+        address: saved?.address ?? this.config.COMPANY_ADDRESS,
+        phone: saved?.phone ?? null,
+        email: saved?.email ?? null,
+        website: saved?.website ?? null,
+        taxId: saved?.taxId ?? null,
+      };
+
       // Add common data to all templates
       const templateData: T & BaseTemplateData = {
         ...data,
+        company,
         currentYear: new Date().getFullYear(),
-        companyName: this.config.COMPANY_NAME,
+        companyName: company.name,
         privacyPolicyLink: this.config.PRIVACY_POLICY_URL,
         termsLink: this.config.TERMS_URL,
         supportLink: this.config.SUPPORT_URL,
-        companyAddress: this.config.COMPANY_ADDRESS,
+        companyAddress: company.address ?? this.config.COMPANY_ADDRESS,
         unsubscribeLink: `${this.config.APP_URL}/unsubscribe`,
       };
 
@@ -165,6 +196,33 @@ class EmailService {
       from: this.from,
       to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : userEmail,
       subject: 'Password Reset Successful',
+      html,
+    });
+  }
+
+  /**
+   * Hands a newly created user the account they can sign in with: the address
+   * it was created under and the password set for it, and the PIN too when one
+   * was generated for them. Sent once, when the account is created.
+   */
+  async sendNewAccountEmail(
+    userEmail: string,
+    userName: string,
+    credentials: { password: string; pin?: string | null; accountType?: string }
+  ): Promise<void> {
+    const html = await this.renderTemplate<NewAccountData>('new-account', {
+      userName,
+      loginEmail: userEmail,
+      password: credentials.password,
+      pin: credentials.pin ?? null,
+      accountType: credentials.accountType ?? 'Account',
+      loginLink: `${this.config.FRONTEND_URL}/login`,
+    });
+
+    await this.sendEmail({
+      from: this.from,
+      to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : userEmail,
+      subject: `Your ${await this.companyName()} account`,
       html,
     });
   }

@@ -63,6 +63,7 @@ import OperationsReport from "./modules/orders/operations.report.routes.js";
 import authPlugin from "./plugins/auth.js";
 import jwtPlugin from "./plugins/jwt.js";
 import prismaPlugin from "./plugins/prisma.js";
+import { companyBrandFromDb, useCompanyBrand } from "./shared/emails/company-brand.js";
 import { globalErrorHandler } from "./utils/error-handler.js";
 import { success } from "./shared/http/index.js";
 
@@ -82,6 +83,9 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   });
   await app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
   await app.register(prismaPlugin);
+  // Every email shows the company's saved logo and details; this is where the
+  // mail templates are given the profile to read them from.
+  useCompanyBrand(companyBrandFromDb(app.prisma, config.STATIC_URL));
   await app.register(cookie);
   await app.register(jwtPlugin);
   await app.register(authPlugin);
