@@ -37,7 +37,24 @@ export const itemIdQuerySchema = z.object(
 );
 
 export const nonEmptyNameSchema = z.string().trim().min(1).max(80);
-export const phoneSchema = z.string().trim().min(3).max(30);
+/**
+ * A phone number kept in one shape, so the same number is always the same
+ * text. `User.phone` is unique, but an index compares strings: without this,
+ * `+250 788 123 456`, `0788-123-456` and `0788123456` are three different
+ * numbers to the database and all three can be stored side by side.
+ *
+ * Spaces, dashes, dots and brackets are dropped, and a Rwandan number written
+ * `+250…` or `250…` becomes the local `07…`. Anything else is only compacted.
+ */
+export const phoneSchema = z
+  .string()
+  .trim()
+  .transform((value) => {
+    const compact = value.replace(/[\s().\-]/g, "");
+    const rwanda = /^(?:\+?250)(7\d{8})$/.exec(compact);
+    return rwanda ? `0${rwanda[1]}` : compact;
+  })
+  .pipe(z.string().min(3).max(30));
 
 export const idParamsSchema = z.object({ id: uuidSchema });
 export const id2ParamsSchema = z.object({ id2: uuidSchema });

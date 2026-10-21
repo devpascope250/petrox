@@ -28,3 +28,23 @@ describe("validation error details", () => {
     });
   });
 });
+
+describe("a unique constraint conflict", () => {
+  const conflict = (target: unknown) =>
+    normalizeError({ code: "P2002", meta: { target } } as never, "request-3").error;
+
+  it("names the column, whether the database reported the field or the index", () => {
+    // MySQL reports the index's own name …
+    expect(conflict("User_phone_key")).toMatchObject({
+      statusCode: 409,
+      code: "RESOURCE_CONFLICT",
+      data: { fields: ["phone"] },
+    });
+    // … while other databases report the fields themselves.
+    expect(conflict(["phone"]).data).toEqual({ fields: ["phone"] });
+    // A compound index names each of its columns.
+    expect(conflict("UserSites_userId_siteId_key").data).toEqual({ fields: ["userId", "siteId"] });
+    // Anything that is not of that shape is passed on as it came.
+    expect(conflict("PRIMARY").data).toEqual({ fields: ["PRIMARY"] });
+  });
+});

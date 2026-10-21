@@ -43,6 +43,20 @@ const prismaErrors: Record<string, { statusCode: number; code: string; message: 
   P1001: { statusCode: 503, code: "DATABASE_UNAVAILABLE", message: "Database service is unavailable" }
 };
 
+/**
+ * Which columns a unique constraint was violated on. Prisma hands these over
+ * differently per database: a list of field names, or — on MySQL — the index's
+ * own name, `User_phone_key`. Both come back here as field names, so a client
+ * can put the message on the input that holds the duplicate.
+ */
+function conflictedFields(target: unknown): string[] {
+  if (Array.isArray(target)) return target.map(String);
+  if (typeof target !== "string") return [];
+  // `<Model>_<field>[_<field>…]_key`, else the name as it stands.
+  const named = /^[A-Za-z]\w*?_(\w+)_key$/.exec(target);
+  return named ? named[1].split("_") : [target];
+}
+
 function formatZodPath(path: PropertyKey[]): string {
   if (path.length === 0) return "_root";
   return path.reduce<string>((result, segment) =>
@@ -83,7 +97,9 @@ export function normalizeError(error: ErrorLike, requestId: string): ErrorEnvelo
   }
   if (error.code && prismaErrors[error.code]) {
     const mapped = prismaErrors[error.code];
-    const data = error.code === "P2002" && error.meta?.target ? { fields: error.meta.target } : undefined;
+    const data = error.code === "P2002" && error.meta?.target
+      ? { fields: conflictedFields(error.meta.target) }
+      : undefined;
     return { success: false, error: { ...mapped, requestId, ...(data ? { data } : {}) } };
   }
   if (error.statusCode === 429) {
