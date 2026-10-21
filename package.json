@@ -15,7 +15,7 @@
         "prisma:migrate": "prisma migrate dev",
         "prisma:deploy": "prisma migrate deploy",
         "prisma:seed": "tsx prisma/seed.ts",
-    "prisma:seed:demo": "tsx prisma/seed.ts --demo",
+        "prisma:seed:demo": "tsx prisma/seed.ts --demo",
         "backup:decrypt": "tsx scripts/decrypt-backup.ts",
         "postinstall": "prisma generate"
     },
@@ -37,13 +37,11 @@
         "fastify": "^5.11.2",
         "fastify-plugin": "^5.0.1",
         "fastify-type-provider-zod": "^7.0.0",
-        "nodemailer": "^9.0.4",
         "zod": "^4.4.3"
     },
     "devDependencies": {
         "@types/ejs": "^3.1.5",
         "@types/node": "^24.2.0",
-        "@types/nodemailer": "^8.0.1",
         "@types/supertest": "^6.0.3",
         "prisma": "6.19.3",
         "supertest": "^7.2.2",

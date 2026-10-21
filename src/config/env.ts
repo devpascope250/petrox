@@ -1,6 +1,13 @@
 import "dotenv/config";
 import { z } from "zod";
 
+/** A key left blank in `.env` counts as not set, not as an empty value. */
+const unset = <T extends z.ZodType>(inner: T) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    inner.optional(),
+  );
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   DEV_EMAIL: z.email(),
@@ -40,10 +47,17 @@ const schema = z.object({
   /** The largest backup that may be uploaded to be decrypted on the web. */
   BACKUP_DECRYPT_MAX_MB: z.coerce.number().int().positive().max(4096).default(512),
 
-  SMTP_HOST: z.string().min(5),
-  SMTP_PORT: z.coerce.number().int().positive().default(465),
-  SMTP_USER: z.string().min(3),
-  SMTP_PASS: z.string().min(3),
+  /**
+   * Mail goes out through the Resend HTTP API (see `config/mail_config.ts`).
+   * `log` writes the message to the log instead of sending it, for local work.
+   */
+  MAIL_TRANSPORT: z.enum(["log", "resend"]).default("resend"),
+  RESEND_API_KEY: unset(z.string()),
+  /** Verified sender address and display name; FROM_EMAIL / COMPANY_NAME when left out. */
+  RESEND_FROM: unset(z.email()),
+  RESEND_FROM_NAME: unset(z.string()),
+  /** Left out, no reply-to header is sent. */
+  MAIL_REPLY_TO: unset(z.email()),
   COMPANY_NAME: z.string().min(1).trim(),
   COMPANY_ADDRESS: z.string().default('123 Business St, City, State 12345'),
   APP_URL: z.url(),

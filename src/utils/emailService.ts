@@ -1,8 +1,9 @@
 import ejs from 'ejs';
-import nodemailer, { Transporter } from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { loadConfig } from '../config/env.js';
+import { loadMailConfig } from '../config/mail_config.js';
+import { sendMail } from './mailer.js';
 
 // Get __dirname equivalent in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -67,24 +68,17 @@ interface EmailOptions {
 // Environment variables interface
 
 class EmailService {
-  private transporter: Transporter;
   private config = loadConfig();
+  private mail = loadMailConfig(this.config);
 
-  constructor() {
-    this.transporter = this.createTransporter();
-  } 
-
-
-  private createTransporter(): Transporter {
-    return nodemailer.createTransport({
-      host: this.config.SMTP_HOST,
-      port: this.config.SMTP_PORT,
-      secure: this.config.SMTP_PORT === 465,
-      auth: {
-        user: this.config.SMTP_USER,
-        pass: this.config.SMTP_PASS,
-      },
-    });
+  /**
+   * The sender every message goes out under, unchanged in shape from before:
+   * the company name in front of the address. Resend will only send from a
+   * domain verified in its account, so a configured RESEND_FROM wins over
+   * FROM_EMAIL.
+   */
+  private get from(): string {
+    return `"${this.config.COMPANY_NAME}" <${this.mail.from}>`;
   }
 
   private async renderTemplate<T extends Record<string, any>>(
@@ -121,13 +115,10 @@ class EmailService {
   }
 
   private async sendEmail(options: EmailOptions): Promise<void> {
-    try {
-      await this.transporter.sendMail(options);
-      console.log(`Email sent successfully to ${options.to}`);
-    } catch (error) {
-      console.error('Error sending email:', error);
-      throw new Error('Failed to send email');
-    }
+    // The mailer logs why it failed; the caller only needs to know that it did.
+    const sent = await sendMail(options, this.mail);
+    if (!sent) throw new Error('Failed to send email');
+    console.log(`Email sent successfully to ${options.to}`);
   }
 
   async sendPasswordResetEmail(
@@ -147,7 +138,7 @@ class EmailService {
     });
 
     await this.sendEmail({
-      from: `"${this.config.COMPANY_NAME}" <${this.config.FROM_EMAIL}>`,
+      from: this.from,
       to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : userEmail,
       subject: 'Reset Your Password',
       html,
@@ -171,7 +162,7 @@ class EmailService {
     );
 
     await this.sendEmail({
-      from: `"${this.config.COMPANY_NAME}" <${this.config.FROM_EMAIL}>`,
+      from: this.from,
       to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : userEmail,
       subject: 'Password Reset Successful',
       html,
@@ -200,7 +191,7 @@ class EmailService {
     );
 
     await this.sendEmail({
-      from: `"${this.config.COMPANY_NAME}" <${this.config.FROM_EMAIL}>`,
+      from: this.from,
       to: userEmail,
       subject: `Welcome to ${this.config.COMPANY_NAME}! 🎉`,
       html,
@@ -226,23 +217,28 @@ class EmailService {
     });
 
     await this.sendEmail({
-      from: `"${this.config.COMPANY_NAME}" <${this.config.FROM_EMAIL}>`,
+      from: this.from,
       to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : userEmail,
       subject: report.ok ? 'Your database backup is ready' : 'Your database backup failed',
       html,
     });
   }
 
-  // Utility method to verify transporter connection
+  /**
+   * Resend is called per message, so there is no connection to open. This says
+   * whether mail can go out at all: a key is configured, or it is being logged.
+   */
   async verifyConnection(): Promise<boolean> {
-    try {
-      await this.transporter.verify();
-      console.log('Email service connection verified successfully');
+    if (this.mail.transport === 'log') {
+      console.log('Email service is writing messages to the log, not sending them');
       return true;
-    } catch (error) {
-      console.error('Email service connection failed:', error);
+    }
+    if (this.mail.apiKey === '') {
+      console.error('Email service is not configured: RESEND_API_KEY is missing');
       return false;
     }
+    console.log('Email service connection verified successfully');
+    return true;
   }
 }
 
