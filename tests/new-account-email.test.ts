@@ -65,6 +65,9 @@ describe("every email", () => {
     expect(html).toContain("KN 4 Ave, Kigali");
     expect(html).toContain("+250 788 000 000");
     expect(html).toContain("TIN: 100123456");
+    // Who built the system, on every email that leaves it.
+    expect(html).toContain("Powered by");
+    expect(html).toContain('href="https://itec.rw/"');
   });
 
   it("leaves out the picture, and each missing detail, when the profile has none", async () => {
