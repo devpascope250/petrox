@@ -227,7 +227,8 @@ describe("site data sync", () => {
     const { svc, repo } = service(base);
     const first = await svc.bootstrap("d");
     expect(repo.siteEquipment).toHaveBeenCalledWith(SITE_A);
-    expect(repo.paymentAccounts).toHaveBeenCalledWith(SITE_A);
+    // Not scoped to the site: every active account in the company is sent.
+    expect(repo.paymentAccounts).toHaveBeenCalledWith();
     // The accounts a sale's payments may name, so the POS never has to guess an id.
     expect(first.accounts).toEqual(ACCOUNTS);
     expect(first.version).toMatch(/^[0-9a-f]{32}$/);

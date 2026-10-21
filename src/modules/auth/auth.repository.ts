@@ -36,6 +36,33 @@ export class AuthRepository {
   findPasswordResetToken(tokenHash: string) {
     return this.db.passwordResetToken.findUnique({ where: { tokenHash } });
   }
+  /**
+   * The permissions the signed-in user holds, by name, with the module each
+   * belongs to — what the Profile page shows instead of bare codes.
+   */
+  permissionsOfRole(roleId: string) {
+    return this.db.rolePermission.findMany({
+      where: { roleId },
+      orderBy: [{ permission: { module: { sorting: "asc" } } }, { permission: { module: { name: "asc" } } }, { permission: { name: "asc" } }],
+      select: {
+        permission: {
+          select: {
+            id: true, name: true, code: true, description: true,
+            module: { select: { id: true, name: true, code: true, icon: true, parent: { select: { id: true, name: true } } } },
+          },
+        },
+      },
+    });
+  }
+
+  /** A password the user changed themselves: every other session is dropped. */
+  changePassword(userId: string, passwordHash: string) {
+    return this.db.$transaction([
+      this.db.user.update({ where: { id: userId }, data: { passwordHash } }),
+      this.db.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } }),
+    ]);
+  }
+
   async consumePasswordResetToken(id: string, userId: string, passwordHash: string) {
     return this.db.$transaction([
       this.db.passwordResetToken.update({ where: { id }, data: { usedAt: new Date() } }),

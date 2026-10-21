@@ -169,13 +169,15 @@ Something changed — replace the local copy whole and store the new version:
 { "success": true, "data": { "changed": true, "version": "7a01…", "serverTime": "…", "site": { … }, "equipment": { … }, "accounts": [ … ] } }
 ```
 
-- `accounts` are the company accounts a sale's money may go into at this site: active, the
-  site's own or the company's, each with `id`, `code`, `name`, `type`, `requiredReference`
+- `accounts` are the company's accounts a sale's money may go into: every active one,
+  whichever site it belongs to, each with `id`, `code`, `name`, `type`, `requiredReference`
   and `siteId` (`null` = the whole company). **This is where the `accountId` in a sale's
   `payments` comes from** — the POS offers these and nothing else, and asks for a reference
   number when `requiredReference` is set. Accounts of type `coupon` and `card` are left out:
   the server records those itself when a sale is paid with coupons or a client's card, and
-  naming one in `payments` is refused.
+  naming one in `payments` is refused. ⚠️ An account tied to **another** site is refused when
+  the sale is confirmed (`422 ACCOUNT_NOT_AT_SITE`), so a POS that only wants to offer what
+  will be accepted should keep those whose `siteId` is `null` or its own site's.
 - Any change to what the POS stores — a pump, nozzle, tank, price, shift, payment account
   or the site's details, added, edited, switched off or removed — gives a new version.
 - Tank **levels** are not in the stored data (`catalog.cuves` carries no `balance`): they

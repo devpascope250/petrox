@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { created, success } from "../../shared/http/index.js";
 import { parseInput } from "../../shared/validation/index.js";
 import { AuthService } from "./auth.service.js";
-import { loginSchema, pinLoginSchema, resetPasswordSchema, resetRequestSchema } from "./auth.schema.js";
+import { changePasswordSchema, loginSchema, pinLoginSchema, resetPasswordSchema, resetRequestSchema } from "./auth.schema.js";
 import type { AppConfig } from "../../config/env.js";
 import { unauthorized } from "../../utils/errors.js";
 
@@ -82,6 +82,21 @@ export class AuthController {
 
   me = async (request: FastifyRequest) =>
     success(await this.service.me(request.contextUser!.userId));
+
+  /** The signed-in user's own permissions, by name, grouped by module. */
+  myPermissions = async (request: FastifyRequest) =>
+    success(await this.service.myPermissions(request.contextUser!.userId));
+
+  /**
+   * Changes your own password. Other sessions are dropped, so this one is
+   * handed a fresh pair of cookies and carries on.
+   */
+  changePassword = async (request: FastifyRequest, reply: FastifyReply) => {
+    const input = parseInput(changePasswordSchema, request.body);
+    const session = await this.service.changePassword(request.contextUser!.userId, input);
+    this.setSessionCookies(reply, session);
+    return success(this.publicSession(session));
+  };
 
   requestReset = async (request: FastifyRequest, reply: FastifyReply) =>
     created(reply, await this.service.createResetToken(parseInput(resetRequestSchema, request.body).email));

@@ -11,6 +11,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   app.post("/refresh", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, controller.refresh);
   app.post("/logout", controller.logout);
   app.get("/me", { preHandler: [app.authenticate] }, controller.me);
+  app.get("/me/permissions", { preHandler: [app.authenticate] }, controller.myPermissions);
+  app.post("/change-password", { ...limited, preHandler: [app.authenticate] }, controller.changePassword);
   app.post("/password-reset/request", controller.requestReset);
   app.post("/password-reset/confirm", limited, controller.resetPassword);
 };

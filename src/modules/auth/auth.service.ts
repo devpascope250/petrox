@@ -5,6 +5,7 @@ import { createOpaqueToken, hashToken, verifyPin } from "../../utils/crypto.js";
 import { AppError, unauthorized } from "../../utils/errors.js";
 import { AuthRepository } from "./auth.repository.js";
 import { emailService} from "../../utils/emailService.js";
+import type { ChangePasswordInput } from "./auth.schema.js";
 type AuthUser = NonNullable<Awaited<ReturnType<AuthRepository["findUserByEmail"]>>>;
 
 export class AuthService {
@@ -72,6 +73,46 @@ export class AuthService {
     await emailService.sendPasswordResetEmail(user.email, user.firstName, token);
     return { expiresAt };
   }
+  /**
+   * The signed-in user's permissions grouped by the module they belong to, by
+   * name rather than code — the Profile page's "my permissions".
+   */
+  async myPermissions(userId: string) {
+    const user = await this.repo.findUserById(userId);
+    this.ensureActive(user);
+    const rows = user.roleId ? await this.repo.permissionsOfRole(user.roleId) : [];
+    type Row = (typeof rows)[number]["permission"];
+    const groups = new Map<string, { module: Row["module"]; permissions: Array<Omit<Row, "module">> }>();
+    for (const { permission } of rows) {
+      const { module, ...rest } = permission;
+      const group = groups.get(module.id) ?? { module, permissions: [] };
+      group.permissions.push(rest);
+      groups.set(module.id, group);
+    }
+    return {
+      role: user.role ? { id: user.role.id, name: user.role.name } : null,
+      total: rows.length,
+      modules: [...groups.values()],
+    };
+  }
+
+  /**
+   * Changes your own password. The current one must be given, and every other
+   * session is signed out; this one carries on with a fresh pair of tokens.
+   */
+  async changePassword(userId: string, input: ChangePasswordInput) {
+    const user = await this.repo.findUserById(userId);
+    this.ensureActive(user);
+    if (!(await bcrypt.compare(input.currentPassword, user.passwordHash))) {
+      throw new AppError(422, "CURRENT_PASSWORD_WRONG", "That is not your current password");
+    }
+    await this.repo.changePassword(userId, await bcrypt.hash(input.newPassword, 12));
+    // Re-read, so the session is issued from the record as it now stands.
+    const updated = await this.repo.findUserById(userId);
+    this.ensureActive(updated);
+    return this.issue(updated);
+  }
+
   async resetPassword(token: string, password: string) {
     const stored = await this.repo.findPasswordResetToken(hashToken(token));
     if (!stored || stored.usedAt || stored.expiresAt <= new Date()) throw unauthorized("Invalid or expired reset token");
