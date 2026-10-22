@@ -17,7 +17,19 @@ export async function parseCargoInvoiceMultipart(request: FastifyRequest) {
       continue;
     }
 
-    if (part.fieldname !== "supportingDoc" && part.fieldname !== "supportingDocument") {
+    /*
+     * The document, under any of the names the clients use. The web app sends
+     * it as `supportingDocUrl` — the same name the cargo and PFI endpoints
+     * take — and it used to be dropped here, so an invoice was saved with no
+     * document at all and there was nothing to open. A *text* field of that
+     * name is still ignored above: the stored path is generated, never taken
+     * from the client.
+     */
+    if (
+      part.fieldname !== "supportingDoc" &&
+      part.fieldname !== "supportingDocument" &&
+      part.fieldname !== "supportingDocUrl"
+    ) {
       part.file.resume();
       continue;
     }

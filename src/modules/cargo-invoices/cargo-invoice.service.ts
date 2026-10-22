@@ -1,4 +1,5 @@
 import type { AppConfig } from "../../config/env.js";
+import { documentUrl } from "../../utils/static-url.js";
 import { NotFoundError } from "../../utils/errors.js";
 import { CargoInvoiceRepository } from "./cargo-invoice.repository.js";
 import type { CreateCargoInvoiceInput, UpdateCargoInvoiceInput } from "./cargo-invoice.schema.js";
@@ -37,11 +38,8 @@ export class CargoInvoiceService {
   }
 
   private withDocumentUrl<T extends { supportingDocUrl: string | null }>(invoice: T): T {
-    return {
-      ...invoice,
-      supportingDocUrl: invoice.supportingDocUrl
-        ? new URL(invoice.supportingDocUrl, this.config.APP_URL).toString()
-        : null,
-    };
+    // `STATIC_URL` is the public address uploads are served at, so the document
+    // opens from the web app's own origin too — see `documentUrl`.
+    return { ...invoice, supportingDocUrl: documentUrl(this.config, invoice.supportingDocUrl) };
   }
 }

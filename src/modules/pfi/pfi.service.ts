@@ -1,4 +1,5 @@
 import type { AppConfig } from "../../config/env.js";
+import { documentUrl } from "../../utils/static-url.js";
 import { DatesQuerySchema } from "../../shared/validation/primitives.js";
 import { within2DaysPeriod } from "../../utils/utils.js";
 import { paginatedData } from "../../shared/pagination/index.js";
@@ -29,12 +30,9 @@ export class PfiService {
   }
 
   private withDocumentUrl<T extends { supportingDocUrl: string | null }>(pfi: T): T {
-    return {
-      ...pfi,
-      supportingDocUrl: pfi.supportingDocUrl
-        ? new URL(pfi.supportingDocUrl, this.config.APP_URL).toString()
-        : null,
-    };
+    // `STATIC_URL` is the public address uploads are served at, so the document
+    // opens from the web app's own origin too — see `documentUrl`.
+    return { ...pfi, supportingDocUrl: documentUrl(this.config, pfi.supportingDocUrl) };
   }
 
   async updateCurrency(id: string, input: CreateCurrancySchema) {
