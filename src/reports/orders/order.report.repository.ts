@@ -81,6 +81,20 @@ export class OrderReportRepository {
             supportingDocUrl: true,
             createdAt: true,
             deport: { select: { id: true, name: true, location: true, type: true, status: true } },
+            // A PFI invoices the shipment, so it sits beside its invoices.
+            pfis: {
+              orderBy: { createdAt: "asc" },
+              select: {
+                id: true,
+                pifCode: true,
+                pfiReference: true,
+                currancyCode: true,
+                unitPrice: true,
+                amount: true,
+                supportingDocUrl: true,
+                createdAt: true,
+              },
+            },
             cargoInvoices: {
               orderBy: { createdAt: "asc" },
               select: {
@@ -131,19 +145,6 @@ export class OrderReportRepository {
                                 tankCapacity: true,
                               },
                             },
-                          },
-                        },
-                        pfis: {
-                          orderBy: { createdAt: "asc" },
-                          select: {
-                            id: true,
-                            pifCode: true,
-                            pfiReference: true,
-                            currancyCode: true,
-                            unitPrice: true,
-                            amount: true,
-                            supportingDocUrl: true,
-                            createdAt: true,
                           },
                         },
                         t1Validations: {
@@ -222,7 +223,6 @@ export class OrderReportRepository {
       createdAt: string;
       fromThisOrder: number;
       driverVehicle: unknown;
-      pfis: unknown[];
       t1Validations: unknown[];
       loads: Array<{
         vesselId: string;
@@ -244,6 +244,9 @@ export class OrderReportRepository {
     let invoicedQuantity = 0;
     const cargosByStatus: Record<string, number> = {};
     const invoicedByCurrency: Record<string, number> = {};
+    // PFIs are counted with the cargo they invoice, below.
+    const pfiAmountByCurrency: Record<string, number> = {};
+    let pfiCount = 0;
 
     const cargos = order.cargos.map((cargo) => {
       cargosByStatus[cargo.status] = (cargosByStatus[cargo.status] ?? 0) + 1;
@@ -260,6 +263,22 @@ export class OrderReportRepository {
         detail: `${cargo.vesselName}${cargo.blRef ? ` · BL ${cargo.blRef}` : ""} · ${num(cargo.quantityInLitre).toLocaleString("en-US")} L`,
         by: null,
       });
+
+      // A PFI invoices the shipment, so it is counted and timed here rather
+      // than under the nomination that later loaded from it.
+      for (const pfi of cargo.pfis) {
+        pfiCount += 1;
+        pfiAmountByCurrency[pfi.currancyCode] = round(
+          (pfiAmountByCurrency[pfi.currancyCode] ?? 0) + num(pfi.amount),
+        );
+        events.push({
+          at: pfi.createdAt.toISOString(),
+          type: "pfi",
+          title: "PFI raised",
+          detail: `${pfi.pifCode} · ${num(pfi.amount).toLocaleString("en-US")} ${pfi.currancyCode} · ${cargo.vesselName}`,
+          by: null,
+        });
+      }
 
       for (const invoice of cargo.cargoInvoices) {
         invoiceCount += 1;
@@ -311,12 +330,6 @@ export class OrderReportRepository {
               createdAt: nomination.createdAt.toISOString(),
               fromThisOrder: 0,
               driverVehicle: nomination.driverVehicle,
-              pfis: nomination.pfis.map((pfi) => ({
-                ...pfi,
-                unitPrice: num(pfi.unitPrice),
-                amount: num(pfi.amount),
-                createdAt: pfi.createdAt.toISOString(),
-              })),
               t1Validations: nomination.t1Validations.map((t1) => ({
                 ...t1,
                 quantityAt20C: num(t1.quantityAt20C),
@@ -356,15 +369,6 @@ export class OrderReportRepository {
                     : ""
                 }`,
                 by: stageEntry.by,
-              });
-            }
-            for (const pfi of nomination.pfis) {
-              events.push({
-                at: pfi.createdAt.toISOString(),
-                type: "pfi",
-                title: "PFI raised",
-                detail: `${pfi.pifCode} · ${num(pfi.amount).toLocaleString("en-US")} ${pfi.currancyCode}`,
-                by: null,
               });
             }
             for (const t1 of nomination.t1Validations) {
@@ -416,7 +420,6 @@ export class OrderReportRepository {
             ambQuantity: num(nomination.ambQuantity),
             vesselId: vessel.id,
             vesselQuantity: quantity,
-            pfis: entry.pfis,
             t1Validations: entry.t1Validations,
           };
         });
@@ -440,19 +443,11 @@ export class OrderReportRepository {
       a.createdAt.localeCompare(b.createdAt),
     );
 
-    const pfiAmountByCurrency: Record<string, number> = {};
-    let pfiCount = 0;
     let t1Count = 0;
     let t1ValidatedAt20C = 0;
     const customsChecks = { total: 0, confirmed: 0, pending: 0, cancelled: 0 };
 
     for (const nomination of nominationRows) {
-      for (const pfi of nomination.pfis as Array<{ amount: number; currancyCode: string }>) {
-        pfiCount += 1;
-        pfiAmountByCurrency[pfi.currancyCode] = round(
-          (pfiAmountByCurrency[pfi.currancyCode] ?? 0) + pfi.amount,
-        );
-      }
       for (const t1 of nomination.t1Validations as Array<{
         quantityAt20C: number;
         extraValidations: Array<{ status: string }>;

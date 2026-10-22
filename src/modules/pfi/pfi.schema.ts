@@ -1,10 +1,16 @@
 import { z } from "zod";
 import {
+  cuidSchema,
   nonEmptyNameSchema,
   uuidSchema,
 } from "../../shared/validation/index.js";
+
+/**
+ * A PFI invoices a shipment, so it belongs to the **cargo** — not to the
+ * nomination that later loads from it. Cargo ids are cuids.
+ */
 export const createPfiSchema = z.object({
-  nominationId: uuidSchema,
+  cargoId: cuidSchema,
   currencyId: uuidSchema,
   currancyCode: nonEmptyNameSchema,
   amount: z.coerce.number(),

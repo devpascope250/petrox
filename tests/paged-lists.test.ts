@@ -61,15 +61,15 @@ describe("every growing list asks the database for one page", () => {
     expect((model.count.mock.calls[0][0] as any).where).toEqual(findMany.where);
   });
 
-  it("nominations: pages, and still only those with no PFI when asked", async () => {
+  it("nominations: pages inside the window, narrowed to one product", async () => {
     const { db, model } = spyDb();
-    const query = nominationListQuerySchema.parse({ ...page, withoutPfi: "true" });
+    const query = nominationListQuerySchema.parse({ ...page, itemId: "00000000-0000-4000-8000-000000000001" });
     const window = { startDate: new Date("2026-03-01"), endDate: new Date("2026-03-31") };
     await new NominationRepository(db).list({ ...query, ...window });
 
     const findMany = model.findMany.mock.calls[0][0] as any;
     expect(findMany).toMatchObject({ skip: 20, take: 10 });
-    expect(findMany.where.pfis).toEqual({ none: {} });
+    expect(findMany.where.nominationVessels).toEqual({ some: { stock: { itemId: query.itemId } } });
     expect(findMany.where.createdAt).toEqual({ gte: window.startDate, lte: window.endDate });
     expect((model.count.mock.calls[0][0] as any).where).toEqual(findMany.where);
   });

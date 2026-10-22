@@ -1,4 +1,5 @@
 import type { CargoStatus, Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { generatePfiCode } from "../../utils/randomCodegen.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import type { CargoListQuery, CreateCargoSchema } from "./cargo.schema.js";
@@ -58,7 +59,16 @@ export class CargoRepository {
             itemId: true
           }
         },
-        cargoInvoices: true
+        cargoInvoices: true,
+        // What its drawer lists beside the invoices.
+        pfis: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true, pifCode: true, pfiReference: true, currancyCode: true,
+            unitPrice: true, amount: true, supportingDocUrl: true, createdAt: true,
+            currency: { select: { id: true, code: true, name: true } },
+          },
+        },
       },
     }),
       this.db.cargo.count({ where }),
@@ -73,6 +83,7 @@ export class CargoRepository {
       if ((data.quantityInLitre + cargoStocks) > Number(order?.quantity)) throw new BusinessError("400", "The Cargo Quantities must be less than or equal to ordered quanties.");
     }
     
+    const { pfi } = data;
     return await this.db.cargo.create({
       data: {
         deportId: data.deportId,
@@ -86,8 +97,27 @@ export class CargoRepository {
         tansisRef: data.tansisRef,
         outurnRef: data.outurnRef,
         supportingDocUrl: data.supportingDocUrl,
-        blRef: data.blRef
+        blRef: data.blRef,
+        // Raised with the shipment when the supplier's invoice came with it.
+        // One write, so a refused PFI — a reference already used — leaves no
+        // cargo behind either.
+        ...(pfi
+          ? {
+              pfis: {
+                create: {
+                  currencyId: pfi.currencyId,
+                  currancyCode: pfi.currancyCode,
+                  pfiReference: pfi.pfiReference,
+                  pifCode: generatePfiCode(),
+                  unitPrice: pfi.unitPrice,
+                  amount: pfi.amount,
+                  supportingDocUrl: pfi.supportingDocUrl,
+                },
+              },
+            }
+          : {}),
       },
+      include: { pfis: true },
     });
   }
 
@@ -163,7 +193,18 @@ export class CargoRepository {
         select: {
           itemId: true
         }
-      }
+      },
+      pfis: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true, pifCode: true, pfiReference: true, currancyCode: true,
+          unitPrice: true, amount: true, supportingDocUrl: true, createdAt: true,
+          currency: { select: { id: true, code: true, name: true } },
+        },
+      },
+      cargoInvoices: {
+        orderBy: { createdAt: "asc" },
+      },
     } });
   }
 

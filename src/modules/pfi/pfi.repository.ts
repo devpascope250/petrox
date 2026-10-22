@@ -26,17 +26,28 @@ export class PfiRepository {
       currency: true,
       pifCode: true,
       pfiReference: true,
-      nominationId: true,
+      cargoId: true,
       unitPrice: true,
       supportingDocUrl: true,
-      nomination: {
-        include: {
-          t1Validations: {
-            include: {
-              extraValidations: true
-            }
-          }
-        }
+      createdAt: true,
+      // The shipment it invoices, and the order that shipment belongs to.
+      cargo: {
+        select: {
+          id: true,
+          blRef: true,
+          vesselName: true,
+          receivedDate: true,
+          status: true,
+          quantityInLitre: true,
+          deport: { select: { id: true, name: true } },
+          order: {
+            select: {
+              id: true,
+              orderCode: true,
+              item: { select: { id: true, name: true, baseUnit: { select: { code: true } } } },
+            },
+          },
+        },
       },
       },
     }),
@@ -44,29 +55,26 @@ export class PfiRepository {
     ]);
   }
 
+  /**
+   * Raises a PFI against a cargo. A shipment may be invoiced more than once —
+   * the cargo's drawer lists them all — so this does not refuse a second one;
+   * the reference and the generated code stay unique.
+   */
   async create(data: CreatePfiSchema) {
-      const pfiCode = generatePfiCode();
-      const existd = await this.findByNomination(data.nominationId);
-      if (existd) throw new BusinessError("400", `The Pfi is Already Created on ${existd.pifCode}`)
-        return await this.db.$transaction(async(tx) => {
-      const status = await tx.nominationTimeLineStatus.findFirst({where: {status: "underLoading"}});
-      if(status){
-        await tx.nominationTimeLine.create({data: { nominationId: data.nominationId, timeLineStatusId: status.id, changedBy: data.createdBy }})
-      }
-      return await tx.pfi.create({
+    const cargo = await this.db.cargo.findUnique({ where: { id: data.cargoId }, select: { id: true } });
+    if (!cargo) throw new NotFoundError("Cargo");
+    return await this.db.pfi.create({
       data: {
         amount: data.amount,
         currancyCode: data.currancyCode,
         pfiReference: data.pfiReference,
-        pifCode: pfiCode,
+        pifCode: generatePfiCode(),
         currencyId: data.currencyId,
-        nominationId: data.nominationId,
+        cargoId: data.cargoId,
         unitPrice: data.unitPrice,
         supportingDocUrl: data.supportingDocUrl
       },
     });
-      });
-
   }
 
   async update(id: string, data: CreatePfiSchema) {
@@ -78,7 +86,7 @@ export class PfiRepository {
         currancyCode: data.currancyCode,
         pfiReference: data.pfiReference,
         currencyId: data.currencyId,
-        nominationId: data.nominationId,
+        cargoId: data.cargoId,
         unitPrice: data.unitPrice,
         supportingDocUrl: data.supportingDocUrl
       }
@@ -89,8 +97,17 @@ export class PfiRepository {
   find(id: string) {
     return this.db.pfi.findUnique({ where: { id } });
   }
-    findByNomination(nominationId: string) {
-    return this.db.pfi.findFirst({ where: { nominationId } });
+  /** Every PFI raised against one cargo, oldest first — what its drawer lists. */
+  listByCargo(cargoId: string) {
+    return this.db.pfi.findMany({
+      where: { cargoId },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true, pifCode: true, pfiReference: true, currancyCode: true,
+        unitPrice: true, amount: true, supportingDocUrl: true, createdAt: true,
+        currency: { select: { id: true, code: true, name: true } },
+      },
+    });
   }
 
   async createCurrency(data: CreateCurrancySchema) {

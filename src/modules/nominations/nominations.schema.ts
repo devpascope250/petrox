@@ -65,11 +65,6 @@ export const addNominationVesselSchema = z.union([
  */
 export const nominationListQuerySchema = pagedDatesQuerySchema.extend({
   itemId: uuidSchema.optional(),
-  /**
-   * Only nominations that carry no PFI yet — the ones stock can still be
-   * added to, since invoicing fixes what a nomination is carrying.
-   */
-  withoutPfi: z.enum(["true", "false"]).optional().transform((value) => value === "true"),
 });
 
 export type NominationListQuerySchema = z.infer<typeof nominationListQuerySchema>;

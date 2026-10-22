@@ -133,11 +133,9 @@ export class NominationRepository {
 
   /** One page of the nominations in the window, with the total behind it. */
   async list(query: NominationListQuerySchema & { startDate: Date; endDate: Date }) {
-    const { startDate, endDate, itemId, withoutPfi } = query;
+    const { startDate, endDate, itemId } = query;
     const where: Prisma.NominationWhereInput = {
       ...(itemId ? { nominationVessels: { some: { stock: { itemId } } } } : {}),
-      // Nominations still open for more stock: none of them invoiced yet.
-      ...(withoutPfi ? { pfis: { none: {} } } : {}),
       createdAt: {
         gte: startDate,
         lte: endDate
@@ -345,18 +343,16 @@ export class NominationRepository {
    * new row, and the nomination's own quantity grows by their total. Nothing
    * already on the nomination is touched.
    *
-   * Refused once the nomination carries a PFI — invoicing fixes what it is
-   * carrying, so stock added afterwards would not be on the invoice.
+   * This used to be refused once the nomination carried a PFI. A PFI now
+   * invoices the cargo rather than the trip, so a nomination carries none and
+   * there is nothing here to fix its load.
    */
   async addVessels(id: string, vessels: NominationVesselSchema[]) {
     const nomination = await this.db.nomination.findUnique({
       where: { id },
-      select: { id: true, driverVehicleId: true, _count: { select: { pfis: true } } },
+      select: { id: true, driverVehicleId: true },
     });
     if (!nomination) throw new NotFoundError("Nomination not found");
-    if (nomination._count.pfis > 0) {
-      throw new BusinessError("400", "This nomination is already invoiced, so no more stock can be added to it");
-    }
     return await this.db.$transaction(async (tx) => {
       // What the nomination already carries counts here: added stock must be
       // the same product.

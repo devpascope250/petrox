@@ -49,13 +49,6 @@ function graph(options: Options = {}) {
         trailerNumber: null, tankCapacity: dec(40000),
       },
     },
-    pfis: withPfi
-      ? [{
-          id: `pfi-${id}`, pifCode: "PFI7A5351954F", pfiReference: "PFIfff099",
-          currancyCode: "RWF", unitPrice: dec(595), amount: dec(200),
-          supportingDocUrl: null, createdAt: at("2026-09-24T10:28:00.000Z"),
-        }]
-      : [],
     t1Validations: withT1
       ? [{
           id: `t1-${id}`, exportingCountry: "Rwanda", quantityAt20C: dec(945),
@@ -124,6 +117,13 @@ function graph(options: Options = {}) {
         receivedDate: at("2026-09-23T12:26:00.000Z"), expirationDate: at("2026-12-23T00:00:00.000Z"),
         supportingDocUrl: null, createdAt: at("2026-09-23T12:26:00.000Z"),
         deport: { id: "d1", name: "DR", location: "Dar es Salaam", type: "foreign", status: "active" },
+        pfis: withPfi
+          ? [{
+              id: "pfi-c0", pifCode: "PFI7A5351954F", pfiReference: "PFIfff099",
+              currancyCode: "RWF", unitPrice: dec(595), amount: dec(200),
+              supportingDocUrl: null, createdAt: at("2026-09-24T10:28:00.000Z"),
+            }]
+          : [],
         cargoInvoices: [{
           id: "inv1", invoiceCode: "INV-1", invoiceReference: "REF-1", quantity: dec(500),
           unitPrice: dec(1200), amount: dec(600000), currencyCode: "RWF",
@@ -137,6 +137,7 @@ function graph(options: Options = {}) {
         receivedDate: at("2026-09-23T12:28:00.000Z"), expirationDate: at("2026-12-23T00:00:00.000Z"),
         supportingDocUrl: null, createdAt: at("2026-09-23T12:28:00.000Z"),
         deport: { id: "d1", name: "DR", location: "Dar es Salaam", type: "foreign", status: "active" },
+        pfis: [],
         cargoInvoices: [],
         stocks: [stocks[1]],
       },
@@ -209,7 +210,9 @@ describe("order supply-chain report", () => {
       nominated: 0,
       nominationCount: 0,
       freeToNominate: 1000,
-      pfiCount: 0,
+      // The shipment is still invoiced: a PFI belongs to the cargo, so it is
+      // counted whether or not a truck has been nominated against it yet.
+      pfiCount: 1,
       t1Count: 0,
       nominationVsT1Variance: null,
       currentStage: null,
