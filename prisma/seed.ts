@@ -93,7 +93,7 @@ export const MODULE_TREE: ModuleNode[] = [
       { id: "32483c51-caeb-4eda-a9d8-a0891e9c624b", code: "TRANSPORTERS", name: "Transporters", icon: "Container", prefix: "transporters" },
       { id: "3db24ea1-8c54-4947-b607-d88ccffa5c36", code: "VEHICLES", name: "Vehicles", icon: "Truck", prefix: "vehicles" },
       { id: "f33369c4-bf68-4eee-9a96-0094540c41f8", code: "DRIVERS", name: "Drivers", icon: "IdCard", prefix: "drivers" },
-      { id: "9e7fcf78-a2ac-47f5-bc33-9a1f515662df", code: "DEPORTS", name: "Deports", icon: "Warehouse", prefix: "deports" },
+      { id: "9e7fcf78-a2ac-47f5-bc33-9a1f515662df", code: "DEPORTS", name: "Depots", icon: "Warehouse", prefix: "deports" },
     ] },
     { id: "9308490d-4f55-4e3f-8eaf-f06b5b7e2597", code: "SUPPLY_CHAIN_IMPORT_TRANSIT_DEPOT_AND_WAREHOUSE", name: "Import, Transit, Depot and Warehouse", icon: "Route", children: [
       { id: "8d2e1f75-6254-4a17-ad5f-9bf77a98a6ab", code: "ORDERS", name: "Orders", icon: "ClipboardList", prefix: "orders" },
@@ -156,10 +156,20 @@ export function seedId(key: string) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
+/**
+ * Words the permission codes spell one way and people read another. The codes
+ * cannot change — routes and granted roles are written against them — so only
+ * what is shown is corrected.
+ */
+const SUBJECT_SPELLING: Array<[RegExp, string]> = [[/\bDeports?\b/g, "Depots"]];
+
 function permissionName(code: string) {
   const parts = code.split(".");
   const action = parts.pop() ?? "manage";
-  const subject = parts.join(" ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const subject = SUBJECT_SPELLING.reduce(
+    (text, [wrong, right]) => text.replace(wrong, right),
+    parts.join(" ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
+  );
   const verb = action === "read" ? "View" : `${action[0]?.toUpperCase() ?? ""}${action.slice(1)}`;
   return `${verb} ${subject}`;
 }

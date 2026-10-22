@@ -46,3 +46,22 @@ describe("seed module catalogue", () => {
     }
   });
 });
+
+describe("what a permission is called", () => {
+  const permissions = flattenModules().flatMap((module) => module.permissions);
+  const find = (code: string) => permissions.find((permission) => permission.code === code);
+
+  it('reads "depot", although the codes keep the old "deport" spelling', () => {
+    // The codes cannot change: routes and granted roles are written against them.
+    expect(find("deports.read")).toMatchObject({ name: "View Depots" });
+    expect(find("deports.manage")?.name).toBe("Manage Depots");
+    expect(find("deports.read")?.description).toBe("View Depots permission");
+    // No permission is still named after the misspelling.
+    expect(permissions.filter((p) => /deport/i.test(p.name))).toEqual([]);
+  });
+
+  it("still names the other subjects from their code", () => {
+    expect(find("cards.read")?.name).toBe("View Cards");
+    expect(find("orders.plan.edit")?.name).toBe("Edit Orders Plan");
+  });
+});
