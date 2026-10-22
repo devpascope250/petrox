@@ -71,10 +71,9 @@ const nominationSelect = {
   updatedAt: true,
   nominationVessels: vesselsSelect,
   driverVehicle: driverVehicleSelect,
-  // Once a nomination is invoiced, what it carries is fixed — callers use this
-  // to decide whether more stock may be loaded onto it. The T1 count says
-  // whether customs validation has been raised.
-  _count: { select: { pfis: true, t1Validations: true } },
+  // Whether customs validation has been raised. A PFI invoices the cargo, not
+  // the trip, so there is no PFI count here any more.
+  _count: { select: { t1Validations: true } },
   // The furthest stage reached, so a list can show progress without fetching
   // every nomination's timeline.
   timeLine: {
@@ -85,28 +84,15 @@ const nominationSelect = {
       timeLineStatus: { select: { status: true, level: true } },
     },
   },
-} as const;
+} satisfies Prisma.NominationSelect;
 
 /**
- * The detail view adds what the drawer shows beyond a list row: the invoices
- * raised against the nomination and its customs validation. The list stays
- * lean, since it renders a table.
+ * The detail view adds what the drawer shows beyond a list row: the customs
+ * validation raised against the nomination. The list stays lean, since it
+ * renders a table.
  */
 const nominationDetailSelect = {
   ...nominationSelect,
-  pfis: {
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      pifCode: true,
-      pfiReference: true,
-      currancyCode: true,
-      unitPrice: true,
-      amount: true,
-      supportingDocUrl: true,
-      createdAt: true,
-    },
-  },
   t1Validations: {
     orderBy: { createdAt: "desc" },
     select: {
@@ -121,7 +107,7 @@ const nominationDetailSelect = {
       },
     },
   },
-} as const;
+} satisfies Prisma.NominationSelect;
 
 export class NominationRepository {
   constructor(private db: PrismaClient) {}
