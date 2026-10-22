@@ -3,12 +3,12 @@ import { created, success } from "../../shared/http/index.js";
 import { idParamsSchema, parseInput, planStatusParamsSchema, querySearchOrderSupplierPlanSchema } from "../../shared/validation/index.js";
 import { OrderService } from "./orders.service.js";
 import { OrderRepository } from "./orders.repository.js";
-import { createOrderPlanSchema, CreateOrderSchema, createOrderSchema } from "./orders.schema.js";
+import { createOrderPlanSchema, CreateOrderSchema, createOrderSchema, orderListQuerySchema } from "./orders.schema.js";
 import { NotFoundError, unauthorized } from "../../utils/errors.js";
 const routes: FastifyPluginAsync = async (app) => {
   const service = new OrderService(new OrderRepository(app.prisma), app.config);
   app.get("/", { preHandler: [app.authenticate, app.authorize("orders.read", "orders.manage")] }, async (request) =>
-    success(await service.list()));
+    success(await service.list(parseInput(orderListQuerySchema, request.query))));
   app.get("/by-supplier-or-plan", { preHandler: [app.authenticate, app.authorize("orders.read", "orders.manage")] }, async (request) => {
     const valid = parseInput(querySearchOrderSupplierPlanSchema, request.query);
     if (!valid.planId && !valid.supplierId) throw new NotFoundError();

@@ -9,7 +9,7 @@ import {
 } from "../../shared/validation/index.js";
 import { CargoService } from "./cargo.service.js";
 import { CargoRepository } from "./cargo.repository.js";
-import { createCargoSchema, fileSchema } from "./cargo.schema.js";
+import { cargoListQuerySchema, createCargoSchema, fileSchema } from "./cargo.schema.js";
 import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -25,7 +25,8 @@ const routes: FastifyPluginAsync = async (app) => {
         app.authorize("cargo.read", "cargo.manage"),
       ],
     },
-    async (request) => success(await service.list()),
+    async (request) =>
+      success(await service.list(parseInput(cargoListQuerySchema, request.query))),
   );
   app.get(
     "/:id",

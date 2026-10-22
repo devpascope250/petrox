@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { CreateNominationsSchema, NominationVesselSchema } from "./nominations.schema.js";
+import { CreateNominationsSchema, NominationListQuerySchema, NominationVesselSchema } from "./nominations.schema.js";
 
 type Tx = Prisma.TransactionClient;
 
@@ -130,20 +131,27 @@ export class NominationRepository {
     return vessels.reduce((total, vessel) => total + Number(vessel.ambQuantity), 0);
   }
 
-  async list(startDate: Date, endDate: Date, itemId?: string, withoutPfi?: boolean) {
-    return await this.db.nomination.findMany({
-      where: {
-        ...(itemId ? { nominationVessels: { some: { stock: { itemId } } } } : {}),
-        // Nominations still open for more stock: none of them invoiced yet.
-        ...(withoutPfi ? { pfis: { none: {} } } : {}),
-        createdAt: {
-          gte: startDate,
-          lte: endDate
-        }
-      },
-      orderBy: { createdAt: "desc" },
-      select: nominationSelect,
-    });
+  /** One page of the nominations in the window, with the total behind it. */
+  async list(query: NominationListQuerySchema & { startDate: Date; endDate: Date }) {
+    const { startDate, endDate, itemId, withoutPfi } = query;
+    const where: Prisma.NominationWhereInput = {
+      ...(itemId ? { nominationVessels: { some: { stock: { itemId } } } } : {}),
+      // Nominations still open for more stock: none of them invoiced yet.
+      ...(withoutPfi ? { pfis: { none: {} } } : {}),
+      createdAt: {
+        gte: startDate,
+        lte: endDate
+      }
+    };
+    return this.db.$transaction([
+      this.db.nomination.findMany({
+        where,
+        ...paginationArgs(query),
+        orderBy: { createdAt: "desc" },
+        select: nominationSelect,
+      }),
+      this.db.nomination.count({ where }),
+    ]);
   }
 
   /**

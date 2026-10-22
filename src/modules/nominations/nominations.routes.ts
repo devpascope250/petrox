@@ -1,9 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { created, success } from "../../shared/http/index.js";
 import {
-  datesQuerySchema,
   idParamsSchema,
-  itemIdQuerySchema,
   parseInput,
 } from "../../shared/validation/index.js";
 import { NominationService } from "./nominations.service.js";
@@ -27,13 +25,7 @@ const routes: FastifyPluginAsync = async (app) => {
       ],
     },
     async (request) =>
-      success(
-        await service.list(
-          parseInput(datesQuerySchema, request.query),
-          parseInput(itemIdQuerySchema, request.query).itemId,
-          parseInput(nominationListQuerySchema, request.query).withoutPfi,
-        ),
-      ),
+      success(await service.list(parseInput(nominationListQuerySchema, request.query))),
   );
 
   app.get(

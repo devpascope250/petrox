@@ -2,13 +2,15 @@ import { PlanStatus, Prisma } from "../../../prisma/generated/prisma/client.js";
 import type { AppConfig } from "../../config/env.js";
 import { generateOrderCode } from "../../utils/randomCodegen.js";
 import { OrderRepository } from "./orders.repository.js";
-import { CreateOrderPlanSchema, CreateOrderSchema } from "./orders.schema.js";
+import { paginatedData } from "../../shared/pagination/index.js";
+import { CreateOrderPlanSchema, CreateOrderSchema, OrderListQuery } from "./orders.schema.js";
 
 export class OrderService {
   constructor(private repo: OrderRepository, private config: AppConfig) {}
 
-  async list() {
-    return await this.repo.list();
+  async list(query: OrderListQuery) {
+    const [items, total] = await this.repo.list(query);
+    return paginatedData(items, total, query);
   }
 
    async listByPlanOrSupplier(supplierId?: string, planId?: string) {

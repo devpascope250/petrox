@@ -3,14 +3,24 @@ import type {
   Prisma,
   PrismaClient,
 } from "../../../prisma/generated/prisma/client.js";
+import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { CreateOrderPlanSchema, CreateOrderSchema } from "./orders.schema.js";
+import { CreateOrderPlanSchema, CreateOrderSchema, OrderListQuery } from "./orders.schema.js";
 
 export class OrderRepository {
   constructor(private db: PrismaClient) {}
 
-  async list() {
-    const orders = await this.db.order.findMany({
+  /**
+   * One page of the orders list, narrowed by the filters given, with the total
+   * so a client knows how many pages there are. The list grows for as long as
+   * the company trades, so it is never returned whole.
+   */
+  async list(query: OrderListQuery) {
+    const where = this.listWhere(query);
+    const [orders, total] = await this.db.$transaction([
+      this.db.order.findMany({
+      where,
+      ...paginationArgs(query),
       orderBy: {
         createdAt: "desc",
       },
@@ -65,9 +75,11 @@ export class OrderRepository {
           },
         },
       },
-    });
+    }),
+      this.db.order.count({ where }),
+    ]);
 
-    return orders.map((order) => {
+    const items = orders.map((order) => {
       const stock = order.cargos.reduce((total, cargo) => total + cargo.stocks.reduce((sum, stock) => sum + Number(stock.quantity), 0), 0 );
 
       return {
@@ -75,6 +87,29 @@ export class OrderRepository {
         remainingStock: Number(order.quantity) - stock,
       stockCargos: stock,
     }});
+    return [items, total] as const;
+  }
+
+  /** The filters an orders list may be narrowed by; the window is on `orderDate`. */
+  private listWhere(query: OrderListQuery): Prisma.OrderWhereInput {
+    const { startDate, endDate, itemId, supplierId, orderPlanId, search } = query;
+    return {
+      ...(startDate || endDate
+        ? { orderDate: { ...(startDate ? { gte: startDate } : {}), ...(endDate ? { lte: endDate } : {}) } }
+        : {}),
+      ...(itemId ? { itemId } : {}),
+      ...(supplierId ? { supplierId } : {}),
+      ...(orderPlanId ? { orderPlanId } : {}),
+      ...(search
+        ? {
+            OR: [
+              { orderCode: { contains: search } },
+              { item: { name: { contains: search } } },
+              { supplier: { name: { contains: search } } },
+            ],
+          }
+        : {}),
+    };
   }
 
   async listByPlanOrSupplier(supplierId?: string, planId?: string) {

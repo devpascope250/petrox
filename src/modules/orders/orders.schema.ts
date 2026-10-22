@@ -1,5 +1,19 @@
 import { z } from "zod";
-import { nonEmptyNameSchema, uuidSchema} from "../../shared/validation/index.js";
+import { nonEmptyNameSchema, pagedDatesQuerySchema, uuidSchema } from "../../shared/validation/index.js";
+
+/**
+ * A page of the orders list. `orderDate` is what the window applies to, so a
+ * client asking for a month gets that month a page at a time.
+ */
+export const orderListQuerySchema = pagedDatesQuerySchema.extend({
+  itemId: uuidSchema.optional(),
+  supplierId: uuidSchema.optional(),
+  orderPlanId: uuidSchema.optional(),
+  /** Matches an order code, a supplier or an item. */
+  search: z.string().trim().max(100).optional(),
+});
+
+export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
 
 export const createOrderSchema = z.object({
     supplierId: uuidSchema,

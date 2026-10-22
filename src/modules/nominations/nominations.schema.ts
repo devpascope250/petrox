@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { nonEmptyNameSchema, uuidSchema} from "../../shared/validation/index.js";
+import { nonEmptyNameSchema, pagedDatesQuerySchema, uuidSchema } from "../../shared/validation/index.js";
 
 /** One vessel (stock receipt) a nomination draws from, with its own volume. */
 export const nominationVesselSchema = z.object({
@@ -59,8 +59,12 @@ export const addNominationVesselSchema = z.union([
   nominationVesselSchema,
 ]).transform((value) => ("vessels" in value ? mergeVessels(value.vessels) : [value]));
 
-/** Query for `GET /nominations`. */
-export const nominationListQuerySchema = z.object({
+/**
+ * Query for `GET /nominations`: one page of the list, narrowed by the window
+ * and the filters below. A window alone would still return everything in it.
+ */
+export const nominationListQuerySchema = pagedDatesQuerySchema.extend({
+  itemId: uuidSchema.optional(),
   /**
    * Only nominations that carry no PFI yet — the ones stock can still be
    * added to, since invoicing fixes what a nomination is carrying.

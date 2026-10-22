@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { created, success } from "../../shared/http/index.js";
-import { datesQuerySchema, idParamsSchema, parseInput } from "../../shared/validation/index.js";
+import { idParamsSchema, pagedDatesQuerySchema, parseInput } from "../../shared/validation/index.js";
 import { PfiService } from "./pfi.service.js";
 import { PfiRepository } from "./pfi.repository.js";
 import { createCurrancySchema, createPfiSchema } from "./pfi.schema.js";
@@ -10,7 +10,7 @@ const routes: FastifyPluginAsync = async (app) => {
   app.get(
     "/",
     { preHandler: [app.authenticate, app.authorize("pfi.read", "pfi.manage")] },
-    async (request) => success(await service.list(parseInput(datesQuerySchema, request.query))),
+    async (request) => success(await service.list(parseInput(pagedDatesQuerySchema, request.query))),
   );
   app.get(
     "/:id",

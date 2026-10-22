@@ -562,6 +562,7 @@ model Cargo {
   updatedAt        DateTime       @updatedAt
   stocks           Stock[]
   cargoInvoices    CargoInvoice[]
+  pfis                Pfi[]
 
   @@index([orderId])
   @@index([blRef])
@@ -612,7 +613,6 @@ model Nomination {
   expectedLoadingDate DateTime
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
-  pfis                Pfi[]
   timeLine            NominationTimeLine[]
   t1Validations       T1Validation[]
   nominationVessels   NominationVessel[]
@@ -647,8 +647,8 @@ model Pfi {
   id               String     @id @default(uuid())
   currencyId       String
   currency         Currency   @relation(fields: [currencyId], references: [id])
-  nominationId     String
-  nomination       Nomination @relation(fields: [nominationId], references: [id])
+  cargoId     String
+  cargo       Cargo @relation(fields: [cargoId], references: [id])
   currancyCode     String
   unitPrice        Decimal    @db.Decimal(12, 2)
   amount           Decimal    @db.Decimal(18, 2)
@@ -658,7 +658,7 @@ model Pfi {
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
 
-  @@index([nominationId])
+  @@index([cargoId])
   @@index([id])
 }
 

@@ -1,17 +1,23 @@
 import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { paginationArgs } from "../../shared/pagination/index.js";
+import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { generatePfiCode } from "../../utils/randomCodegen.js";
 import { CreateCurrancySchema, CreatePfiSchema } from "./pfi.schema.js";
 export class PfiRepository {
   constructor(private db: PrismaClient) {}
-  async list(startDate: Date, endDate: Date) {
-    return await this.db.pfi.findMany({
-      where: {
-        createdAt: {
-          gte: startDate,
-          lte: endDate
-        }
-      },
+  /** One page of the PFIs raised in the window, with the total behind it. */
+  async list(query: PagedDatesQuery & { startDate: Date; endDate: Date }) {
+    const where = {
+      createdAt: {
+        gte: query.startDate,
+        lte: query.endDate
+      }
+    };
+    return this.db.$transaction([
+      this.db.pfi.findMany({
+      where,
+      ...paginationArgs(query),
       orderBy: { createdAt: "desc" },
       select: {
       id: true,
@@ -33,7 +39,9 @@ export class PfiRepository {
         }
       },
       },
-    });
+    }),
+      this.db.pfi.count({ where }),
+    ]);
   }
 
   async create(data: CreatePfiSchema) {

@@ -1,4 +1,6 @@
 import type { ExtraT1ValidationStatus, PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { paginationArgs } from "../../shared/pagination/index.js";
+import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema } from "./t1-validation.schema.js";
 export class T1ValidationRepository {
@@ -46,10 +48,14 @@ export class T1ValidationRepository {
     });
   }
 
-  async list(startDate: Date, endDate: Date) {
-    return await this.db.t1Validation.findMany({
+  /** One page of the T1 validations in the window, with the total behind it. */
+  async list(query: PagedDatesQuery & { startDate: Date; endDate: Date }) {
+    const where = { createdAt: { gte: query.startDate, lte: query.endDate } };
+    return this.db.$transaction([
+      this.db.t1Validation.findMany({
+      where,
+      ...paginationArgs(query),
       orderBy: { createdAt: "desc" },
-      where: {createdAt: {gte: startDate, lte: endDate}},
       select: {
         id: true,
         exportingCountry: true,
@@ -81,7 +87,9 @@ export class T1ValidationRepository {
           }
         }
       },
-    });
+    }),
+      this.db.t1Validation.count({ where }),
+    ]);
   }
 
   async create(data: CreateT1ValidationsSchema) {

@@ -1,7 +1,8 @@
 import { CargoStatus, ExtraT1ValidationStatus } from "../../../prisma/generated/prisma/enums.js";
 import type { AppConfig } from "../../config/env.js";
-import { DatesQuerySchema } from "../../shared/validation/primitives.js";
 import { within2DaysPeriod } from "../../utils/utils.js";
+import { paginatedData } from "../../shared/pagination/index.js";
+import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { T1ValidationRepository } from "./t1-validation.repository.js";
 import { CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema } from "./t1-validation.schema.js";
 export class T1ValidationSrvice {
@@ -18,15 +19,17 @@ export class T1ValidationSrvice {
     })
   }
 
-    async list(date: DatesQuerySchema) {
-    const dates = within2DaysPeriod(date.startDate, date.endDate);
-    const t1 = await this.repo.list(dates.startDate, dates.endDate);
-    return t1.map((al) => {
+    async list(query: PagedDatesQuery) {
+    // No window asked for still means a window: the last two days.
+    const dates = within2DaysPeriod(query.startDate, query.endDate);
+    const [t1, total] = await this.repo.list({ ...query, ...dates });
+    const items = t1.map((al) => {
       return  {
         ...al,
         supportingDocUrl: `${this.config.APP_URL}${al.supportingDocUrl}`
       }
-    })
+    });
+    return paginatedData(items, total, query);
   }
 
   async find(id: string) { 

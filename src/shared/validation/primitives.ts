@@ -70,4 +70,16 @@ export const paginationQuerySchema = z.object({
 });
 
 export type PaginationQuery = z.infer<typeof paginationQuerySchema>;
+
+/**
+ * A page of a list narrowed to a date window — what every growing list takes.
+ * A date filter alone is not enough: a wide window still returns everything in
+ * it, so the page is asked for in the same query.
+ */
+export const pagedDatesQuerySchema = paginationQuerySchema.extend({
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+});
+
+export type PagedDatesQuery = z.infer<typeof pagedDatesQuerySchema>;
 export type DatesQuerySchema = z.infer<typeof datesQuerySchema>;

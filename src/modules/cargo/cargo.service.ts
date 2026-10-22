@@ -1,19 +1,22 @@
 import { CargoStatus } from "../../../prisma/generated/prisma/enums.js";
 import type { AppConfig } from "../../config/env.js";
 import { CargoRepository } from "./cargo.repository.js";
+import { paginatedData } from "../../shared/pagination/index.js";
+import type { CargoListQuery } from "./cargo.schema.js";
 import { CreateCargoSchema, FileSchema } from "./cargo.schema.js";
 export class CargoService {
   constructor(private repo: CargoRepository, private config: AppConfig) {
   }
 
-  async list() {
-    const cargos = await this.repo.list();
-    return cargos.map((al) => {
+  async list(query: CargoListQuery) {
+    const [cargos, total] = await this.repo.list(query);
+    const items = cargos.map((al) => {
       return  {
         ...al,
         supportingDocUrl: `${this.config.APP_URL}${al.supportingDocUrl}`
       }
-    })
+    });
+    return paginatedData(items, total, query);
   }
 
   async find(id: string) { 

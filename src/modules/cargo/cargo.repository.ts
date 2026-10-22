@@ -1,10 +1,37 @@
-import type { CargoStatus, PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import type { CargoStatus, Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { CreateCargoSchema } from "./cargo.schema.js";
+import type { CargoListQuery, CreateCargoSchema } from "./cargo.schema.js";
 export class CargoRepository {
   constructor(private db: PrismaClient) {}
-  async list() {
-    return await this.db.cargo.findMany({
+  /**
+   * One page of the cargo list with the total behind it. Cargo accumulates for
+   * as long as the company imports, so the whole list is never returned.
+   */
+  async list(query: CargoListQuery) {
+    const { startDate, endDate, status, orderId, deportId, search } = query;
+    const where: Prisma.CargoWhereInput = {
+      ...(startDate || endDate
+        ? { receivedDate: { ...(startDate ? { gte: startDate } : {}), ...(endDate ? { lte: endDate } : {}) } }
+        : {}),
+      ...(status ? { status } : {}),
+      ...(orderId ? { orderId } : {}),
+      ...(deportId ? { deportId } : {}),
+      ...(search
+        ? {
+            OR: [
+              { blRef: { contains: search } },
+              { tansisRef: { contains: search } },
+              { outurnRef: { contains: search } },
+              { vesselName: { contains: search } },
+            ],
+          }
+        : {}),
+    };
+    return this.db.$transaction([
+      this.db.cargo.findMany({
+      where,
+      ...paginationArgs(query),
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -33,7 +60,9 @@ export class CargoRepository {
         },
         cargoInvoices: true
       },
-    });
+    }),
+      this.db.cargo.count({ where }),
+    ]);
   }
 
   async create(data: CreateCargoSchema) {
@@ -110,8 +139,22 @@ export class CargoRepository {
     
   }
 
+  /**
+   * One cargo, whole. It carries the fields an edit form binds to as well as
+   * those `changeStatus` needs, so a client never has to find its row in the
+   * list — which is served a page at a time and may not hold it.
+   */
   find(id: string) {
     return this.db.cargo.findUnique({ where: { id }, select: {
+      id: true,
+      status: true,
+      vesselName: true,
+      receivedDate: true,
+      expirationDate: true,
+      blRef: true,
+      tansisRef: true,
+      outurnRef: true,
+      orderId: true,
       quantityInLitre: true,
       quantityInKg: true,
       deportId: true,

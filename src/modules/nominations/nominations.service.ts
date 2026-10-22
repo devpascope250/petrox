@@ -2,15 +2,18 @@ import { StockStatus } from "../../../prisma/generated/prisma/enums.js";
 import type { AppConfig } from "../../config/env.js";
 import { DatesQuerySchema } from "../../shared/validation/primitives.js";
 import { within2DaysPeriod } from "../../utils/utils.js";
+import { paginatedData } from "../../shared/pagination/index.js";
 import { NominationRepository } from "./nominations.repository.js";
-import { AddNominationVesselSchema, CreateNominationsSchema } from "./nominations.schema.js";
+import { AddNominationVesselSchema, CreateNominationsSchema, NominationListQuerySchema } from "./nominations.schema.js";
 export class NominationService {
   constructor(private repo: NominationRepository, private config: AppConfig) {
   }
 
-  async list(date: DatesQuerySchema, itemId?: string, withoutPfi?: boolean) {
-    const dates = within2DaysPeriod(date.startDate, date.endDate);
-    return await this.repo.list(dates.startDate, dates.endDate, itemId, withoutPfi);
+  async list(query: NominationListQuerySchema) {
+    // No window asked for still means a window: the last two days.
+    const dates = within2DaysPeriod(query.startDate, query.endDate);
+    const [items, total] = await this.repo.list({ ...query, ...dates });
+    return paginatedData(items, total, query);
   }
 
   find(id: string) { return this.repo.find(id); }

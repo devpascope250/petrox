@@ -4,7 +4,7 @@ import {
   cargoReceivedDatePamasSchema,
   cargoStatusPamasSchema,
   cuidParamsSchema,
-  datesQuerySchema,
+  pagedDatesQuerySchema,
   id2ParamsSchema,
   idParamsSchema,
   parseInput,
@@ -28,7 +28,7 @@ const routes: FastifyPluginAsync = async (app) => {
         app.authorize("t1.validation.read", "t1.validation.manage"),
       ],
     },
-    async (request) => success(await service.list(parseInput(datesQuerySchema, request.query))),
+    async (request) => success(await service.list(parseInput(pagedDatesQuerySchema, request.query))),
   );
 
     app.get(

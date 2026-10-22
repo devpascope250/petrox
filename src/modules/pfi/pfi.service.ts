@@ -1,16 +1,19 @@
 import type { AppConfig } from "../../config/env.js";
 import { DatesQuerySchema } from "../../shared/validation/primitives.js";
 import { within2DaysPeriod } from "../../utils/utils.js";
+import { paginatedData } from "../../shared/pagination/index.js";
+import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { PfiRepository } from "./pfi.repository.js";
 import { CreateCurrancySchema, CreatePfiSchema } from "./pfi.schema.js";
 export class PfiService {
   constructor(private repo: PfiRepository, private config: AppConfig) {
   }
 
-  async list(date: DatesQuerySchema) {
-    const dates = within2DaysPeriod(date.startDate, date.endDate);
-    const pfis = await this.repo.list(dates.startDate, dates.endDate);
-    return pfis.map((pfi) => this.withDocumentUrl(pfi));
+  async list(query: PagedDatesQuery) {
+    // No window asked for still means a window: the last two days.
+    const dates = within2DaysPeriod(query.startDate, query.endDate);
+    const [pfis, total] = await this.repo.list({ ...query, ...dates });
+    return paginatedData(pfis.map((pfi) => this.withDocumentUrl(pfi)), total, query);
   }
   async find(id: string) {
     const pfi = await this.repo.find(id);
