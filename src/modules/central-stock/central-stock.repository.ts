@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, StockTransaction } from "../../../prisma/generated/prisma/client.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
+import { releaseParkingForNomination } from "../vehicle-locations/vehicle-location.repository.js";
 import {
   CentralStockReportQuerySchema,
   CreateCentralStockSchema,
@@ -235,6 +236,10 @@ export class CentralStockRepository {
       const status = await tx.nominationTimeLineStatus.findFirst({where: {status: "stockReceived"}});
       if(status && nomination){
         await tx.nominationTimeLine.create({data: { nominationId: nomination.nominationId, timeLineStatusId: status.id, changedBy: data.createdBy }})
+        // The trip is over, so the vehicle is no longer held in a parking. In
+        // the same write as the stock and the stage: a vehicle left standing in
+        // a parking it has already left would read as still being there.
+        await releaseParkingForNomination(tx, nomination.nominationId);
       }
 
       return await tx.centralStock.create({

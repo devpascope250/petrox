@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
+import { furthestStage } from "../vehicle-locations/vehicle-location.repository.js";
 import { CreateNominationsSchema, NominationListQuerySchema, NominationVesselSchema } from "./nominations.schema.js";
 
 type Tx = Prisma.TransactionClient;
@@ -136,6 +137,53 @@ export class NominationRepository {
       }),
       this.db.nomination.count({ where }),
     ]);
+  }
+
+  /**
+   * Marks the trip as having left — the stage between a released T1 and the
+   * stock arriving. Set by hand, because only the yard knows when the truck
+   * actually rolled; the T1 being confirmed says the paperwork cleared, not
+   * that anything moved.
+   *
+   * Refused unless the trip is at `t1Confirmed`: before that nothing has been
+   * released, and afterwards it is either already in transit or already
+   * received. The vehicle's parkings are recorded against this stage and do
+   * not end it — a vehicle still carrying its load is in transit whether it is
+   * standing in a parking or driving between two.
+   */
+  async markInTransit(id: string, userId: string) {
+    return this.db.$transaction(async (tx) => {
+      if (!(await tx.nomination.findUnique({ where: { id }, select: { id: true } }))) {
+        throw new NotFoundError("Nomination");
+      }
+      const stage = await furthestStage(tx, id);
+      if (stage?.status !== "t1Confirmed") {
+        throw new BusinessError(
+          "NOT_READY_FOR_TRANSIT",
+          stage
+            ? stage.status === "inTransit"
+              ? "This nomination is already in transit"
+              : stage.status === "stockReceived"
+                ? "This nomination's stock has already been received"
+                : `This nomination is at "${stage.status}". Its T1 must be confirmed before it can leave.`
+            : "This nomination has no progress recorded yet",
+        );
+      }
+      const status = await tx.nominationTimeLineStatus.findFirst({
+        where: { status: "inTransit" },
+        select: { id: true },
+      });
+      if (!status) {
+        throw new BusinessError(
+          "STAGE_MISSING",
+          "The in-transit stage is not set up. Run the database migrations.",
+        );
+      }
+      await tx.nominationTimeLine.create({
+        data: { nominationId: id, timeLineStatusId: status.id, changedBy: userId },
+      });
+      return tx.nomination.findUniqueOrThrow({ where: { id }, select: nominationDetailSelect });
+    });
   }
 
   /**

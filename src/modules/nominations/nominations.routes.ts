@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { created, success } from "../../shared/http/index.js";
+import { unauthorized } from "../../utils/errors.js";
 import {
   idParamsSchema,
   parseInput,
@@ -41,6 +42,30 @@ const routes: FastifyPluginAsync = async (app) => {
         await service.find(parseInput(idParamsSchema, request.params).id),
       ),
   );
+  /**
+   * Marks the trip as having left, once its T1 is confirmed. Gated on the
+   * nomination's own edit permission: it is a step in the trip, not a new kind
+   * of record.
+   */
+  app.patch(
+    "/:id/in-transit",
+    {
+      preHandler: [
+        app.authenticate,
+        app.authorize("nominations.edit", "nominations.manage"),
+      ],
+    },
+    async (request) => {
+      if (!request.contextUser?.userId) throw unauthorized();
+      return success(
+        await service.markInTransit(
+          parseInput(idParamsSchema, request.params).id,
+          request.contextUser.userId,
+        ),
+      );
+    },
+  );
+
   app.get(
     "/time-line/:id",
     {

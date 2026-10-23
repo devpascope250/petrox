@@ -94,6 +94,8 @@ export const MODULE_TREE: ModuleNode[] = [
       { id: "3db24ea1-8c54-4947-b607-d88ccffa5c36", code: "VEHICLES", name: "Vehicles", icon: "Truck", prefix: "vehicles" },
       { id: "f33369c4-bf68-4eee-9a96-0094540c41f8", code: "DRIVERS", name: "Drivers", icon: "IdCard", prefix: "drivers" },
       { id: "9e7fcf78-a2ac-47f5-bc33-9a1f515662df", code: "DEPORTS", name: "Depots", icon: "Warehouse", prefix: "deports" },
+      { code: "PARKINGS", name: "Parkings", icon: "SquareParking", prefix: "parkings" },
+      { code: "VEHICLE_LOCATIONS", name: "Vehicle Locations", icon: "MapPin", prefix: "vehicle.locations" },
     ] },
     { id: "9308490d-4f55-4e3f-8eaf-f06b5b7e2597", code: "SUPPLY_CHAIN_IMPORT_TRANSIT_DEPOT_AND_WAREHOUSE", name: "Import, Transit, Depot and Warehouse", icon: "Route", children: [
       { id: "8d2e1f75-6254-4a17-ad5f-9bf77a98a6ab", code: "ORDERS", name: "Orders", icon: "ClipboardList", prefix: "orders" },
@@ -243,9 +245,12 @@ const TIMELINE_STATUSES: Array<{ status: TimeLineStatus; level: number; descript
   { status: "awaiting", level: 1, descriptions: "Awaiting loading documents" },
   { status: "underLoading", level: 2, descriptions: "Loading in progress" },
   { status: "t1Pending", level: 3, descriptions: "Release in progress" },
-  { status: "t1Confirmed", level: 4, descriptions:
-    "Released, In transit from foreign depot to owner, In transit from border to local depot, Parked at local depot" },
-  { status: "stockReceived", level: 5, descriptions: "Stock received" },
+  { status: "t1Confirmed", level: 4, descriptions: "Released by customs" },
+  // Set by hand once the truck leaves. A vehicle stays in transit while it is
+  // parked — it moves from parking to parking until it is offloaded — so the
+  // parkings it stands in are recorded beside this stage, not instead of it.
+  { status: "inTransit", level: 5, descriptions: "In transit, parked or moving between parkings" },
+  { status: "stockReceived", level: 6, descriptions: "Stock received" },
 ];
 
 /* ------------------------------------------------------------------------ */

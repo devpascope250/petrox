@@ -125,6 +125,7 @@ model User {
   backupsRequested  Backup[]           @relation("BackupCreator")
   backupsDownloaded Backup[]           @relation("BackupDownloader")
   couponRedemptions CouponRedemption[] @relation("CouponRedeemer")
+  vehicleLocations  VehicleLocation[]
 
   @@index([roleId])
   @@index([siteId])
@@ -418,16 +419,17 @@ model Driver {
 }
 
 model DriverVehicles {
-  id            String              @id @default(uuid())
-  driverId      String
-  driver        Driver              @relation(fields: [driverId], references: [id])
-  vehicleId     String
-  vechile       Vehicle             @relation(fields: [vehicleId], references: [id])
-  status        DriverVehicleStatus @default(active)
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  nominations   Nomination[]
-  loadingOrders LoadingOrder[]
+  id               String              @id @default(uuid())
+  driverId         String
+  driver           Driver              @relation(fields: [driverId], references: [id])
+  vehicleId        String
+  vechile          Vehicle             @relation(fields: [vehicleId], references: [id])
+  status           DriverVehicleStatus @default(active)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  nominations      Nomination[]
+  loadingOrders    LoadingOrder[]
+  vehicleLocations VehicleLocation[]
 
   @@index([driverId])
   @@index([vehicleId])
@@ -562,7 +564,7 @@ model Cargo {
   updatedAt        DateTime       @updatedAt
   stocks           Stock[]
   cargoInvoices    CargoInvoice[]
-  pfis                Pfi[]
+  pfis             Pfi[]
 
   @@index([orderId])
   @@index([blRef])
@@ -616,6 +618,7 @@ model Nomination {
   timeLine            NominationTimeLine[]
   t1Validations       T1Validation[]
   nominationVessels   NominationVessel[]
+  vehicleLocations    VehicleLocation[]
 
   @@index([driverVehicleId])
 }
@@ -644,19 +647,19 @@ model Currency {
 }
 
 model Pfi {
-  id               String     @id @default(uuid())
+  id               String   @id @default(uuid())
   currencyId       String
-  currency         Currency   @relation(fields: [currencyId], references: [id])
-  cargoId     String
-  cargo       Cargo @relation(fields: [cargoId], references: [id])
+  currency         Currency @relation(fields: [currencyId], references: [id])
+  cargoId          String
+  cargo            Cargo    @relation(fields: [cargoId], references: [id])
   currancyCode     String
-  unitPrice        Decimal    @db.Decimal(12, 2)
-  amount           Decimal    @db.Decimal(18, 2)
+  unitPrice        Decimal  @db.Decimal(12, 2)
+  amount           Decimal  @db.Decimal(18, 2)
   supportingDocUrl String?
-  pifCode          String     @unique
-  pfiReference     String     @unique
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
+  pifCode          String   @unique
+  pfiReference     String   @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([cargoId])
   @@index([id])
@@ -695,6 +698,9 @@ enum TimeLineStatus {
   t1Pending
   t1Confirmed
   stockReceived
+  /// Level 5, between t1Confirmed and stockReceived. Appended here on purpose:
+  /// MySQL stores an enum by index, and the ladder is ordered by `level`.
+  inTransit
 }
 
 model T1Validation {
@@ -1756,4 +1762,48 @@ model Backup {
   @@index([status, createdAt])
   @@index([createdBy])
   @@index([lastDownloadedBy])
+}
+
+/// Somewhere a vehicle can stand: a yard, a depot gate, an offloading bay.
+model Parking {
+  id               String            @id @default(uuid())
+  name             String
+  location         String
+  status           StatusType        @default(active)
+  createdAt        DateTime          @default(now())
+  vehicleLocations VehicleLocation[]
+
+  @@unique([name, location])
+  @@index([status])
+}
+
+/// Where one vehicle is standing, on one trip.
+///
+/// A vehicle in transit may be parked and still be in transit — it moves from
+/// parking to parking until it is offloaded — so this is a log of where it has
+/// been, not a stage of its own. Exactly one row per vehicle is `active`,
+/// which the assignment enforces: MySQL has no partial unique index, so the
+/// previous one is deactivated in the same transaction.
+model VehicleLocation {
+  id              String         @id @default(uuid())
+  parkingId       String
+  parking         Parking        @relation(fields: [parkingId], references: [id])
+  driverVehicleId String
+  driverVehicle   DriverVehicles @relation(fields: [driverVehicleId], references: [id])
+  /// The trip that parked here, so receiving its stock can release it.
+  nominationId    String
+  nomination      Nomination     @relation(fields: [nominationId], references: [id])
+  status          StatusType     @default(active)
+  /// Null until the vehicle actually reaches the parking it was sent to.
+  arrivedAt       DateTime?
+  /// When it left — the question a parking history is asked.
+  releasedAt      DateTime?
+  assignedBy      String
+  user            User           @relation(fields: [assignedBy], references: [id])
+  createdAt       DateTime       @default(now())
+
+  @@index([driverVehicleId, status])
+  @@index([nominationId, status])
+  @@index([parkingId, status])
+  @@index([createdAt])
 }

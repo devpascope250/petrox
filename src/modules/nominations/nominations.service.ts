@@ -18,6 +18,11 @@ export class NominationService {
 
   find(id: string) { return this.repo.find(id); }
 
+  /** The manual step onto the in-transit stage; see the repository. */
+  markInTransit(id: string, userId: string) {
+    return this.repo.markInTransit(id, userId);
+  }
+
   async create(input: CreateNominationsSchema) {
     return this.repo.create(input);
   }
