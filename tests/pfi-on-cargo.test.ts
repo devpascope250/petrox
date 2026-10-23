@@ -91,3 +91,44 @@ describe("recording a cargo with its PFI", () => {
     expect(createCargoSchema.parse({ ...cargoFields, pfi: "" }).pfi).toBeUndefined();
   });
 });
+
+describe("the two documents on a new cargo", () => {
+  it("keeps the shipment's paperwork and the proforma apart", () => {
+    // The PFI block is JSON and carries no file; the file travels as its own
+    // part, which is what stops one document overwriting the other.
+    const input = createCargoSchema.parse({
+      ...cargoFields,
+      pfi: JSON.stringify(pfiFields),
+      supportingDocUrl: "/uploads/bill-of-lading.pdf",
+    });
+    expect(input.supportingDocUrl).toBe("/uploads/bill-of-lading.pdf");
+    expect(input.pfi?.supportingDocUrl).toBeUndefined();
+
+    // The route fills the PFI's own slot after parsing, from its own field.
+    const withPfiDoc = createCargoSchema.parse({
+      ...cargoFields,
+      pfi: JSON.stringify({ ...pfiFields, supportingDocUrl: "/uploads/proforma.pdf" }),
+      supportingDocUrl: "/uploads/bill-of-lading.pdf",
+    });
+    expect(withPfiDoc.pfi?.supportingDocUrl).toBe("/uploads/proforma.pdf");
+    expect(withPfiDoc.supportingDocUrl).not.toBe(withPfiDoc.pfi?.supportingDocUrl);
+  });
+
+  it("writes the proforma's document onto the PFI, not onto the cargo", async () => {
+    const create = vi.fn((args: any) => ({ id: CARGO, ...args.data }));
+    const db = {
+      order: { findUnique: vi.fn().mockResolvedValue({ id: "ord-1", quantity: 1000, cargos: [] }) },
+      cargo: { create },
+    };
+    const input = createCargoSchema.parse({
+      ...cargoFields,
+      supportingDocUrl: "/uploads/bill-of-lading.pdf",
+      pfi: JSON.stringify({ ...pfiFields, supportingDocUrl: "/uploads/proforma.pdf" }),
+    });
+    await new CargoRepository(db as never).create(input);
+
+    const data = create.mock.calls[0][0].data;
+    expect(data.supportingDocUrl).toBe("/uploads/bill-of-lading.pdf");
+    expect(data.pfis.create.supportingDocUrl).toBe("/uploads/proforma.pdf");
+  });
+});
