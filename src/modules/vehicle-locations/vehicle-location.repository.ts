@@ -134,16 +134,46 @@ export class VehicleLocationRepository {
         throw new BusinessError("PARKING_INACTIVE", `${parking.name} is not in use`);
       }
 
-      // The same truck may be on another trip's pairing, so the previous
-      // parking is found by the vehicle rather than by this pairing.
+      // The same truck may be on another trip's pairing, so where it stands is
+      // found by the vehicle rather than by this pairing.
       const vehicle = await tx.driverVehicles.findUniqueOrThrow({
         where: { id: nomination.driverVehicleId },
         select: { vehicleId: true },
       });
-      await tx.vehicleLocation.updateMany({
+      const standing = await tx.vehicleLocation.findFirst({
         where: { status: "active", driverVehicle: { vehicleId: vehicle.vehicleId } },
-        data: { status: "inactive", releasedAt: new Date() },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, parkingId: true },
       });
+
+      /*
+       * Already here: nothing changes.
+       *
+       * Releasing and re-creating the same parking would stamp a departure the
+       * vehicle never made, start a second stay in the place it is already
+       * standing, and throw away the arrival time it had — a history that reads
+       * as a move when nothing moved. An arrival time sent with it is still
+       * taken, since that is new information about the stay it is already on.
+       */
+      if (standing?.parkingId === parking.id) {
+        if (input.arrivedAt) {
+          await tx.vehicleLocation.update({
+            where: { id: standing.id },
+            data: { arrivedAt: input.arrivedAt },
+          });
+        }
+        return tx.vehicleLocation.findUniqueOrThrow({
+          where: { id: standing.id },
+          select: locationSelect,
+        });
+      }
+
+      if (standing) {
+        await tx.vehicleLocation.updateMany({
+          where: { status: "active", driverVehicle: { vehicleId: vehicle.vehicleId } },
+          data: { status: "inactive", releasedAt: new Date() },
+        });
+      }
 
       return tx.vehicleLocation.create({
         data: {

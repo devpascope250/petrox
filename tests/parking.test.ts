@@ -17,7 +17,11 @@ const USER = "00000000-0000-4000-8000-000000000003";
  * A database for the assignment, with the stage the trip has reached and the
  * parking's status as the two things the rules turn on.
  */
-function assignDb({ stage = "inTransit", parkingStatus = "active" as string | null } = {}) {
+function assignDb({
+  stage = "inTransit",
+  parkingStatus = "active" as string | null,
+  standingAt = null as string | null,
+} = {}) {
   const tx = {
     nomination: { findUnique: vi.fn().mockResolvedValue({ id: NOMINATION, driverVehicleId: "pair-1" }) },
     nominationTimeLine: {
@@ -30,6 +34,12 @@ function assignDb({ stage = "inTransit", parkingStatus = "active" as string | nu
     },
     driverVehicles: { findUniqueOrThrow: vi.fn().mockResolvedValue({ vehicleId: "truck-1" }) },
     vehicleLocation: {
+      // Where the vehicle stands now, which decides whether anything changes.
+      findFirst: vi.fn().mockResolvedValue(
+        standingAt ? { id: "loc-0", parkingId: standingAt } : null,
+      ),
+      findUniqueOrThrow: vi.fn(({ where }: any) => ({ id: where.id, parking: { id: standingAt } })),
+      update: vi.fn((args: any) => args.data),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       create: vi.fn((args: any) => ({ id: "loc-1", ...args.data })),
     },
@@ -42,7 +52,7 @@ const assign = (db: unknown, input = { nominationId: NOMINATION, parkingId: PARK
 
 describe("sending a vehicle to a parking", () => {
   it("records it against the trip, and releases wherever that vehicle stood before", async () => {
-    const { db, tx } = assignDb();
+    const { db, tx } = assignDb({ standingAt: "another-parking" });
     const created: any = await assign(db);
 
     // The previous parking is found by the *vehicle*, not by this pairing: the
@@ -136,5 +146,47 @@ describe("the lists behind the two pages", () => {
     expect(model.findMany.mock.calls[0][0]).toMatchObject({ skip: 20, take: 10, where: { parkingId: PARKING } });
     expect((model.count.mock.calls[0][0] as any).where).toEqual((model.findMany.mock.calls[0][0] as any).where);
     expect(total).toBe(42);
+  });
+});
+
+describe("sending a vehicle where it already stands", () => {
+  it("changes nothing: no departure, no second stay, the arrival kept", async () => {
+    const { db, tx } = assignDb({ standingAt: PARKING });
+    const same: any = await assign(db);
+
+    // Releasing and re-creating would stamp a move that never happened.
+    expect(tx.vehicleLocation.updateMany).not.toHaveBeenCalled();
+    expect(tx.vehicleLocation.create).not.toHaveBeenCalled();
+    expect(tx.vehicleLocation.update).not.toHaveBeenCalled();
+    // The stay it is already on comes back, so a caller still learns where it is.
+    expect(same.id).toBe("loc-0");
+  });
+
+  it("still takes an arrival time for the stay it is already on", async () => {
+    const { db, tx } = assignDb({ standingAt: PARKING });
+    const arrivedAt = new Date("2026-10-23T09:00:00.000Z");
+    await new VehicleLocationRepository(db as never).assign(
+      { nominationId: NOMINATION, parkingId: PARKING, arrivedAt },
+      USER,
+    );
+    expect(tx.vehicleLocation.update).toHaveBeenCalledWith({
+      where: { id: "loc-0" },
+      data: { arrivedAt },
+    });
+    expect(tx.vehicleLocation.create).not.toHaveBeenCalled();
+  });
+
+  it("does move it when the parking is a different one", async () => {
+    const { db, tx } = assignDb({ standingAt: "another-parking" });
+    await assign(db);
+    expect(tx.vehicleLocation.updateMany).toHaveBeenCalledOnce();
+    expect(tx.vehicleLocation.create).toHaveBeenCalledOnce();
+  });
+
+  it("does not release anything when it was standing nowhere", async () => {
+    const { db, tx } = assignDb();
+    await assign(db);
+    expect(tx.vehicleLocation.updateMany).not.toHaveBeenCalled();
+    expect(tx.vehicleLocation.create).toHaveBeenCalledOnce();
   });
 });
