@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
+import { furthestStage } from "../nominations/nomination-stage.js";
 import type {
   AssignVehicleLocationSchema,
   VehicleLocationListQuery,
@@ -180,18 +181,6 @@ export class VehicleLocationRepository {
   }
 }
 
-/**
- * The furthest stage a nomination has reached — the ladder is ordered by
- * `level`, so this is the one with the highest.
- */
-export async function furthestStage(tx: Tx, nominationId: string) {
-  const entry = await tx.nominationTimeLine.findFirst({
-    where: { nominationId },
-    orderBy: { timeLineStatus: { level: "desc" } },
-    select: { timeLineStatus: { select: { status: true, level: true } } },
-  });
-  return entry?.timeLineStatus ?? null;
-}
 
 /**
  * Releases whatever parking this trip's vehicle is standing in. Called when the

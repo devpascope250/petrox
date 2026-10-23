@@ -1,4 +1,5 @@
 import type { ExtraT1ValidationStatus, PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { recordStage } from "../nominations/nomination-stage.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
@@ -95,10 +96,8 @@ export class T1ValidationRepository {
   async create(data: CreateT1ValidationsSchema) {
     if ((await this.findByNomination(data.nominationId))) throw new BusinessError("400", "The Validation is Already Existed!");
     return await this.db.$transaction(async(tx) => {
-       const status = await tx.nominationTimeLineStatus.findFirst({where: {status: "t1Pending"}});
-      if(status){
-        await tx.nominationTimeLine.create({data: { nominationId: data.nominationId, timeLineStatusId: status.id, changedBy: data.createdBy }})
-      }
+      // Through `recordStage`, so a stage already passed is not written again.
+      await recordStage(tx, data.nominationId, "t1Pending", data.createdBy);
       return await tx.t1Validation.create({
       data: {
         exportingCountry: data.exportingCountry,
@@ -151,10 +150,8 @@ export class T1ValidationRepository {
     if (!t1) throw new NotFoundError();
     if(t1.status !== "pending") throw new BusinessError("400", "The Status Can not be changed since is not pending")
       return await this.db.$transaction( async(tx) => {
-     const status = await tx.nominationTimeLineStatus.findFirst({where: {status: "t1Confirmed"}});
-      if(status){
-        await tx.nominationTimeLine.create({data: { nominationId: t1.validation.nominationId, timeLineStatusId: status.id, changedBy: createdBy }})
-      }
+     // Confirmed by customs; the trip is marked in transit by hand after this.
+     await recordStage(tx, t1.validation.nominationId, "t1Confirmed", createdBy);
 
        return await tx.extraT1Validation.update({
       where: { id },

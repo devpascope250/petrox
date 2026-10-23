@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { nonEmptyNameSchema, pagedDatesQuerySchema, uuidSchema } from "../../shared/validation/index.js";
+import { TimeLineStatus } from "../../../prisma/generated/prisma/enums.js";
 
 /** One vessel (stock receipt) a nomination draws from, with its own volume. */
 export const nominationVesselSchema = z.object({
@@ -65,6 +66,11 @@ export const addNominationVesselSchema = z.union([
  */
 export const nominationListQuerySchema = pagedDatesQuerySchema.extend({
   itemId: uuidSchema.optional(),
+  /**
+   * The stage a trip must have **reached**, as its furthest one — `inTransit`
+   * returns exactly the trips whose vehicle may be sent to a parking.
+   */
+  stage: z.enum(TimeLineStatus).optional(),
 });
 
 export type NominationListQuerySchema = z.infer<typeof nominationListQuerySchema>;

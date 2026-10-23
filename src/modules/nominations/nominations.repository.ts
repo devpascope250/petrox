@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { furthestStage } from "../vehicle-locations/vehicle-location.repository.js";
+import { furthestStage, recordStage } from "./nomination-stage.js";
 import { CreateNominationsSchema, NominationListQuerySchema, NominationVesselSchema } from "./nominations.schema.js";
 
 type Tx = Prisma.TransactionClient;
@@ -120,9 +120,30 @@ export class NominationRepository {
 
   /** One page of the nominations in the window, with the total behind it. */
   async list(query: NominationListQuerySchema & { startDate: Date; endDate: Date }) {
-    const { startDate, endDate, itemId } = query;
+    const { startDate, endDate, itemId, stage } = query;
     const where: Prisma.NominationWhereInput = {
       ...(itemId ? { nominationVessels: { some: { stock: { itemId } } } } : {}),
+      // The trips whose furthest stage is this one: they have reached it and
+      // nothing above it has been recorded.
+      ...(stage
+        ? {
+            timeLine: { some: { timeLineStatus: { status: stage } } },
+            NOT: {
+              timeLine: {
+                some: {
+                  timeLineStatus: {
+                    level: {
+                      gt: (await this.db.nominationTimeLineStatus.findFirstOrThrow({
+                        where: { status: stage },
+                        select: { level: true },
+                      })).level,
+                    },
+                  },
+                },
+              },
+            },
+          }
+        : {}),
       createdAt: {
         gte: startDate,
         lte: endDate
@@ -169,19 +190,7 @@ export class NominationRepository {
             : "This nomination has no progress recorded yet",
         );
       }
-      const status = await tx.nominationTimeLineStatus.findFirst({
-        where: { status: "inTransit" },
-        select: { id: true },
-      });
-      if (!status) {
-        throw new BusinessError(
-          "STAGE_MISSING",
-          "The in-transit stage is not set up. Run the database migrations.",
-        );
-      }
-      await tx.nominationTimeLine.create({
-        data: { nominationId: id, timeLineStatusId: status.id, changedBy: userId },
-      });
+      await recordStage(tx, id, "inTransit", userId);
       return tx.nomination.findUniqueOrThrow({ where: { id }, select: nominationDetailSelect });
     });
   }
@@ -312,13 +321,11 @@ export class NominationRepository {
   }
 
   async create(data: CreateNominationsSchema) {
-    const getstatus = await this.db.nominationTimeLineStatus.findFirst({where: {status: "awaiting"}});
-    if (!getstatus) throw new NotFoundError("The nomination status must be registered before")
     return await this.db.$transaction(async (tx) => {
       await this.assertSingleItem(tx, data.vessels);
       await this.assertStockCapacity(tx, data.vessels);
       await this.assertTruckCapacity(tx, data.driverVehicleId, this.totalQuantity(data.vessels));
-      return await tx.nomination.create({
+      const nomination = await tx.nomination.create({
         data: {
           destination: data.destination,
           // Held on the nomination as the total of its vessels.
@@ -331,15 +338,18 @@ export class NominationRepository {
               ambQuantity: vessel.ambQuantity,
             })),
           },
-          timeLine: {
-            create: {
-              timeLineStatusId: getstatus.id,
-              changedBy: data.createdBy
-            }
-          }
         },
         select: nominationSelect,
       });
+
+      // Raised, then loading: a trip with stock on it is being loaded, which
+      // is what level 2 says. Both are recorded, so the history shows it was
+      // raised before it was loaded rather than starting half way up.
+      await recordStage(tx, nomination.id, "awaiting", data.createdBy);
+      if (data.vessels.length > 0) {
+        await recordStage(tx, nomination.id, "underLoading", data.createdBy);
+      }
+      return nomination;
     }, { isolationLevel: "Serializable" });
   }
 
@@ -403,6 +413,10 @@ export class NominationRepository {
           ambQuantity: vessel.ambQuantity,
         })),
       });
+      // Stock going onto the truck is loading. Skipped once the trip is past
+      // that stage, so adding stock to one already released cannot drag its
+      // history back down the ladder.
+      await recordStage(tx, id, "underLoading");
       return await tx.nomination.update({
         where: { id },
         data: { ambQuantity: { increment: this.totalQuantity(vessels) } },
