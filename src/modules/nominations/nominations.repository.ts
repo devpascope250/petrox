@@ -75,6 +75,22 @@ const nominationSelect = {
   // Whether customs validation has been raised. A PFI invoices the cargo, not
   // the trip, so there is no PFI count here any more.
   _count: { select: { t1Validations: true } },
+  /**
+   * Where its vehicle is standing, if anywhere. One row at most, since only
+   * one parking per vehicle is active — enough for a list to say where a truck
+   * is without a second request, and for a picker to name what it is moving.
+   */
+  vehicleLocations: {
+    where: { status: "active" as const },
+    orderBy: { createdAt: "desc" as const },
+    take: 1,
+    select: {
+      id: true,
+      arrivedAt: true,
+      createdAt: true,
+      parking: { select: { id: true, name: true, location: true } },
+    },
+  },
   // The furthest stage reached, so a list can show progress without fetching
   // every nomination's timeline.
   timeLine: {
