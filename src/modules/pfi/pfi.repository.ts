@@ -31,6 +31,14 @@ export class PfiRepository {
       supportingDocUrl: true,
       createdAt: true,
       // The shipment it invoices, and the order that shipment belongs to.
+      // What the proforma was charged on top of its own amount.
+      fees: {
+        orderBy: { name: "asc" },
+        select: {
+          id: true, feeTypeId: true, name: true, count: true,
+          unitAmount: true, currencyCode: true, createdAt: true,
+        },
+      },
       cargo: {
         select: {
           id: true,

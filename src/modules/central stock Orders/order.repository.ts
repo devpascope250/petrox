@@ -43,7 +43,7 @@ function scopedReceptions(scope?: SiteScope): Prisma.OrderReceptionWhereInput | 
 }
 
 export class CentralStockOrderRepository {
-  constructor(private db: PrismaClient) {}
+  constructor(readonly db: PrismaClient) {}
 
   /**
    * Stockout orders in a period, each with how far it has got: loaded onto a
@@ -616,6 +616,10 @@ export class CentralStockOrderRepository {
           createdBy: input.createdBy, approvedBy: input.approvedBy, status: input.status } });
         await tx.stockTransaction.create({ data: { centralStockId: allocation.centralStockId,
           quantity: allocation.quantity, type: "saleOut", createdBy: input.createdBy } });
+        // Where the trail starts, so the history reads from the request down.
+        await tx.centralStockOrderEvent.create({ data: {
+          orderId: order.id, action: "requested",
+          toQuantity: allocation.quantity, actedBy: input.createdBy } });
         orders.push(order);
       }
       return orders;
@@ -623,17 +627,163 @@ export class CentralStockOrderRepository {
   }
 
 
-  async changeOrderStatus(id: string, status: CentralOrderStatus) {
-    // existances
-    const order = await this.db.centralStockOrder.findUnique({ where: { id } });
-    if (!order) {
-      throw new NotFoundError("Central stock order not found");
-    }
+  async changeOrderStatus(id: string, status: CentralOrderStatus, actedBy?: string) {
+    return this.db.$transaction(async (tx) => {
+      const order = await tx.centralStockOrder.findUnique({ where: { id } });
+      if (!order) {
+        throw new NotFoundError("Central stock order not found");
+      }
+      // A request sent back to be changed is not decided yet, so it can still
+      // be rejected or cancelled outright — but not approved behind the back of
+      // the change that was asked for.
+      const decidable: CentralOrderStatus[] = status === "approved"
+        ? ["pending"]
+        : ["pending", "editing"];
+      if (!decidable.includes(order.status)) {
+        throw new BusinessError(
+          "400",
+          order.status === "editing"
+            ? "This request was sent back to be changed; it must be edited before it can be approved"
+            : `Only pending requests can be ${status}`,
+        );
+      }
+      const updated = await tx.centralStockOrder.update({
+        where: { id },
+        data: {
+          status,
+          ...(status === "approved" && actedBy
+            ? { approvedBy: actedBy, approvedAt: new Date() }
+            : {}),
+        },
+      });
+      if (actedBy && (status === "approved" || status === "rejected" || status === "cancelled")) {
+        await tx.centralStockOrderEvent.create({
+          data: { orderId: id, action: status, toQuantity: order.quantity, actedBy },
+        });
+      }
+      return updated;
+    });
+  }
 
-    // if existed is not pending 
-    if (order.status !== "pending") {
-      throw new BusinessError("400", "Only pending orders can be updated");
-    }
-    return await this.db.centralStockOrder.update({ where: { id }, data: { status } });
+  /**
+   * Sends a request back to whoever raised it, to change the quantity.
+   *
+   * The admin does not edit the figure themselves: the person who asked for the
+   * stock owns the request, so it goes back with a reason and they change it.
+   * Only in `editing` may they, and saving returns it for a decision.
+   */
+  async requestEdit(id: string, comment: string, actedBy: string) {
+    return this.db.$transaction(async (tx) => {
+      const order = await tx.centralStockOrder.findUnique({
+        where: { id },
+        select: { id: true, status: true, quantity: true },
+      });
+      if (!order) throw new NotFoundError("Central stock order not found");
+      if (order.status !== "pending") {
+        throw new BusinessError(
+          "400",
+          order.status === "editing"
+            ? "This request is already waiting to be changed"
+            : `A ${order.status} request cannot be sent back`,
+        );
+      }
+      await tx.centralStockOrderEvent.create({
+        data: { orderId: id, action: "editRequested", comment, fromQuantity: order.quantity, actedBy },
+      });
+      return tx.centralStockOrder.update({ where: { id }, data: { status: "editing" } });
+    });
+  }
+
+  /**
+   * The new quantity, from whoever raised the request.
+   *
+   * Refused unless the request is in `editing` — nobody edits an approved
+   * request — and the figure has to fit what the stock still has, which is the
+   * same ceiling the request was checked against when it was raised. The old
+   * and new figures go on the event, so the trail says what moved.
+   */
+  async editQuantity(id: string, quantity: number, comment: string | undefined, actedBy: string) {
+    return this.db.$transaction(async (tx) => {
+      const order = await tx.centralStockOrder.findUnique({
+        where: { id },
+        select: {
+          id: true, status: true, quantity: true, unitPrice: true, createdBy: true,
+          clearanceId: true, centralStockId: true,
+        },
+      });
+      if (!order) throw new NotFoundError("Central stock order not found");
+      if (order.status !== "editing") {
+        throw new BusinessError(
+          "400",
+          "This request is not open for changes. An approver must send it back first.",
+        );
+      }
+
+      const was = Number(order.quantity);
+      if (quantity === was) {
+        throw new BusinessError("400", "The quantity is unchanged");
+      }
+
+      // Growing the request has to fit what the clearance still holds: the rest
+      // of it may already be promised to other requests.
+      if (quantity > was) {
+        const clearance = await tx.stockClearance.findUniqueOrThrow({
+          where: { id: order.clearanceId },
+          select: {
+            quantity: true,
+            centralStockOrders: { where: { id: { not: id } }, select: { quantity: true } },
+          },
+        });
+        const promised = clearance.centralStockOrders.reduce(
+          (sum, other) => sum + Number(other.quantity), 0);
+        const room = Number(clearance.quantity) - promised;
+        if (quantity > room) {
+          throw new BusinessError(
+            "400",
+            `Only ${room} is available on this clearance; ${quantity} was asked for`,
+          );
+        }
+      }
+
+      const updated = await tx.centralStockOrder.update({
+        where: { id },
+        data: {
+          quantity,
+          totalPrice: Number(order.unitPrice) * quantity,
+          // Changed and handed back: it needs a decision again.
+          status: "pending",
+        },
+      });
+      // The stock movement recorded when it was raised has to follow the figure.
+      await tx.stockTransaction.updateMany({
+        where: { centralStockId: order.centralStockId, type: "saleOut" },
+        data: { quantity },
+      });
+      await tx.centralStockOrderEvent.create({
+        data: { orderId: id, action: "edited", comment, fromQuantity: was, toQuantity: quantity, actedBy },
+      });
+      return updated;
+    }, { isolationLevel: "Serializable" });
+  }
+
+  /** One request, for a caller that needs to check whose site it belongs to. */
+  findOrder(id: string) {
+    return this.db.centralStockOrder.findUnique({
+      where: { id },
+      select: { id: true, siteId: true, status: true, quantity: true, createdBy: true },
+    });
+  }
+
+  /** The trail: who asked for what, who changed it, and what they said. */
+  events(orderId: string) {
+    return this.db.centralStockOrderEvent.findMany({
+      where: { orderId },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true, action: true, comment: true, fromQuantity: true, toQuantity: true,
+        createdAt: true,
+        user: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
   }
 }

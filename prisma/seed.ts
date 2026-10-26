@@ -95,6 +95,9 @@ export const MODULE_TREE: ModuleNode[] = [
       { id: "f33369c4-bf68-4eee-9a96-0094540c41f8", code: "DRIVERS", name: "Drivers", icon: "IdCard", prefix: "drivers" },
       { id: "9e7fcf78-a2ac-47f5-bc33-9a1f515662df", code: "DEPORTS", name: "Depots", icon: "Warehouse", prefix: "deports" },
       { code: "PARKINGS", name: "Parkings", icon: "SquareParking", prefix: "parkings" },
+      // Charged against stock receipts and proformas; the catalogue lives here,
+      // while charging a fee is gated on the record it is charged against.
+      { code: "FEE_TYPES", name: "Fees", icon: "Receipt", prefix: "fees" },
       { code: "VEHICLE_LOCATIONS", name: "Vehicle Locations", icon: "MapPin", prefix: "vehicle.locations" },
     ] },
     { id: "9308490d-4f55-4e3f-8eaf-f06b5b7e2597", code: "SUPPLY_CHAIN_IMPORT_TRANSIT_DEPOT_AND_WAREHOUSE", name: "Import, Transit, Depot and Warehouse", icon: "Route", children: [

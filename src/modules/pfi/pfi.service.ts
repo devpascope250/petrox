@@ -4,6 +4,8 @@ import { DatesQuerySchema } from "../../shared/validation/primitives.js";
 import { within2DaysPeriod } from "../../utils/utils.js";
 import { paginatedData } from "../../shared/pagination/index.js";
 import type { PagedDatesQuery } from "../../shared/validation/index.js";
+import { Prisma } from "../../../prisma/generated/prisma/client.js";
+import { totalsOf } from "../fees/fee.repository.js";
 import { PfiRepository } from "./pfi.repository.js";
 import { CreateCurrancySchema, CreatePfiSchema } from "./pfi.schema.js";
 export class PfiService {
@@ -14,7 +16,22 @@ export class PfiService {
     // No window asked for still means a window: the last two days.
     const dates = within2DaysPeriod(query.startDate, query.endDate);
     const [pfis, total] = await this.repo.list({ ...query, ...dates });
-    return paginatedData(pfis.map((pfi) => this.withDocumentUrl(pfi)), total, query);
+    return paginatedData(
+      pfis.map((pfi) => this.withFees(this.withDocumentUrl(pfi))),
+      total,
+      query,
+    );
+  }
+
+  /**
+   * What the fees on a proforma come to, beside its own amount — grouped by
+   * currency, since a fee is not always in the money of the invoice.
+   */
+  private withFees<T extends { fees?: Array<{ count: number; unitAmount: Prisma.Decimal; currencyCode: string }> }>(
+    pfi: T,
+  ) {
+    const fees = pfi.fees ?? [];
+    return { ...pfi, feeTotals: totalsOf(fees).byCurrency };
   }
   async find(id: string) {
     const pfi = await this.repo.find(id);

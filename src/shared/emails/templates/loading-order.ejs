@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= heading %></title>
+  </head>
+  <body style="margin: 0; padding: 0; font-family: &quot;Segoe UI&quot;, Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6fb">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f4f6fb">
+      <tr>
+        <td align="center" style="padding: 40px 20px">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+            style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); overflow: hidden">
+            <%- include('partials/brand-header') %>
+
+            <tr>
+              <td style="padding: 28px 40px; background-color: #034ea2; color: #ffffff">
+                <h1 style="margin: 0; font-size: 20px; font-weight: 600"><%= heading %></h1>
+                <p style="margin: 8px 0 0 0; font-size: 14px; color: rgba(255, 255, 255, 0.85)">
+                  Loading order <%= orderNumber %> · <%= totalQuantity %> L
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 28px 40px">
+                <p style="margin: 0 0 16px 0; color: #344054; font-size: 15px; line-height: 24px">
+                  Hello <%= recipientName %>,
+                </p>
+                <p style="margin: 0 0 20px 0; color: #475467; font-size: 14px; line-height: 23px">
+                  <%= intro %>
+                </p>
+
+                <% if (message) { %>
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                    style="margin-bottom: 20px; border-left: 4px solid #034ea2; background-color: #f8fafc; border-radius: 6px">
+                    <tr><td style="padding: 12px 16px; color: #344054; font-size: 14px; line-height: 22px"><%= message %></td></tr>
+                  </table>
+                <% } %>
+
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                  style="margin-bottom: 22px; border: 1px solid #eaecf0; border-radius: 10px; background-color: #f9fafb">
+                  <tr>
+                    <td style="padding: 14px 18px; border-bottom: 1px solid #eaecf0">
+                      <p style="margin: 0 0 3px 0; color: #98a2b3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px">Driver &amp; vehicle</p>
+                      <p style="margin: 0; color: #101828; font-size: 14px; font-weight: 600"><%= driver %> · <%= plate %></p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 14px 18px">
+                      <p style="margin: 0 0 3px 0; color: #98a2b3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px">Authorization</p>
+                      <p style="margin: 0; color: #101828; font-size: 14px; font-weight: 600"><%= authorizationLine %></p>
+                    </td>
+                  </tr>
+                </table>
+
+                <% if (actionLink) { %>
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                    <tr>
+                      <td align="center">
+                        <a href="<%= actionLink %>"
+                          style="display: inline-block; padding: 13px 32px; background-color: #034ea2; color: #ffffff; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600">
+                          <%= actionLabel %>
+                        </a>
+                      </td>
+                    </tr>
+                  </table>
+                <% } %>
+
+                <% if (attached) { %>
+                  <p style="margin: 20px 0 0 0; color: #667085; font-size: 13px">
+                    The loading order is attached as a PDF.
+                  </p>
+                <% } %>
+              </td>
+            </tr>
+
+            <%- include('partials/company-footer') %>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

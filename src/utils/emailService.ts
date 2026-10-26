@@ -75,6 +75,8 @@ interface EmailOptions {
   to: string;
   subject: string;
   html: string;
+  /** Files to attach; read and base64-encoded by the mailer. */
+  attachments?: Array<{ path: string; filename?: string }>;
 }
 
 // Environment variables interface
@@ -253,6 +255,55 @@ class EmailService {
       to: userEmail,
       subject: `Welcome to ${this.config.COMPANY_NAME}! 🎉`,
       html,
+    });
+  }
+
+  /**
+   * Tells an authoriser that a loading order is waiting for them, or sends the
+   * signed document to someone outside the system.
+   *
+   * One template for both: the difference is a line of wording and whether the
+   * PDF is attached, not the shape of the message.
+   */
+  async sendLoadingOrderEmail(
+    to: string,
+    recipientName: string,
+    order: {
+      orderNumber: string;
+      totalQuantity: string;
+      driver: string;
+      plate: string;
+      authorizationLine: string;
+    },
+    options: {
+      heading: string;
+      intro: string;
+      subject: string;
+      message?: string | null;
+      actionPath?: string | null;
+      actionLabel?: string;
+      attachment?: { path: string; filename: string } | null;
+    },
+  ): Promise<void> {
+    const html = await this.renderTemplate('loading-order', {
+      ...order,
+      recipientName,
+      heading: options.heading,
+      intro: options.intro,
+      message: options.message ?? null,
+      actionLink: options.actionPath ? `${this.config.FRONTEND_URL}${options.actionPath}` : null,
+      actionLabel: options.actionLabel ?? 'Open it',
+      attached: Boolean(options.attachment),
+    });
+
+    await this.sendEmail({
+      from: this.from,
+      // Shared documents go to whoever was named, so the development redirect
+      // applies here as everywhere else: see `DEV_EMAIL`.
+      to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : to,
+      subject: options.subject,
+      html,
+      ...(options.attachment ? { attachments: [options.attachment] } : {}),
     });
   }
 

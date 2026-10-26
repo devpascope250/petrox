@@ -135,8 +135,32 @@ export class AuthorizerRepository {
         !loadingOrder.authorizers.some((approval) => approval.authorizerId === required.id));
       if (missingLowerLevel) throw new BusinessError("400", "A lower authorization level must approve first");
 
+      /*
+       * The signature is copied onto the approval, with the name it was given
+       * under. A document already signed must not change because someone later
+       * replaced their signature image — and without one there is nothing to
+       * stamp on the document, so approving is refused rather than producing a
+       * document with a blank where a signature belongs.
+       */
+      const signer = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { firstName: true, lastName: true, signatureUrl: true },
+      });
+      if (!signer.signatureUrl) {
+        throw new BusinessError(
+          "SIGNATURE_MISSING",
+          "Add your signature to your profile before authorizing a loading order",
+        );
+      }
+
       const approval = await tx.loadingOrderAuthorizer.create({
-        data: { loadingOrderId, userId, authorizerId: configuration.id },
+        data: {
+          loadingOrderId,
+          userId,
+          authorizerId: configuration.id,
+          signatureUrl: signer.signatureUrl,
+          signedName: `${signer.firstName} ${signer.lastName}`.trim(),
+        },
         include: { user: { select: { id: true, firstName: true, lastName: true } },
           authorizer: { include: { role: true } } },
       });

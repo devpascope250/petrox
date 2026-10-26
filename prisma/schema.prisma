@@ -93,6 +93,9 @@ model User {
   updatedAt                  DateTime                 @updatedAt
   clientId                   String?
   siteId                     String?
+  /// Their signature image, stamped onto a document they authorise. Optional:
+  /// most users never sign anything. An authoriser without one cannot approve.
+  signatureUrl               String?
   /// The site they work at now. `UserSites` keeps every site they were assigned, with this one active.
   site                       TblSite?                 @relation("UserHomeSite", fields: [siteId], references: [id], onDelete: SetNull)
   position                   UserPositions            @default(siteManager)
@@ -115,6 +118,10 @@ model User {
   timeTablesUser             TblTimeTable[]           @relation("TimeTableUsers")
   tblPumpAttendants          TblPumpAttendant[]
   cuveTransactions           CuveTransaction[]
+  loadingOrderShares         LoadingOrderShare[]      @relation("LoadingOrderSharedBy")
+  centralStockOrderEvents    CentralStockOrderEvent[] @relation("CentralStockOrderEventActor")
+  chainStockFees             ChainStockFee[]          @relation("ChainStockFeeCreatedBy")
+  pfiFees                    PfiFee[]                 @relation("PfiFeeCreatedBy")
   fuelSales                  FuelSale[]
   cardTypes                  CardType[]
   provisioningKeys           SiteProvisioningKey[]    @relation("ProvisioningKeyCreator")
@@ -453,12 +460,35 @@ model LoadingOrder {
   authorizationStatus LoadingOrderAuthorizationStatus @default(pending)
   dVehicle            DriverVehicles                  @relation(fields: [driverVehicleId], references: [id])
   authorizers         LoadingOrderAuthorizer[]
+  shares              LoadingOrderShare[]
   createdAt           DateTime                        @default(now())
   updatedAt           DateTime                        @updatedAt
   orderReceptions     OrderReception[]
   loadedOrders        LoadedOrder[]
 
   @@index([driverVehicleId])
+}
+
+/// A loading order sent out by email, kept so it is known who received the
+/// document and when — it leaves the company, so it is worth a trail.
+model LoadingOrderShare {
+  id             String       @id @default(uuid())
+  loadingOrderId String
+  loadingOrder   LoadingOrder @relation(fields: [loadingOrderId], references: [id])
+  /// The addresses it went to, as given — one row per send, not per address.
+  recipients     String       @db.Text
+  /// What the sender wrote above the document, if anything.
+  message        String?      @db.Text
+  sharedBy       String
+  user           User         @relation("LoadingOrderSharedBy", fields: [sharedBy], references: [id])
+  /// Null while the mail is being sent; set once it was accepted.
+  sentAt         DateTime?
+  /// Why it did not go, when it did not.
+  failedReason   String?
+  createdAt      DateTime     @default(now())
+
+  @@index([loadingOrderId])
+  @@index([sharedBy])
 }
 
 model LoadedOrder {
@@ -514,6 +544,11 @@ model LoadingOrderAuthorizer {
   user           User         @relation(fields: [userId], references: [id], map: "fk_loading_order_authorizer_user")
   authorizerId   String
   authorizer     Authorizers  @relation(fields: [authorizerId], references: [id])
+  /// The signature as it was when this approval was given, and the name it was
+  /// given under. Copies on purpose: a document already signed must not change
+  /// because someone later replaced their signature or married.
+  signatureUrl   String?
+  signedName     String?
   createdAt      DateTime     @default(now())
 
   @@unique([loadingOrderId, userId])
@@ -587,6 +622,7 @@ model Stock {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   nominationVessels NominationVessel[]
+  chainStockFees    ChainStockFee[]
 
   @@index([deportId])
   @@index([cargoId])
@@ -660,6 +696,7 @@ model Pfi {
   pfiReference     String   @unique
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  fees             PfiFee[]
 
   @@index([cargoId])
   @@index([id])
@@ -857,9 +894,42 @@ model CentralStockOrder {
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
   loadedOrders   LoadedOrder[]
+  events         CentralStockOrderEvent[]
 
   @@index([centralStockId])
   @@index([clearanceId])
+}
+
+/// What happened to a stock request and who did it: asked to be changed,
+/// changed, approved, rejected, cancelled. The quantity either side of a
+/// change is kept here, so the trail says what moved rather than only that
+/// something did.
+model CentralStockOrderEvent {
+  id           String                  @id @default(uuid())
+  orderId      String
+  order        CentralStockOrder       @relation(fields: [orderId], references: [id])
+  action       CentralStockOrderAction
+  /// Why — the note the admin wrote when asking for a change, or the editor's
+  /// own remark.
+  comment      String?                 @db.Text
+  fromQuantity Decimal?                @db.Decimal(18, 2)
+  toQuantity   Decimal?                @db.Decimal(18, 2)
+  actedBy      String
+  user         User                    @relation("CentralStockOrderEventActor", fields: [actedBy], references: [id])
+  createdAt    DateTime                @default(now())
+
+  @@index([orderId])
+  @@index([actedBy])
+  @@index([createdAt])
+}
+
+enum CentralStockOrderAction {
+  requested
+  editRequested
+  edited
+  approved
+  rejected
+  cancelled
 }
 
 enum CentralStockOrderType {
@@ -872,6 +942,10 @@ enum CentralOrderStatus {
   approved
   rejected
   cancelled
+  /// Sent back to whoever raised it, to change the quantity. Only in this
+  /// state may they edit it; saving returns it to `pending`. The reason and
+  /// the figures either side are kept in `CentralStockOrderEvent`.
+  editing
 }
 
 model TblSite {
@@ -1806,4 +1880,72 @@ model VehicleLocation {
   @@index([nominationId, status])
   @@index([parkingId, status])
   @@index([createdAt])
+}
+
+/// A fee that can be charged against stock or a proforma: its name and what it
+/// currently costs. The amount here is only the default a form prefills — every
+/// charge keeps its own copy, so editing this price never re-values what was
+/// charged in the past.
+model FeeType {
+  id             String          @id @default(uuid())
+  name           String
+  amount         Decimal         @db.Decimal(18, 2)
+  /// Fees are not always in the same money as the invoice they sit beside, so
+  /// totals are grouped by this rather than added blindly.
+  currencyCode   String          @default("RWF")
+  status         StatusType      @default(active)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  chainStockFees ChainStockFee[]
+  pfiFees        PfiFee[]
+
+  @@unique([name])
+  @@index([status])
+}
+
+/// A fee charged against one stock receipt.
+///
+/// `name`, `unitAmount` and `currencyCode` are copies taken when the fee was
+/// charged: a landed cost worked out last quarter must not move because a price
+/// was edited today.
+model ChainStockFee {
+  id           String   @id @default(uuid())
+  feeTypeId    String
+  stockId      String
+  count        Int      @default(1)
+  name         String
+  unitAmount   Decimal  @db.Decimal(18, 2)
+  currencyCode String
+  feeType      FeeType  @relation(fields: [feeTypeId], references: [id])
+  stock        Stock    @relation(fields: [stockId], references: [id])
+  createdBy    String?
+  user         User?    @relation("ChainStockFeeCreatedBy", fields: [createdBy], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@unique([stockId, feeTypeId])
+  @@index([stockId])
+  @@index([feeTypeId])
+  @@index([createdBy])
+}
+
+/// A fee charged against one proforma invoice, with its figures copied for the
+/// same reason as `ChainStockFee`.
+model PfiFee {
+  id           String   @id @default(uuid())
+  feeTypeId    String
+  pfiId        String
+  count        Int      @default(1)
+  name         String
+  unitAmount   Decimal  @db.Decimal(18, 2)
+  currencyCode String
+  feeType      FeeType  @relation(fields: [feeTypeId], references: [id])
+  pfi          Pfi      @relation(fields: [pfiId], references: [id])
+  createdBy    String?
+  user         User?    @relation("PfiFeeCreatedBy", fields: [createdBy], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@unique([pfiId, feeTypeId])
+  @@index([pfiId])
+  @@index([feeTypeId])
+  @@index([createdBy])
 }

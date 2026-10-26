@@ -4,6 +4,8 @@ import { idParamsSchema, parseInput } from "../../shared/validation/index.js";
 import { CentralStockOrderService } from "./order.service.js";
 import { CentralStockOrderRepository } from "./order.repository.js";
 import { CentralStockOrderParamaSchema, centralStockOrderReportQuerySchema, createCentralStockOrderSchema, createLoadingOrderSchema, loadingOrderStatusSchema, receiveLoadingOrderSchema, receptionOrdersQuerySchema } from "./order.schema.js";
+import { shareLoadingOrderSchema } from "./loading-order-share.js";
+import { editOrderQuantitySchema, requestOrderEditSchema } from "./order.schema.js";
 import { AuthorizerRepository } from "./authorizer.repository.js";
 import { AuthorizerService } from "./authorizer.service.js";
 import { authorizerSchema } from "./authorizer.schema.js";
@@ -16,6 +18,38 @@ const routes: FastifyPluginAsync = async (app) => {
     success(await service.listLoadingOrders(request.contextUser!)));
   app.post("/loading-orders", { preHandler: [app.authenticate, app.authorize("stockout.orders.create", "stockout.orders.manage")] }, async (request, reply) =>
     created(reply, await service.createLoadingOrders(parseInput(createLoadingOrderSchema, request.body))));
+  /**
+   * The loading order as a PDF. Signatures appear on it once every authoriser
+   * has approved — a half-signed order is a working paper, not an instruction
+   * to load.
+   */
+  app.get("/loading-orders/:id/document", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] },
+    async (request, reply) => {
+      const { pdf, fileName } = await service.loadingOrderDocument(
+        parseInput(idParamsSchema, request.params).id,
+      );
+      return reply
+        .header("Content-Type", "application/pdf")
+        // `attachment`, so a click downloads the file rather than opening a
+        // tab the browser then has to be told to save.
+        .header("Content-Disposition", `attachment; filename="${fileName}"`)
+        .send(pdf);
+    });
+
+  /** Emails the authorised document to whoever is named. */
+  app.post("/loading-orders/:id/share", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] },
+    async (request, reply) =>
+      created(reply, await service.shareLoadingOrder(
+        parseInput(idParamsSchema, request.params).id,
+        parseInput(shareLoadingOrderSchema, request.body),
+        request.contextUser!,
+      )));
+
+  /** Who it has already been sent to, and whether it arrived. */
+  app.get("/loading-orders/:id/shares", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] },
+    async (request) =>
+      success(await service.loadingOrderShares(parseInput(idParamsSchema, request.params).id)));
+
   app.patch("/loading-orders/:id/status", { preHandler: [app.authenticate, app.authorize("stockout.orders.edit", "stockout.orders.manage")] }, async (request) =>
     success(await service.updateLoadingOrderStatus(
       parseInput(idParamsSchema, request.params).id,
@@ -74,6 +108,32 @@ const routes: FastifyPluginAsync = async (app) => {
     return created(reply, await service.create(parseInput(createCentralStockOrderSchema, payload)))
   }
     );
+
+    /**
+     * Sent back to the site to change the quantity. Head office's decision,
+     * like approving — the difference is that the request stays alive.
+     */
+    app.patch("/:id/request-edit", { preHandler: [app.authenticate, app.authorize("stockout.orders.edit", "stockout.orders.manage")] }, async (request) =>
+      success(await service.requestEdit(
+        parseInput(idParamsSchema, request.params).id,
+        parseInput(requestOrderEditSchema, request.body),
+        request.contextUser!,
+      )));
+
+    /**
+     * The site's new quantity, allowed only while the request is open for
+     * changes. Saving hands it back for a decision.
+     */
+    app.patch("/:id/quantity", { preHandler: [app.authenticate, app.authorize("stockout.orders.create", "stockout.orders.manage")] }, async (request) =>
+      success(await service.editQuantity(
+        parseInput(idParamsSchema, request.params).id,
+        parseInput(editOrderQuantitySchema, request.body),
+        request.contextUser!,
+      )));
+
+    /** Who asked for what, who changed it, and what they said. */
+    app.get("/:id/events", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] }, async (request) =>
+      success(await service.events(parseInput(idParamsSchema, request.params).id)));
 
     // Approving or cancelling an order is head office's decision, never the site's.
     app.put("/:id/status/:status", { preHandler: [app.authenticate, app.authorize("stockout.orders.edit", "stockout.orders.manage")] }, async (request) =>

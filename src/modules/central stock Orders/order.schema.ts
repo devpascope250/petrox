@@ -75,6 +75,20 @@ export const CentralStockOrderParamaSchema = z.object({
   status: z.enum(CentralOrderStatus),
 });
 
+/**
+ * Sending a request back to be changed. The reason is required: "change it"
+ * with no comment leaves the site guessing what to change it to.
+ */
+export const requestOrderEditSchema = z.object({
+  comment: z.string().trim().min(3, "Say what needs to change").max(500),
+});
+
+/** The new quantity, from whoever raised the request. */
+export const editOrderQuantitySchema = z.object({
+  quantity: z.coerce.number().positive(),
+  comment: z.string().trim().max(500).optional(),
+});
+
 export type CreateCentralStockOrderSchema = z.infer<
   typeof createCentralStockOrderSchema
 >;
@@ -83,3 +97,6 @@ export type CreateLoadingOrderSchema = z.infer<typeof createLoadingOrderSchema>;
 export type LoadingOrderStatusSchema = z.infer<typeof loadingOrderStatusSchema>;
 export type ReceptionOrdersQuerySchema = z.infer<typeof receptionOrdersQuerySchema>;
 export type ReceiveLoadingOrderSchema = z.infer<typeof receiveLoadingOrderSchema>;
+
+export type RequestOrderEditSchema = z.infer<typeof requestOrderEditSchema>;
+export type EditOrderQuantitySchema = z.infer<typeof editOrderQuantitySchema>;

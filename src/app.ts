@@ -50,6 +50,7 @@ import NozzlesRoutes from "./modules/nozzle/nozzle.routes.js";
 import ShiftsRoutes from "./modules/shifts/shift.routes.js";
 import StockOutOrdersRoutes from "./modules/central stock Orders/order.routes.js";
 import LocationRoutes from "./modules/locations/location.routes.js";
+import FeeRoutes from "./modules/fees/fee.routes.js";
 import ParkingRoutes from "./modules/parkings/parking.routes.js";
 import VehicleLocationRoutes from "./modules/vehicle-locations/vehicle-location.routes.js";
 import CompanyAccountRoutes from "./modules/company-accounts/company-account.routes.js";
@@ -151,6 +152,7 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(ShiftsRoutes, { prefix: "/api/v1/shifts" });
   await app.register(StockOutOrdersRoutes, { prefix: "/api/v1/stock-out-orders" });
   await app.register(LocationRoutes, { prefix: "/api/v1/locations" });
+  await app.register(FeeRoutes, { prefix: "/api/v1/fees" });
   await app.register(ParkingRoutes, { prefix: "/api/v1/parkings" });
   await app.register(VehicleLocationRoutes, { prefix: "/api/v1/vehicle-locations" });
   await app.register(CompanyAccountRoutes, { prefix: "/api/v1/company-accounts" });
