@@ -20,7 +20,7 @@ import { FeeService } from "./fee.service.js";
  */
 const routes: FastifyPluginAsync = async (app) => {
   const service = new FeeService(new FeeRepository(app.prisma));
-  const read = { preHandler: [app.authenticate, app.authorize("fees.read", "fees.manage")] };
+  const read = { preHandler: [app.authenticate, app.authorize("fee.types.read", "fee.types.manage")] };
 
   app.get("/types", read, async (request) =>
     success(await service.listTypes(parseInput(feeTypeListQuerySchema, request.query))));
@@ -31,18 +31,18 @@ const routes: FastifyPluginAsync = async (app) => {
   app.get("/types/:id", read, async (request) =>
     success(await service.findType(parseInput(idParamsSchema, request.params).id)));
 
-  app.post("/types", { preHandler: [app.authenticate, app.authorize("fees.create", "fees.manage")] },
+  app.post("/types", { preHandler: [app.authenticate, app.authorize("fee.types.create", "fee.types.manage")] },
     async (request, reply) =>
       created(reply, await service.createType(parseInput(createFeeTypeSchema, request.body))));
 
-  app.put("/types/:id", { preHandler: [app.authenticate, app.authorize("fees.edit", "fees.manage")] },
+  app.put("/types/:id", { preHandler: [app.authenticate, app.authorize("fee.types.edit", "fee.types.manage")] },
     async (request) =>
       success(await service.updateType(
         parseInput(idParamsSchema, request.params).id,
         parseInput(createFeeTypeSchema, request.body),
       )));
 
-  app.patch("/types/:id/status", { preHandler: [app.authenticate, app.authorize("fees.edit", "fees.manage")] },
+  app.patch("/types/:id/status", { preHandler: [app.authenticate, app.authorize("fee.types.edit", "fee.types.manage")] },
     async (request) =>
       success(await service.changeTypeStatus(parseInput(idParamsSchema, request.params).id)));
 
