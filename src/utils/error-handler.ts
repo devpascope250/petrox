@@ -1,5 +1,6 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
-import { ZodError, type ZodIssue } from "zod";
+import { ZodError } from "zod";
+import {  type $ZodIssue } from "zod/v4/core";
 import { AppError } from "./errors.js";
 
 type FastifyValidationIssue = {
@@ -13,7 +14,7 @@ type ErrorLike = Error & {
   code?: string;
   statusCode?: number;
   validation?: FastifyValidationIssue[];
-  issues?: ZodIssue[];
+  issues?: $ZodIssue[];
   meta?: { target?: unknown; field_name?: unknown };
 };
 
@@ -65,7 +66,7 @@ function formatZodPath(path: PropertyKey[]): string {
       : result ? `${result}.${String(segment)}` : String(segment), "");
 }
 
-function zodDetails(issues: ZodIssue[] | undefined): ValidationDetail[] {
+function zodDetails(issues: $ZodIssue[] | undefined): ValidationDetail[] {
   return (issues ?? []).map((issue) => ({
     field: formatZodPath(issue.path),
     code: issue.code,

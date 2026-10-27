@@ -32,9 +32,18 @@ export const createFuelSaleSchema = z.object({
   /** The working day it counts towards. Worked out from the shift when left out. */
   dateOn: daySchema.optional(),
   quantity: z.coerce.number("Quantity must be a number").positive("Quantity must be more than zero"),
-  /** Price per unit at the pump when it was sold. */
+  /**
+   * Price per unit at the pump. It must be the price in force for the tank's
+   * product: the sale is charged at that price, so a stale one is refused
+   * rather than quietly overridden.
+   */
   unitPrice: z.coerce.number("Price must be a number").positive("Price must be more than zero"),
-  /** What the customer paid; usually quantity x price, give or take rounding. */
+  /**
+   * What the pump showed — quantity x price, give or take rounding — **before
+   * any discount**. A discount in force is worked out by the server and taken
+   * off; the `payments` must add up to what is left, which `GET
+   * /fuel-sales/quote` gives as `amount`.
+   */
   amount: z.coerce.number("Amount must be a number").positive("Amount must be more than zero"),
   note: z.string().trim().max(190).optional(),
   payments: z.array(z.object({
@@ -46,6 +55,13 @@ export const createFuelSaleSchema = z.object({
   })).min(1, "Add at least one payment"),
 }).refine((sale) => Boolean(sale.nozzleId || sale.cuveId), {
   message: "Choose the tank the fuel came from", path: ["cuveId"],
+});
+
+/** What a sale of this volume from this tank would come to, discount included. */
+export const fuelSaleQuoteQuerySchema = z.object({
+  siteId: uuidSchema.optional(),
+  cuveId: uuidSchema,
+  quantity: z.coerce.number("Quantity must be a number").positive("Quantity must be more than zero"),
 });
 
 export const fuelSaleListQuerySchema = paginationQuerySchema.extend({
@@ -65,6 +81,7 @@ export const fuelSaleReportQuerySchema = z.object({
 }).refine(periodOrder.check, periodOrder.issue);
 
 export type CreateFuelSale = z.infer<typeof createFuelSaleSchema>;
+export type FuelSaleQuoteQuery = z.infer<typeof fuelSaleQuoteQuerySchema>;
 export type FuelSaleListQuery = z.infer<typeof fuelSaleListQuerySchema>;
 export type FuelSaleReportQuery = z.infer<typeof fuelSaleReportQuerySchema>;
 export type FuelSaleFilters = Pick<FuelSaleListQuery, "startDate" | "endDate" | "shiftId" | "nozzleId">;

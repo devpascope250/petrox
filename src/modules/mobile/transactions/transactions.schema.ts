@@ -65,6 +65,11 @@ export const confirmTransactionSchema = z.object({
   printStatus: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
 }).strict();
 
+/** How many litres the pump put in, to price the sale before it is confirmed. */
+export const quoteTransactionSchema = z.object({
+  quantity: twoDecimals("Quantity"),
+}).strict();
+
 export const cancelTransactionSchema = z.object({
   reason: text(255),
 }).strict();
@@ -85,5 +90,6 @@ export const transactionCodeParamsSchema = z.object({
 
 export type InitiateTransactionInput = z.infer<typeof initiateTransactionSchema>;
 export type ConfirmTransactionInput = z.infer<typeof confirmTransactionSchema>;
+export type QuoteTransactionInput = z.infer<typeof quoteTransactionSchema>;
 export type CancelTransactionInput = z.infer<typeof cancelTransactionSchema>;
 export type PrintStatusInput = z.infer<typeof printStatusSchema>;

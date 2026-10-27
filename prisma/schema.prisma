@@ -6,6 +6,7 @@ generator client {
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 model Role {
@@ -1131,6 +1132,14 @@ model FuelSale {
   /// Price per unit at the moment of the sale, kept even if prices change later.
   unitPrice       Decimal           @db.Decimal(18, 2)
   amount          Decimal           @db.Decimal(18, 2)
+  /// The discount that priced it, kept only to trace it back: the figures
+  /// below are the sale's own and never change when a discount is edited.
+  discountId      String?
+  discount        Discount?         @relation(fields: [discountId], references: [id], onDelete: SetNull)
+  /// Off each unit sold, as the discount stood when the sale was priced.
+  discountRate    Decimal           @default(0.00) @db.Decimal(18, 2)
+  /// What the discount took off: `amount` is already net of it.
+  discountAmount  Decimal           @default(0.00) @db.Decimal(18, 2)
   note            String?
   createdBy       String
   user            User              @relation(fields: [createdBy], references: [id])
@@ -1146,6 +1155,7 @@ model FuelSale {
   @@index([nozzleId])
   @@index([shiftId])
   @@index([createdAt])
+  @@index([discountId])
 }
 
 /// Where a sale's money went. A sale can be split across several accounts.
@@ -1457,6 +1467,9 @@ model Discount {
   createdAt DateTime     @default(now())
 
   rangingDiscounts RangingDiscount[]
+  /// The sales this discount priced; each keeps its own copy of the figures.
+  fuelSales           FuelSale[]
+  generalTransactions GeneralTransaction[]
 
   @@index([clientId])
   @@index([siteId])
@@ -1471,7 +1484,7 @@ model RangingDiscount {
   id         String     @id @default(uuid())
   from       Decimal    @db.Decimal(12, 1)
   to         Decimal    @db.Decimal(12, 1)
-  amount     Decimal    @db.Decimal(12, 1)
+  rate       Decimal    @db.Decimal(12, 1)
   discountId String
   discount   Discount   @relation(fields: [discountId], references: [id])
   siteId     String
@@ -1735,7 +1748,13 @@ model GeneralTransaction {
   amount                     Decimal                     @default(0.0) @db.Decimal(18, 2)
   siteId                     String
   site                       TblSite                     @relation(fields: [siteId], references: [id])
+  /// What a discount took off: `amount` is already net of it.
   discountAmount             Decimal                     @default(0.0) @db.Decimal(18, 2)
+  /// Off each unit sold, as the discount stood when the sale was priced.
+  discountRate               Decimal                     @default(0.00) @db.Decimal(18, 2)
+  /// The discount that priced it, kept only to trace it back.
+  discountId                 String?
+  discount                   Discount?                   @relation(fields: [discountId], references: [id], onDelete: SetNull)
   shiftId                    String?
   shift                      TblShiftSite?               @relation(fields: [shiftId], references: [id])
   displayPictureUrl          String?
@@ -1766,6 +1785,7 @@ model GeneralTransaction {
   @@index([siteId, createdAt])
   @@index([siteId, id])
   @@index([status])
+  @@index([discountId])
 }
 
 enum GeneralTransactionStatus {

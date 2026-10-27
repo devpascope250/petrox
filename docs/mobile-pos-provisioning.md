@@ -313,11 +313,42 @@ initiated, so the POS can show a countdown. A background sweep runs every minute
 overdue sale is also cancelled on the spot when it is read, confirmed, or when its card is
 used for a new sale. Confirming it then gets `409 TRANSACTION_EXPIRED`: start a new sale. A sale paid with coupons (below) never times out: its `expiresAt` is `null`.
 
+**1a. `GET /mobile/transactions/:code/quote?quantity=`** — **ask this before confirming.**
+
+A sale may carry a **discount**, and the POS cannot work it out for itself. The quote prices
+the open sale at the litres the pump shows and answers with what to collect:
+
+```json
+{
+  "transactionCode": "PSST20261008-092056-536",
+  "client": { "id": "…", "clientCode": "C-0007", "name": "Acme Ltd" },
+  "quantity": 40, "unitPrice": 1500,
+  "grossAmount": 60000,
+  "discountAmount": 1200,
+  "amount": 58800,
+  "discount": { "id": "…", "type": "fixed", "rate": 30, "amount": 1200, "tier": null }
+}
+```
+
+- `grossAmount` is quantity × price — what the pump display shows.
+- `discountAmount` is what the discount takes off; `0` and `discount: null` when none applies.
+- **`amount` is what the attendant collects**, and what the `payments` must add up to.
+- `discount.rate` is **off each litre**, not a percentage: 40 litres at a rate of 30 is 1200.
+  `discount.tier` is the volume band that gave it (`{id, from, to}`), or `null` for a client's
+  own rate.
+
+A sale gets **one** discount — the best of those in force, never two added together. Which
+one applies depends on the site, the client (a card or coupon sale) and the litres, so the
+quote must be asked with the real quantity, after the pump stops. Only an `initiated` sale can
+be quoted (`409 TRANSACTION_NOT_OPEN`). Show the three figures on the screen and on the
+receipt; the server prices the sale again when it is confirmed, so the quote is advice, never
+the record.
+
 **2. `POST /mobile/transactions/:code/confirm`** closes the sale. In one database
 transaction it takes the litres out of the tank, writes a `CuveTransaction` (sold/OUT),
 records the payments and marks the sale `confirmed`. For a card sale it also charges `amount`
-to the card's main card (refused if the balance is short, unless the card type has
-`allowCredit`) and writes a `CardCopyTransaction` (PAYMENT/OUT). What the card paid is
+to the card's main card — **the discounted amount, not the pump's** (refused if the balance is
+short, unless the card type has `allowCredit`) and writes a `CardCopyTransaction` (PAYMENT/OUT). What the card paid is
 recorded as the sale's payment too, against the company account of type `card` — this site's,
 else the company's — with the card's number as its reference, so a card sale is never short on
 the receipt or in a by-account total. One active account of that type must exist
@@ -330,14 +361,20 @@ shows in the Fuel sales pages and report. If any check fails, nothing changes.
 | `phone`, `pin` | required | The attendant. Must be an active user at the site, **on the time table** for a shift running now, and on the pump rota for the sale's pump and nozzle — see "Who may confirm a sale" below. Becomes `doneBy`, and that site shift is recorded on the sale. |
 | `quantity` | required | Litres, at most 2 decimals. |
 | `unitPrice` | required | The price per litre. Must equal the price fixed when the sale started (`unitPrice` in the initiate response). |
-| `amount` | required | What the pump display shows. May differ from `quantity` × `unitPrice` by at most the price of 0.01 litre (the pump's rounding). Stored as the sale's amount. |
-| `payments` | JSON array | `[{"accountId","amount","reference"?}]`. Required **without** a card, and the amounts must add up to `amount`. **Not allowed with a card** (`422 PAYMENTS_NOT_FOR_CARD`): the card pays the whole sale, so taking payments as well would charge the client twice. |
+| `amount` | required | What the pump display shows, **before any discount**. May differ from `quantity` × `unitPrice` by at most the price of 0.01 litre (the pump's rounding). |
+| `payments` | JSON array | `[{"accountId","amount","reference"?}]`. Required **without** a card, and the amounts must add up to **what is left after the discount** — the quote's `amount`, not the pump's. Payments adding up to the gross are refused with `422 PAYMENTS_DO_NOT_MATCH`, whose `data` carries `grossAmount`, `discountAmount`, `amount`, `discount` and `paidAmount`. **Not allowed with a card** (`422 PAYMENTS_NOT_FOR_CARD`): the card pays the whole sale, so taking payments as well would charge the client twice. |
 | `referenceDoc.<n>` (file) | optional | PDF or picture for payment `n`. |
 | `displayPicture` (file) | optional | Picture of the pump display. Required when the card type has `captureDisplay`. |
 | `shiftId`, `comments`, `appVersion`, `printStatus` (`true`/`false`) | optional | `shiftId` overrides the shift taken from the time table. |
 
 Limited to 20 a minute per device. A sale can only be confirmed once: a second confirm,
 including one sent at the same moment, gets `409 TRANSACTION_ALREADY_CONFIRMED`.
+
+**What the sale comes back as.** Every sale returned carries all three figures:
+`grossAmount` (the pump), `discountAmount`, `amount` (collected, already net), plus
+`discountRate` — the rate off each litre, **copied onto the sale**. Editing or retiring a
+discount later never changes a sale already recorded. A sale at full price has
+`discountAmount: 0` and `discountRate: 0`, and `amount` equals `grossAmount`.
 
 **Listing:** `GET /mobile/transactions?status=initiated|confirmed|cancelled` returns the site's
 50 newest sales in that status, newest first; without `status`, the open (`initiated`) ones.
@@ -384,11 +421,17 @@ started **even when the client's coupons cannot pay all of it**. The answer carr
 `spendableAmount` (what their coupons can pay), `couponCount`, and `dueFromClient` (what to collect
 on top, `0` when the coupons cover it). Show that to the attendant before confirming.
 
+**Discounts.** The litres are already known here, so a coupon sale is **priced as it starts**:
+there is no quote step. Send `amount` as the pump display shows it; the sale comes back with
+`grossAmount`, `discountAmount`, `discountRate` and `amount` (what the coupons and any cash
+must pay between them), and `couponFunds.dueFromClient` is worked out against that discounted
+amount. A client's own negotiated rate applies here as it does to a card sale.
+
 | Field | | |
 |---|---|---|
 | `clientId`, `clientPin` | required | The client, checked with their PIN again. |
 | `itemId`, `cuveId`, `pumpId`, `nozzleId` | required | Checked as for a POS sale. |
-| `quantity`, `unitPrice`, `amount` | required | As the pump shows them. `unitPrice` must be the price in force (`UNIT_PRICE_MISMATCH`, `data.unitPrice` gives it); `amount` must be within 0.01 litre's worth of quantity × price (`AMOUNT_MISMATCH`). |
+| `quantity`, `unitPrice`, `amount` | required | As the pump shows them, `amount` **before any discount**. `unitPrice` must be the price in force (`UNIT_PRICE_MISMATCH`, `data.unitPrice` gives it); `amount` must be within 0.01 litre's worth of quantity × price (`AMOUNT_MISMATCH`). |
 | `displayPicture` (file) | **required** | Picture of the pump display (`DISPLAY_PICTURE_REQUIRED`). |
 | `platePicture` (file) | optional | PNG, JPG or WEBP picture of the car's plate. Stored as `platePictureUrl`. |
 | `platNumber`, `appVersion` | optional | |

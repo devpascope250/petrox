@@ -4,7 +4,8 @@ import { deviceSite } from "../auth/device-auth.js";
 import { readMobileForm } from "./transaction-form.js";
 import { MobileTransactionsRepository } from "./transactions.repository.js";
 import {
-  cancelTransactionSchema, confirmTransactionSchema, initiateTransactionSchema, listTransactionsQuerySchema, printStatusSchema,
+  cancelTransactionSchema, confirmTransactionSchema, initiateTransactionSchema, listTransactionsQuerySchema,
+  printStatusSchema, quoteTransactionSchema,
 } from "./transactions.schema.js";
 
 const REFERENCE_DOC = /^referenceDoc\.(\d+)$/;
@@ -27,6 +28,12 @@ export class MobileTransactionsService {
 
   find(request: FastifyRequest, code: string) {
     return this.withCompany(this.repo.find(code, deviceSite(request)));
+  }
+
+  /** What the sale comes to at the volume given, discount included. */
+  quote(request: FastifyRequest, code: string) {
+    const quantity = parseInput(quoteTransactionSchema, request.query).quantity;
+    return this.repo.quote(code, deviceSite(request), quantity);
   }
 
   /** Form fields as listed in the schema; the `platePicture` file becomes `platePictureUrl`. */

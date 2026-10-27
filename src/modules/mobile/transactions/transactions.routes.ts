@@ -58,6 +58,11 @@ const routes: FastifyPluginAsync = async (app) => {
   app.get("/:code", { preHandler: [authenticateDevice] }, async (request) =>
     success(await service.find(request, code(request.params))));
 
+  // What the sale comes to at the litres the pump shows, before confirming:
+  // the gross, the discount in force, and what is left to collect.
+  app.get("/:code/quote", { preHandler: [authenticateDevice] }, async (request) =>
+    success(await service.quote(request, code(request.params))));
+
   // The attendant's PIN is checked here, so tries are limited — per device
   // (its token) rather than per IP, as a station's POS often share one.
   app.post("/:code/confirm", { preHandler: [authenticateDevice], config: { rateLimit: CONFIRM_LIMIT } },

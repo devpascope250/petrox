@@ -10,7 +10,8 @@ const decimalSchema = (label: string, allowZero = false) => z.union([z.string(),
 const rangeSchema = z.object({
   from: decimalSchema("Range start", true),
   to: decimalSchema("Range end"),
-  amount: decimalSchema("Discount amount"),
+  /** Off each unit sold inside this volume band — so many francs a litre. */
+  rate: decimalSchema("Discount rate"),
   siteId: uuidSchema,
   status: z.enum(StatusType).default(StatusType.active)
 }).strict().refine((range) => Number(range.from) < Number(range.to), {
@@ -27,6 +28,7 @@ const commonSchema = {
 
 const fixedDiscountSchema = z.object({
   type: z.literal("fixed"),
+  /** Off each unit sold, for this client — the same rate at any volume. */
   value: decimalSchema("Discount value"),
   clientId: uuidSchema,
   ...commonSchema

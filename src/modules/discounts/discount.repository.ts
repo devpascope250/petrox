@@ -19,7 +19,7 @@ const discountSelect = {
   createdAt: true,
   rangingDiscounts: {
     orderBy: [{ siteId: "asc" }, { from: "asc" }],
-    select: { id: true, from: true, to: true, amount: true, siteId: true, status: true, createdAt: true,
+    select: { id: true, from: true, to: true, rate: true, siteId: true, status: true, createdAt: true,
       site: { select: { id: true, name: true } } }
   }
 } satisfies Prisma.DiscountSelect;
@@ -27,7 +27,7 @@ const discountSelect = {
 const rangeData = (range: RangingDiscountInput) => ({
   from: new Prisma.Decimal(range.from),
   to: new Prisma.Decimal(range.to),
-  amount: new Prisma.Decimal(range.amount),
+  rate: new Prisma.Decimal(range.rate),
   siteId: range.siteId,
   status: range.status
 });

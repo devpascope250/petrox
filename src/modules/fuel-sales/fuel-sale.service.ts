@@ -1,13 +1,18 @@
 import { AuthUser, isSiteBound } from "../../shared/auth/context-user.js";
 import { AppError, forbidden } from "../../utils/errors.js";
 import { FuelSaleRepository } from "./fuel-sale.repository.js";
-import type { CreateFuelSale, FuelSaleListQuery, FuelSaleReportQuery } from "./fuel-sale.schema.js";
+import type { CreateFuelSale, FuelSaleListQuery, FuelSaleQuoteQuery, FuelSaleReportQuery } from "./fuel-sale.schema.js";
 
 export class FuelSaleService {
   constructor(private repo: FuelSaleRepository) {}
 
   options(siteId: string | undefined, actor: AuthUser) {
     return this.repo.options(this.site(actor, siteId));
+  }
+
+  /** What a sale would come to, discount included, before it is recorded. */
+  quote(query: FuelSaleQuoteQuery, actor: AuthUser) {
+    return this.repo.quote(this.site(actor, query.siteId), query);
   }
 
   list(query: FuelSaleListQuery, actor: AuthUser) {

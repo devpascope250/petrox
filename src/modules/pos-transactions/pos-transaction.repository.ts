@@ -25,7 +25,8 @@ const rowSelect = {
 /** Everything recorded about one sale. */
 const detailSelect = {
   ...rowSelect,
-  platePictureUrl: true, displayPictureUrl: true, subsidyRate: true,
+  platePictureUrl: true, displayPictureUrl: true, subsidyRate: true, discountRate: true,
+  discount: { select: { id: true, type: true, value: true, validFrom: true, validTo: true } },
   reason: true, comments: true, printStatus: true, appVersion: true, updatedAt: true,
   item: { select: { id: true, name: true, baseUnit: { select: { id: true, name: true, code: true } } } },
   cuve: { select: { id: true, name: true } },
@@ -57,8 +58,11 @@ function presentRow<T extends Row>({ cardCopy, ...row }: T) {
     ...row,
     quantity: Number(row.quantity),
     unitPrice: Number(row.unitPrice),
+    /** What was collected: already net of any discount. */
     amount: Number(row.amount),
     discountAmount: Number(row.discountAmount),
+    /** What the pump display showed, before the discount. */
+    grossAmount: Number(row.amount.plus(row.discountAmount)),
     subsidyAmount: Number(row.subsidyAmount),
     card: cardCopy ? {
       cardCopyId: cardCopy.id.toString(),
@@ -153,6 +157,9 @@ export class PosTransactionRepository {
     return {
       ...presentRow(rest),
       subsidyRate: Number(sale.subsidyRate),
+      discountRate: Number(sale.discountRate),
+      /** The discount that priced it — the figures above are the sale's own. */
+      discount: sale.discount && { ...sale.discount, value: Number(sale.discount.value) },
       platePictureUrl: url(sale.platePictureUrl),
       displayPictureUrl: url(sale.displayPictureUrl),
       /** The main card the sale spent from, with its current balance. */

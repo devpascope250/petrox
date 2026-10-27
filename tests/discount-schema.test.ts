@@ -19,8 +19,8 @@ describe("discount input validation", () => {
     const result = createDiscountSchema.safeParse({
       type: "ranging", value: 0, ...dates,
       rangingDiscounts: [
-        { from: 0, to: 100, amount: 2, siteId: uuid },
-        { from: 100, to: 200, amount: 3, siteId: uuid }
+        { from: 0, to: 100, rate: 2, siteId: uuid },
+        { from: 100, to: 200, rate: 3, siteId: uuid }
       ]
     });
     expect(result.success).toBe(true);
@@ -30,8 +30,8 @@ describe("discount input validation", () => {
     const result = createDiscountSchema.safeParse({
       type: "ranging", value: 0, ...dates,
       rangingDiscounts: [
-        { from: 0, to: 100, amount: 2, siteId: uuid },
-        { from: 90, to: 200, amount: 3, siteId: uuid }
+        { from: 0, to: 100, rate: 2, siteId: uuid },
+        { from: 90, to: 200, rate: 3, siteId: uuid }
       ]
     });
     expect(result.success).toBe(false);

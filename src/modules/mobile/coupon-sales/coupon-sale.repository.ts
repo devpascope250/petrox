@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from "../../../../prisma/generated/prisma/c
 import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js";
 import { verifyClientPin } from "../../clients/client-pin.js";
 import { expireCoupons, redeemCoupons } from "../../client-coupons/coupon-rules.js";
+import { discountColumns, priceWithDiscount } from "../../discounts/discount-rules.js";
 import { MobileTransactionsRepository, transactionCode } from "../transactions/transactions.repository.js";
 import { accountOfType, checkAmount, checkPayments, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "../transactions/sale-rules.js";
 import type { ConfirmCouponSaleInput, InitiateCouponSaleInput } from "./coupon-sale.schema.js";
@@ -102,8 +103,13 @@ export class CouponSaleRepository {
         422, { unitPrice: unitPrice.toFixed(2) });
     }
     const quantity = money(input.quantity);
-    const amount = money(input.amount);
-    checkAmount(quantity, unitPrice, amount);
+    // `amount` is what the pump display showed, before any discount.
+    checkAmount(quantity, unitPrice, money(input.amount));
+    // What a discount in force takes off this volume for this client. The
+    // litres are already known here, so a coupon sale is priced as it starts
+    // and the coupons are asked for the discounted amount.
+    const priced = await priceWithDiscount(this.db, { siteId, clientId: client.id, quantity, unitPrice });
+    const amount = priced.amount;
     await accountOfType(this.db, siteId, "coupon");
     // Not refused when the coupons fall short: the fuel is already in the car.
     // The answer says what they can pay, and confirming collects the rest.
@@ -118,7 +124,7 @@ export class CouponSaleRepository {
           data: {
             transactionCode: transactionCode(new Date(startedAt + attempt)),
             itemId: input.itemId, cuveId: input.cuveId, pumpId: input.pumpId, nozzleId: input.nozzleId,
-            clientId: client.id, siteId, deviceId, quantity, unitPrice, amount,
+            clientId: client.id, siteId, deviceId, quantity, unitPrice, amount, ...discountColumns(priced),
             platNumber: input.platNumber ?? null, displayPictureUrl: input.displayPictureUrl,
             platePictureUrl: input.platePictureUrl ?? null,
             appVersion: input.appVersion ?? null,
@@ -149,6 +155,7 @@ export class CouponSaleRepository {
       where: { transactionCode: code, siteId },
       select: {
         id: true, status: true, expiresAt: true, clientId: true, quantity: true, unitPrice: true, amount: true,
+        discountId: true, discountRate: true, discountAmount: true,
         cuveId: true, cuve: { select: { name: true } },
         nozzle: { select: { id: true, name: true, pump: { select: { id: true, name: true } } } },
       },
@@ -243,6 +250,8 @@ export class CouponSaleRepository {
         data: {
           siteId, pumpId: sale.nozzle.pump.id, nozzleId: sale.nozzle.id, shiftId: rota.siteShiftId,
           quantity: sale.quantity, unitPrice: sale.unitPrice, amount: sale.amount, createdBy: doneBy,
+          // The same figures the sale was priced with when it started.
+          discountId: sale.discountId, discountRate: sale.discountRate, discountAmount: sale.discountAmount,
           note: `Coupon sale ${code}`, dateOn: new Date(`${rota.workingDay}T00:00:00.000Z`),
           payments: { create: paymentRows },
         },

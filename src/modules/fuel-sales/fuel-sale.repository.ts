@@ -1,8 +1,10 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { paginatedData, paginationArgs } from "../../shared/pagination/pagination.js";
+import { discountColumns, presentDiscount, priceWithDiscount } from "../discounts/discount-rules.js";
+import { checkAmount, priceInForce } from "../mobile/transactions/sale-rules.js";
 import { fromDate, fromTime, toDate } from "../shifts/shift-scope.js";
-import type { CreateFuelSale, FuelSaleFilters, FuelSaleListQuery, FuelSaleReportQuery } from "./fuel-sale.schema.js";
+import type { CreateFuelSale, FuelSaleFilters, FuelSaleListQuery, FuelSaleQuoteQuery, FuelSaleReportQuery } from "./fuel-sale.schema.js";
 
 const person = { select: { id: true, firstName: true, lastName: true } } as const;
 const itemSelect = { select: { id: true, name: true, baseUnit: true } } as const;
@@ -10,6 +12,7 @@ const itemSelect = { select: { id: true, name: true, baseUnit: true } } as const
 /** A sale as the screens read it: where it was sold, for how much, and who was paid. */
 export const saleSelect = {
   id: true, siteId: true, dateOn: true, quantity: true, unitPrice: true, amount: true, note: true, createdAt: true,
+  discountId: true, discountRate: true, discountAmount: true,
   nozzle: { select: { id: true, name: true, nozzleCode: true } },
   pump: { select: { id: true, name: true } },
   shift: { select: { id: true, shift: { select: { id: true, name: true, startAt: true, endAt: true } } } },
@@ -29,7 +32,12 @@ export function presentSale({ cuveTransaction, ...sale }: Prisma.FuelSaleGetPayl
     dateOn: fromDate(sale.dateOn),
     quantity: Number(sale.quantity),
     unitPrice: Number(sale.unitPrice),
+    /** What was collected: already net of any discount. */
     amount: Number(sale.amount),
+    discountRate: Number(sale.discountRate),
+    discountAmount: Number(sale.discountAmount),
+    /** What the pump showed, before the discount: `amount` + `discountAmount`. */
+    grossAmount: Number(sale.amount.plus(sale.discountAmount)),
     shift: sale.shift ? presentSiteShift(sale.shift) : null,
     cuve: cuveTransaction?.cuve ?? null,
     payments: sale.payments.map((payment) => ({ ...payment, amount: Number(payment.amount) })),
@@ -41,17 +49,29 @@ function presentSiteShift(siteShift: { id: string; shift: { name: string; startA
     startAt: fromTime(siteShift.shift.startAt), endAt: fromTime(siteShift.shift.endAt) };
 }
 
-const money = (value: number) => new Prisma.Decimal(value).toDecimalPlaces(2);
+const money = (value: number | string | Prisma.Decimal) => new Prisma.Decimal(value).toDecimalPlaces(2);
 const zero = new Prisma.Decimal(0);
 
-/** A groupBy row's totals as plain numbers, with the average price they imply. */
-function figures(row: { _count: { _all: number }; _sum: { quantity: Prisma.Decimal | null; amount: Prisma.Decimal | null } }) {
+/**
+ * A groupBy row's totals as plain numbers, with the average price they imply.
+ *
+ * `amount` is what was collected, so `averagePrice` is the price actually
+ * realised — below the pump price wherever a discount applied. `grossAmount`
+ * is what the pumps showed, and `discountAmount` the difference.
+ */
+function figures(row: {
+  _count: { _all: number };
+  _sum: { quantity: Prisma.Decimal | null; amount: Prisma.Decimal | null; discountAmount?: Prisma.Decimal | null };
+}) {
   const quantity = row._sum.quantity ?? zero;
   const amount = row._sum.amount ?? zero;
+  const discountAmount = row._sum.discountAmount ?? zero;
   return {
     saleCount: row._count._all,
     quantity: Number(quantity),
     amount: Number(amount),
+    discountAmount: Number(discountAmount),
+    grossAmount: Number(amount.plus(discountAmount)),
     averagePrice: quantity.isZero() ? 0 : Number(amount.div(quantity).toDecimalPlaces(2)),
   };
 }
@@ -150,7 +170,7 @@ export class FuelSaleRepository {
       this.db.fuelSale.findMany({
         where, select: saleSelect, ...paginationArgs(query), orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       }),
-      this.db.fuelSale.aggregate({ where, _count: { _all: true }, _sum: { quantity: true, amount: true } }),
+      this.db.fuelSale.aggregate({ where, _count: { _all: true }, _sum: { quantity: true, amount: true, discountAmount: true } }),
     ]);
     return { ...paginatedData(rows.map(presentSale), totals._count._all, query), summary: figures(totals) };
   }
@@ -175,7 +195,10 @@ export class FuelSaleRepository {
       if (!pump) throw new NotFoundError("Pump for this site");
       if (pump.status !== "active") throw new BusinessError("PUMP_INACTIVE", `${pump.name} is not active`);
 
-      const cuveSelect = { id: true, name: true, siteId: true, status: true } as const;
+      const cuveSelect = {
+        id: true, name: true, siteId: true, status: true,
+        item: { select: { id: true, name: true, baseUnitId: true } },
+      } as const;
       let nozzleId: string | null = null;
       let cuve: Prisma.TblCuveGetPayload<{ select: typeof cuveSelect }> | null;
       if (input.nozzleId) {
@@ -211,7 +234,21 @@ export class FuelSaleRepository {
       const dateOn = input.dateOn ? toDate(input.dateOn) : workingDay(shiftHours);
       if (dateOn > today()) throw new BusinessError("SALE_DAY_IN_FUTURE", "A sale cannot be recorded for a day that has not come yet");
 
-      const amount = money(input.amount);
+      const quantity = money(input.quantity);
+      // The price in force for the tank's product, and what a discount takes
+      // off this volume at this site. A sale entered on the web has no client,
+      // so only a volume (`ranging`) or company-wide discount can apply.
+      const unitPrice = await priceInForce(tx, cuve.item);
+      if (!money(input.unitPrice).equals(unitPrice)) {
+        throw new BusinessError("UNIT_PRICE_MISMATCH",
+          `${cuve.item.name} sells at ${unitPrice.toString()}, not ${money(input.unitPrice).toString()}`,
+          422, { unitPrice: unitPrice.toFixed(2) });
+      }
+      const priced = await priceWithDiscount(tx, { siteId: cuve.siteId, quantity, unitPrice });
+      // `amount` is what the pump showed, before any discount.
+      checkAmount(quantity, unitPrice, money(input.amount));
+      const amount = priced.amount;
+
       const accountIds = input.payments.map((payment) => payment.accountId);
       if (new Set(accountIds).size !== accountIds.length) {
         throw new BusinessError("DUPLICATE_PAYMENT_ACCOUNT", "Each account can only be used once per sale");
@@ -234,31 +271,35 @@ export class FuelSaleRepository {
       }
       if (!paid.equals(amount)) {
         throw new BusinessError("PAYMENTS_DO_NOT_MATCH",
-          `The payments add up to ${paid.toString()}, but the sale is ${amount.toString()}`);
+          priced.discountAmount.isZero()
+            ? `The payments add up to ${paid.toString()}, but the sale is ${amount.toString()}`
+            : `The payments add up to ${paid.toString()}, but the sale is ${priced.grossAmount.toString()}`
+              + ` less ${priced.discountAmount.toString()} discount — ${amount.toString()} to collect`,
+          422, { ...presentDiscount(priced), paidAmount: Number(paid) });
       }
 
       // Decrement only if there is enough, so two sales at once cannot overdraw the tank.
       const drawn = await tx.tblCuve.updateMany({
-        where: { id: cuve.id, balance: { gte: input.quantity } },
-        data: { balance: { decrement: input.quantity } },
+        where: { id: cuve.id, balance: { gte: quantity } },
+        data: { balance: { decrement: quantity } },
       });
       if (drawn.count === 0) {
         const current = await tx.tblCuve.findUniqueOrThrow({ where: { id: cuve.id }, select: { balance: true } });
         throw new BusinessError("INSUFFICIENT_CUVE_STOCK",
-          `${cuve.name} only holds ${current.balance.toString()}; cannot sell ${input.quantity}`);
+          `${cuve.name} only holds ${current.balance.toString()}; cannot sell ${quantity.toString()}`);
       }
 
       const sale = await tx.fuelSale.create({
         data: {
           siteId: cuve.siteId, nozzleId, pumpId: pump.id, shiftId: input.shiftId ?? null,
-          dateOn, quantity: input.quantity, unitPrice: money(input.unitPrice), amount,
+          dateOn, quantity, unitPrice, amount, ...discountColumns(priced),
           note: input.note || null, createdBy: userId,
           payments: { create: input.payments.map((payment) => ({
             accountId: payment.accountId, amount: money(payment.amount), reference: payment.reference || null,
             referenceDocUrl: payment.referenceDocUrl ?? null,
           })) },
           cuveTransaction: { create: {
-            cuveId: cuve.id, quantity: input.quantity, type: "sold", direction: "OUT", createdBy: userId,
+            cuveId: cuve.id, quantity, type: "sold", direction: "OUT", createdBy: userId,
           } },
         },
         select: saleSelect,
@@ -267,6 +308,33 @@ export class FuelSaleRepository {
       const presented = presentSale(sale);
       return { ...presented, cuve: { ...presented.cuve!, balance: Number(after.balance) } };
     });
+  }
+
+
+  /**
+   * What a sale of this volume from this tank would come to, before it is
+   * recorded: the price in force, the gross the pump will show, the discount
+   * in force for that volume, and what is left to collect.
+   *
+   * The sale form asks for this as the litres are typed, so the payments it
+   * sends already add up to the discounted amount — and `record` works the
+   * same figures out again for itself, so the answer here is never trusted.
+   */
+  async quote(siteId: string, query: FuelSaleQuoteQuery) {
+    const cuve = await this.db.tblCuve.findFirst({
+      where: { id: query.cuveId, siteId },
+      select: { id: true, name: true, status: true, item: { select: { id: true, name: true, baseUnitId: true } } },
+    });
+    if (!cuve) throw new NotFoundError("Cuve for this site");
+    if (cuve.status !== "active") throw new BusinessError("CUVE_INACTIVE", `${cuve.name} is not active`);
+    const unitPrice = await priceInForce(this.db, cuve.item);
+    const priced = await priceWithDiscount(this.db, { siteId, quantity: money(query.quantity), unitPrice });
+    return {
+      cuve: { id: cuve.id, name: cuve.name, item: cuve.item },
+      quantity: query.quantity,
+      unitPrice: Number(unitPrice),
+      ...presentDiscount(priced),
+    };
   }
 
   /**
@@ -296,7 +364,7 @@ export class FuelSaleRepository {
   async report(siteId: string, query: FuelSaleReportQuery) {
     const period = await this.period(siteId, query);
     const where = this.where(siteId, { ...period, shiftId: query.shiftId });
-    const sums = { _count: { _all: true }, _sum: { quantity: true, amount: true } } as const;
+    const sums = { _count: { _all: true }, _sum: { quantity: true, amount: true, discountAmount: true } } as const;
     const days = { gte: toDate(period.startDate), lte: toDate(period.endDate) };
 
     const [site, totals, byDay, byShift, byPump, byNozzle, bySeller, byAccount, roster, siteShifts, cuves] = await Promise.all([
@@ -356,7 +424,8 @@ export class FuelSaleRepository {
       let row = shiftRows.get(key);
       if (!row) {
         row = { dateOn, shift: shiftId ? shiftOf.get(shiftId) ?? null : null,
-          rostered: 0, chief: null, supporter: null, saleCount: 0, quantity: 0, amount: 0, averagePrice: 0 };
+          rostered: 0, chief: null, supporter: null, saleCount: 0, quantity: 0, amount: 0,
+          discountAmount: 0, grossAmount: 0, averagePrice: 0 };
         shiftRows.set(key, row);
       }
       return row;
@@ -376,7 +445,9 @@ export class FuelSaleRepository {
 
     const dayRows = new Map(byDay.map((group) => [fromDate(group.dateOn), figures(group)]));
     for (const dateOn of rosteredByDay.keys()) {
-      if (!dayRows.has(dateOn)) dayRows.set(dateOn, { saleCount: 0, quantity: 0, amount: 0, averagePrice: 0 });
+      if (!dayRows.has(dateOn)) {
+        dayRows.set(dateOn, { saleCount: 0, quantity: 0, amount: 0, discountAmount: 0, grossAmount: 0, averagePrice: 0 });
+      }
     }
 
     // Sales recorded without a nozzle are kept together as one row.
@@ -385,14 +456,17 @@ export class FuelSaleRepository {
         ?? { id: "none", name: "No nozzle", nozzleCode: "", pump: null, cuve: null }),
       ...figures(group),
     }));
-    const items = new Map<string, { item: (typeof cuves)[number]["item"]; saleCount: number; quantity: Prisma.Decimal; amount: Prisma.Decimal }>();
+    const items = new Map<string, { item: (typeof cuves)[number]["item"]; saleCount: number;
+      quantity: Prisma.Decimal; amount: Prisma.Decimal; discountAmount: Prisma.Decimal }>();
     cuves.forEach((cuve, index) => {
       const group = byCuve[index];
       if (group._count._all === 0) return;
-      const row = items.get(cuve.item.id) ?? { item: cuve.item, saleCount: 0, quantity: zero, amount: zero };
+      const row = items.get(cuve.item.id)
+        ?? { item: cuve.item, saleCount: 0, quantity: zero, amount: zero, discountAmount: zero };
       row.saleCount += group._count._all;
       row.quantity = row.quantity.plus(group._sum.quantity ?? 0);
       row.amount = row.amount.plus(group._sum.amount ?? 0);
+      row.discountAmount = row.discountAmount.plus(group._sum.discountAmount ?? 0);
       items.set(cuve.item.id, row);
     });
 
@@ -403,6 +477,7 @@ export class FuelSaleRepository {
       totals: figures(totals),
       byItem: byAmount([...items.values()].map((row) => ({
         item: row.item, saleCount: row.saleCount, quantity: Number(row.quantity), amount: Number(row.amount),
+        discountAmount: Number(row.discountAmount), grossAmount: Number(row.amount.plus(row.discountAmount)),
         averagePrice: row.quantity.isZero() ? 0 : Number(row.amount.div(row.quantity).toDecimalPlaces(2)),
       }))),
       byDay: [...dayRows.entries()]

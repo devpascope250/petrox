@@ -5,7 +5,8 @@ import { FuelSaleService } from "./fuel-sale.service.js";
 import { FuelSaleRepository } from "./fuel-sale.repository.js";
 import { parseFuelSaleMultipart } from "./fuel-sale-upload.js";
 import {
-  createFuelSaleSchema, fuelSaleListQuerySchema, fuelSaleOptionsQuerySchema, fuelSaleReportQuerySchema,
+  createFuelSaleSchema, fuelSaleListQuerySchema, fuelSaleOptionsQuerySchema, fuelSaleQuoteQuerySchema,
+  fuelSaleReportQuerySchema,
 } from "./fuel-sale.schema.js";
 
 /** A JSON body cannot name a document: only an upload sets `referenceDocUrl`. */
@@ -30,6 +31,10 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.get("/options", { preHandler: [app.authenticate, app.authorize("fuel.sales.read", "fuel.sales.create", "fuel.sales.report.read")] }, async (request) =>
     success(await service.options(parseInput(fuelSaleOptionsQuerySchema, request.query).siteId, request.contextUser!)));
+  // What a sale of a given volume would come to, discount included: the form
+  // asks as the litres are typed, so it can collect the discounted amount.
+  app.get("/quote", { preHandler: [app.authenticate, app.authorize("fuel.sales.create", "fuel.sales.read")] }, async (request) =>
+    success(await service.quote(parseInput(fuelSaleQuoteQuerySchema, request.query), request.contextUser!)));
   app.get("/report", { preHandler: [app.authenticate, app.authorize("fuel.sales.report.read")] }, async (request) =>
     success(await service.report(parseInput(fuelSaleReportQuerySchema, request.query), request.contextUser!)));
   app.get("/", { preHandler: [app.authenticate, read] }, async (request) =>
