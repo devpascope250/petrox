@@ -18,6 +18,7 @@
         "prisma:seed:demo": "tsx prisma/seed.ts --demo",
         "backup:decrypt": "tsx scripts/decrypt-backup.ts",
         "phones:normalize": "tsx scripts/normalize-phones.ts",
+        "fees:placement": "tsx scripts/landing-fee-placement.ts",
         "postinstall": "prisma generate"
     },
     "engines": {
