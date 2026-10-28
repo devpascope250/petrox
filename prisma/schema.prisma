@@ -4,8 +4,8 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
+  provider          = "mysql"
+  url               = env("DATABASE_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
@@ -134,6 +134,7 @@ model User {
   backupsDownloaded Backup[]           @relation("BackupDownloader")
   couponRedemptions CouponRedemption[] @relation("CouponRedeemer")
   vehicleLocations  VehicleLocation[]
+  subsidies         Subsidy[]
 
   @@index([roleId])
   @@index([siteId])
@@ -222,6 +223,7 @@ model Item {
   toleranceRates      ItemToleranceRate[]
   clientCars          ClientCar[]
   generalTransactions GeneralTransaction[]
+  subsidies           Subsidy[]
 
   @@index([id])
   @@index([parentId])
@@ -875,25 +877,25 @@ enum StockTransactionType {
 }
 
 model CentralStockOrder {
-  id             String                @id @default(uuid())
+  id             String                   @id @default(uuid())
   siteId         String?
-  site           TblSite?              @relation(fields: [siteId], references: [id])
+  site           TblSite?                 @relation(fields: [siteId], references: [id])
   clearanceId    String
-  clearance      StockClearance        @relation(fields: [clearanceId], references: [id])
+  clearance      StockClearance           @relation(fields: [clearanceId], references: [id])
   centralStockId String
-  centralStock   CentralStock          @relation(fields: [centralStockId], references: [id])
+  centralStock   CentralStock             @relation(fields: [centralStockId], references: [id])
   orderType      CentralStockOrderType
-  quantity       Decimal               @db.Decimal(18, 2)
-  unitPrice      Decimal               @db.Decimal(18, 2)
-  totalPrice     Decimal               @db.Decimal(18, 2)
+  quantity       Decimal                  @db.Decimal(18, 2)
+  unitPrice      Decimal                  @db.Decimal(18, 2)
+  totalPrice     Decimal                  @db.Decimal(18, 2)
   createdBy      String
-  user           User                  @relation("CentralStockOrderCreatedByUser", fields: [createdBy], references: [id])
+  user           User                     @relation("CentralStockOrderCreatedByUser", fields: [createdBy], references: [id])
   approvedBy     String?
-  approvedUser   User?                 @relation("CentralStockOrderApprovedByUser", fields: [approvedBy], references: [id])
+  approvedUser   User?                    @relation("CentralStockOrderApprovedByUser", fields: [approvedBy], references: [id])
   approvedAt     DateTime?
-  status         CentralOrderStatus    @default(pending)
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
+  status         CentralOrderStatus       @default(pending)
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
   loadedOrders   LoadedOrder[]
   events         CentralStockOrderEvent[]
 
@@ -975,6 +977,7 @@ model TblSite {
   homeUsers           User[]                @relation("UserHomeSite")
 
   couponRedemptions CouponRedemption[]
+  subsidies         Subsidy[]
 
   @@index([id])
 }
@@ -1466,7 +1469,7 @@ model Discount {
   user      User         @relation(fields: [createdBy], references: [id])
   createdAt DateTime     @default(now())
 
-  rangingDiscounts RangingDiscount[]
+  rangingDiscounts    RangingDiscount[]
   /// The sales this discount priced; each keeps its own copy of the figures.
   fuelSales           FuelSale[]
   generalTransactions GeneralTransaction[]
@@ -1786,6 +1789,35 @@ model GeneralTransaction {
   @@index([siteId, id])
   @@index([status])
   @@index([discountId])
+}
+
+/// What the state pays towards a litre of a product, for a period.
+///
+/// A product has **at most one active subsidy at a time**: creating or
+/// activating one retires whatever was active on that product. MySQL has no
+/// partial unique index, so the invariant lives in the write transaction —
+/// see `subsidy.repository.ts`.
+model Subsidy {
+  id        String     @id @default(uuid())
+  itemId    String
+  item      Item       @relation(fields: [itemId], references: [id])
+  /// Empty when the subsidy applies at every site.
+  siteId    String?
+  site      TblSite?   @relation(fields: [siteId], references: [id])
+  /// Paid towards each unit sold, in the unit the product is priced in.
+  rate      Decimal    @db.Decimal(12, 2)
+  from      DateTime   @db.Date
+  to        DateTime   @db.Date
+  status    StatusType @default(active)
+  note      String?
+  createdBy String
+  user      User       @relation(fields: [createdBy], references: [id])
+  createdAt DateTime   @default(now())
+  updated   DateTime   @updatedAt
+
+  @@index([itemId, status])
+  @@index([siteId])
+  @@index([createdBy])
 }
 
 enum GeneralTransactionStatus {

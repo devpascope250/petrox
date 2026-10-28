@@ -75,6 +75,7 @@ export const MODULE_TREE: ModuleNode[] = [
       { code: "CARD_TYPES", name: "Card Types", icon: "Tags", prefix: "card.types" },
       { id: "24977f79-d7f5-4992-97da-a53e77945375", code: "CARDS_COPY", name: "Card Copies", icon: "Copy", prefix: "cards.copy" },
       { id: "dc9d46aa-34d8-47e1-af13-09337412f428", code: "DISCOUNTS", name: "Discounts", icon: "Percent", prefix: "discounts" },
+      { code: "SUBSIDIES", name: "Subsidies", icon: "HandCoins", prefix: "subsidies" },
     ] },
   ] },
   { code: "CLIENT_MANAGEMENT", name: "Client Management", icon: "BriefcaseBusiness", children: [
@@ -231,6 +232,9 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     "fuel.sales.read", "fuel.sales.create", "fuel.sales.report.read", "pos.transactions.read",
     "stockout.orders.read", "stockout.orders.create", "loading.orders.read",
     "items.read", "item.price.read", "item.units.read", "units.read", "company.account.read",
+    // A subsidy changes what a litre costs at the pump, so a station manager
+    // sees the rates in force — setting them stays with the administrator.
+    "subsidies.read",
     "clients.read", "client.cars.read", "cards.read", "cards.copy.read", "card.types.read", "users.read",
   ],
   // A client's administrator: its own users, wallet, cards, cars and discounts.

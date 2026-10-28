@@ -58,6 +58,7 @@ import ClientWalletRoutes from "./modules/client-wallets/client-wallet.routes.js
 import CardsRoutes from "./modules/cards/cards.routes.js";
 import ClientsRoutes from "./modules/clients/clients.routes.js";
 import DiscountRoutes from "./modules/discounts/discount.routes.js";
+import SubsidyRoutes from "./modules/subsidies/subsidy.routes.js";
 import CouponPlanRoutes from "./modules/coupon-plans/coupon-plan.routes.js";
 import ClientCouponRoutes from "./modules/client-coupons/client-coupon.routes.js";
 import CouponSaleRoutes from "./modules/coupon-sales/coupon-sale.routes.js";
@@ -160,6 +161,7 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(CardsRoutes, { prefix: "/api/v1/cards" });
   await app.register(ClientsRoutes, { prefix: "/api/v1/clients" });
   await app.register(DiscountRoutes, { prefix: "/api/v1/discounts" });
+  await app.register(SubsidyRoutes, { prefix: "/api/v1/subsidies" });
   await app.register(CouponPlanRoutes, { prefix: "/api/v1/coupon-plans" });
   await app.register(ClientCouponRoutes, { prefix: "/api/v1/client-coupons" });
   await app.register(CouponSaleRoutes, { prefix: "/api/v1/coupon-sales" });
