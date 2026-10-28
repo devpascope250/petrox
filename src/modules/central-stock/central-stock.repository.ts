@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, StockTransaction } from "../../../prisma/generated/prisma/client.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
+import { presentFees, reportFeeSelect, sumFeeTotals } from "../fees/fee.repository.js";
 import { releaseParkingForNomination } from "../vehicle-locations/vehicle-location.repository.js";
 import { recordStage } from "../nominations/nomination-stage.js";
 import {
@@ -65,6 +66,8 @@ export class CentralStockRepository {
             user: { select: { id: true, firstName: true, lastName: true } },
           },
         },
+        // What it cost to land this receipt, beside the receipt itself.
+        chainStockFees: reportFeeSelect,
         stockClearances: {
           orderBy: { createdAt: "desc" },
           select: {
@@ -101,6 +104,13 @@ export class CentralStockRepository {
         stockCount: number;
         quantitiesByStatus: Record<string, number>;
         clearanceQuantitiesByStatus: Record<string, number>;
+        /**
+         * What landing every receipt of this item cost, **grouped by
+         * currency** — fees are not always in one money, and a single total
+         * would be a wrong number. `{}` when none were charged.
+         */
+        feeTotals: Record<string, number>;
+        feeCount: number;
       };
       stocks: Array<{
         id: string; 
@@ -115,6 +125,11 @@ export class CentralStockRepository {
         // only the newest receipt's leaked onto the item group.
         ambQuantity: number; quantityAt20C: number;
         lossQty: number | null; gainQty: number | null; toleranceRate: number | null;
+        // What it cost to land this receipt: each charge, and the totals by
+        // currency. Empty when no fee was charged against it.
+        fees: ReturnType<typeof presentFees>["fees"];
+        feeTotals: Record<string, number>;
+        feeCount: number;
          status: typeof centralStocks[number]["status"];
         createdAt: Date; updatedAt: Date; depot: typeof centralStocks[number]["deport"];
         t1Validation: typeof centralStocks[number]["t1Validation"];
@@ -154,6 +169,7 @@ export class CentralStockRepository {
             reconciledOutQuantity: 0,
             soldOutQuantity: 0, remainingQuantity: 0, clearedQuantity: 0, unclearedQuantity: 0, stockCount: 0,
             quantitiesByStatus: {}, clearanceQuantitiesByStatus: {},
+            feeTotals: {}, feeCount: 0,
           },
           stocks: [],
         };
@@ -210,6 +226,10 @@ export class CentralStockRepository {
       itemReport.summary.stockCount += 1;
       itemReport.summary.quantitiesByStatus[stock.status] =
         (itemReport.summary.quantitiesByStatus[stock.status] ?? 0) + quantity;
+      // Landing costs roll up to the item, still kept apart by currency.
+      const landed = presentFees(stock.chainStockFees);
+      itemReport.summary.feeTotals = sumFeeTotals([itemReport.summary.feeTotals, landed.feeTotals]);
+      itemReport.summary.feeCount += landed.feeCount;
       itemReport.stocks.push({
         id: stock.id, quantityBeforeTransactions: quantity, receivedQuantity, reconciledInQuantity,reconciledOutQuantity,
         soldOutQuantity, remainingQuantity, clearedQuantity, unclearedQuantity,
@@ -219,6 +239,7 @@ export class CentralStockRepository {
         lossQty: stock.lossQty === null ? null : Number(stock.lossQty),
         gainQty: stock.gainQty === null ? null : Number(stock.gainQty),
         toleranceRate: stock.toleranceRate === null ? null : Number(stock.toleranceRate),
+        fees: landed.fees, feeTotals: landed.feeTotals, feeCount: landed.feeCount,
         createdAt: stock.createdAt, updatedAt: stock.updatedAt,
         // The database relation is named `deport`; expose it as `depot`.
         depot: stock.deport, t1Validation: stock.t1Validation, clearances, transactions,
@@ -242,6 +263,11 @@ export class CentralStockRepository {
         await releaseParkingForNomination(tx, nomination.nominationId);
       }
 
+      // What it cost to land the load, charged in the same write as the
+      // receipt: a receipt recorded without the fees it was received with
+      // would understate the landed cost until someone noticed.
+      const landing = await chargedFees(tx, data.fees ?? [], data.createdBy);
+
       return await tx.centralStock.create({
       data: {
         ambQuantity: data.ambQuantity, 
@@ -256,11 +282,13 @@ export class CentralStockRepository {
             type: "received", 
             createdBy: data.createdBy 
           } },
+        ...(landing.length ? { chainStockFees: { create: landing } } : {}),
         supportingDocUrl: data.supportingDocUrl,
         gainQty: data.gainQty,
         lossQty: data.lossQty,
         toleranceRate: data.toleranceRate
       },
+      include: { chainStockFees: reportFeeSelect },
     })});
   }
 
@@ -332,6 +360,46 @@ export class CentralStockRepository {
 }
 
 
+
+/**
+ * The rows for the fees charged as a receipt is recorded, each copying the
+ * catalogue's name, amount and currency as they stand now.
+ *
+ * A fee that has been retired is refused rather than charged quietly, and the
+ * same fee cannot be charged twice in one receipt — its `count` says how many
+ * times it applies.
+ */
+async function chargedFees(
+  tx: Prisma.TransactionClient,
+  fees: Array<{ feeTypeId: string; count: number }>,
+  createdBy: string,
+) {
+  if (fees.length === 0) return [];
+  const ids = fees.map((fee) => fee.feeTypeId);
+  if (new Set(ids).size !== ids.length) {
+    throw new BusinessError("DUPLICATE_FEE", "Each fee can only be charged once; use its count instead");
+  }
+  const types = await tx.feeType.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true, amount: true, currencyCode: true, status: true },
+  });
+  const byId = new Map(types.map((type) => [type.id, type]));
+  return fees.map((fee) => {
+    const type = byId.get(fee.feeTypeId);
+    if (!type) throw new NotFoundError("Fee type");
+    if (type.status !== "active") {
+      throw new BusinessError("FEE_INACTIVE", `"${type.name}" is no longer charged`);
+    }
+    return {
+      feeTypeId: type.id,
+      count: fee.count,
+      name: type.name,
+      unitAmount: type.amount,
+      currencyCode: type.currencyCode,
+      createdBy,
+    };
+  });
+}
 
 export function calculatingRemainStock(
   transactions: Array<{

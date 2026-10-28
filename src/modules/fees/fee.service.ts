@@ -33,16 +33,16 @@ export class FeeService {
     return this.repo.changeTypeStatus(id);
   }
 
-  assignToStock(stockId: string, input: AssignFeesSchema, userId: string | null) {
-    return this.repo.assign({ stockId }, input, userId);
+  assignToCentralStock(centralStockId: string, input: AssignFeesSchema, userId: string | null) {
+    return this.repo.assign({ centralStockId }, input, userId);
   }
 
   assignToPfi(pfiId: string, input: AssignFeesSchema, userId: string | null) {
     return this.repo.assign({ pfiId }, input, userId);
   }
 
-  forStock(stockId: string) {
-    return this.repo.forStock(stockId);
+  forCentralStock(centralStockId: string) {
+    return this.repo.forCentralStock(centralStockId);
   }
 
   forPfi(pfiId: string) {

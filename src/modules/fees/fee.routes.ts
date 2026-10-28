@@ -6,8 +6,8 @@ import {
   assignFeesSchema,
   createFeeTypeSchema,
   feeTypeListQuerySchema,
+  centralStockParamsSchema,
   pfiParamsSchema,
-  stockParamsSchema,
 } from "./fee.schema.js";
 import { FeeService } from "./fee.service.js";
 
@@ -15,8 +15,8 @@ import { FeeService } from "./fee.service.js";
  * Fees, and what they are charged against.
  *
  * The catalogue is read and written under `fees.*`; charging them against a
- * stock receipt or a proforma is gated on the record's own module, since
- * whoever may record the stock is who decides what it cost to land.
+ * central stock receipt or a proforma is gated on the record's own module,
+ * since whoever receives the stock is who knows what it cost to land.
  */
 const routes: FastifyPluginAsync = async (app) => {
   const service = new FeeService(new FeeRepository(app.prisma));
@@ -46,17 +46,19 @@ const routes: FastifyPluginAsync = async (app) => {
     async (request) =>
       success(await service.changeTypeStatus(parseInput(idParamsSchema, request.params).id)));
 
-  /* ---- charged against a stock receipt --------------------------------- */
+  /* ---- charged against a central stock receipt ------------------------- */
 
-  app.get("/stock/:stockId", { preHandler: [app.authenticate, app.authorize("stock.read", "stock.manage")] },
+  app.get("/central-stock/:centralStockId",
+    { preHandler: [app.authenticate, app.authorize("central.stock.read", "central.stock.manage")] },
     async (request) =>
-      success(await service.forStock(parseInput(stockParamsSchema, request.params).stockId)));
+      success(await service.forCentralStock(parseInput(centralStockParamsSchema, request.params).centralStockId)));
 
   /** The whole set: what is sent is what is charged afterwards. */
-  app.put("/stock/:stockId", { preHandler: [app.authenticate, app.authorize("stock.edit", "stock.manage")] },
+  app.put("/central-stock/:centralStockId",
+    { preHandler: [app.authenticate, app.authorize("central.stock.edit", "central.stock.manage")] },
     async (request) =>
-      success(await service.assignToStock(
-        parseInput(stockParamsSchema, request.params).stockId,
+      success(await service.assignToCentralStock(
+        parseInput(centralStockParamsSchema, request.params).centralStockId,
         parseInput(assignFeesSchema, request.body),
         request.contextUser?.userId ?? null,
       )));

@@ -26,6 +26,62 @@ const feeSelect = {
   user: { select: { id: true, firstName: true, lastName: true } },
 } as const;
 
+/**
+ * What a report selects to carry a central stock receipt's landing fees.
+ *
+ * Shared so every report shows the same thing, and `satisfies` so dropping a
+ * column from the model is a compile error rather than a 500 at report time.
+ */
+export const reportFeeSelect = {
+  orderBy: { name: "asc" },
+  select: {
+    id: true, feeTypeId: true, name: true, count: true,
+    unitAmount: true, currencyCode: true, createdAt: true,
+  },
+} satisfies Prisma.CentralStock$chainStockFeesArgs;
+
+type ReportFeeRow = {
+  id: string; feeTypeId: string; name: string; count: number;
+  unitAmount: Prisma.Decimal; currencyCode: string; createdAt: Date;
+};
+
+/**
+ * A receipt's landing fees as every report shows them: each charge with what
+ * its line comes to, and the totals **grouped by currency**.
+ *
+ * `fees` is an empty list and `feeTotals` an empty object when nothing was
+ * charged, so a report row has the same shape whether or not fees were
+ * provided — a reader never has to test for a missing field.
+ */
+export function presentFees(fees: ReportFeeRow[]) {
+  const { byCurrency, feeCount } = totalsOf(fees);
+  return {
+    fees: fees.map((fee) => ({
+      ...fee,
+      unitAmount: Number(fee.unitAmount),
+      lineTotal: Number(fee.unitAmount.times(fee.count).toFixed(2)),
+    })),
+    feeTotals: byCurrency,
+    feeCount,
+  };
+}
+
+/**
+ * The landing fees of many receipts added up, grouped by currency — for a
+ * summary line over a page or a period.
+ */
+export function sumFeeTotals(groups: Array<Record<string, number>>) {
+  const byCurrency: Record<string, number> = {};
+  for (const group of groups) {
+    for (const [currency, amount] of Object.entries(group)) {
+      byCurrency[currency] = Number(
+        new Prisma.Decimal(byCurrency[currency] ?? 0).plus(amount).toFixed(2),
+      );
+    }
+  }
+  return byCurrency;
+}
+
 export class FeeRepository {
   constructor(private db: PrismaClient) {}
 
@@ -117,15 +173,15 @@ export class FeeRepository {
    * price is edited tomorrow.
    */
   assign(
-    target: { stockId: string } | { pfiId: string },
+    target: { centralStockId: string } | { pfiId: string },
     input: AssignFeesSchema,
     userId: string | null,
   ) {
-    const isStock = "stockId" in target;
+    const isCentralStock = "centralStockId" in target;
     return this.db.$transaction(async (tx) => {
-      if (isStock) {
-        if (!(await tx.stock.findUnique({ where: { id: target.stockId }, select: { id: true } }))) {
-          throw new NotFoundError("Stock");
+      if (isCentralStock) {
+        if (!(await tx.centralStock.findUnique({ where: { id: target.centralStockId }, select: { id: true } }))) {
+          throw new NotFoundError("Central stock");
         }
       } else if (!(await tx.pfi.findUnique({ where: { id: target.pfiId }, select: { id: true } }))) {
         throw new NotFoundError("PFI");
@@ -149,14 +205,14 @@ export class FeeRepository {
       }
 
       // Replaced as a set: what is sent is what is charged afterwards.
-      if (isStock) {
-        await tx.chainStockFee.deleteMany({ where: { stockId: target.stockId } });
+      if (isCentralStock) {
+        await tx.chainStockFee.deleteMany({ where: { centralStockId: target.centralStockId } });
         if (input.fees.length) {
           await tx.chainStockFee.createMany({
             data: input.fees.map((fee) => {
               const type = byId.get(fee.feeTypeId)!;
               return {
-                stockId: target.stockId,
+                centralStockId: target.centralStockId,
                 feeTypeId: type.id,
                 count: fee.count,
                 name: type.name,
@@ -167,7 +223,7 @@ export class FeeRepository {
             }),
           });
         }
-        return this.forStock(target.stockId, tx);
+        return this.forCentralStock(target.centralStockId, tx);
       }
 
       await tx.pfiFee.deleteMany({ where: { pfiId: target.pfiId } });
@@ -191,10 +247,10 @@ export class FeeRepository {
     });
   }
 
-  /** The fees on one stock receipt, with what they come to. */
-  async forStock(stockId: string, tx: Prisma.TransactionClient | PrismaClient = this.db) {
+  /** The fees on one central stock receipt, with what they come to. */
+  async forCentralStock(centralStockId: string, tx: Prisma.TransactionClient | PrismaClient = this.db) {
     const fees = await tx.chainStockFee.findMany({
-      where: { stockId },
+      where: { centralStockId },
       orderBy: { name: "asc" },
       select: feeSelect,
     });

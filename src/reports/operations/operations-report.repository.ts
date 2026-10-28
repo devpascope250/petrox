@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginatedData, paginationArgs } from "../../shared/pagination/index.js";
+import { presentFees, reportFeeSelect, sumFeeTotals } from "../../modules/fees/fee.repository.js";
 import {
   DepotStockMovementReportQuery,
   invoiceStatuses,
@@ -30,8 +31,20 @@ function pricing(invoices: Invoice[]) {
   return { currency, unitPrice, quantity };
 }
 
-type Movement = { received: number; issuedToPss: number; issuedToB2b: number; saleOut: number; lossGain: number };
-const emptyMovement = (): Movement => ({ received: 0, issuedToPss: 0, issuedToB2b: 0, saleOut: 0, lossGain: 0 });
+type Movement = {
+  received: number; issuedToPss: number; issuedToB2b: number; saleOut: number; lossGain: number;
+  /**
+   * What landing the receipts received in this period cost, grouped by
+   * currency, and how many charges that was. Attributed to the period the
+   * stock was received in, since that is when the cost was incurred — and
+   * counted once per receipt, not once per movement of it.
+   */
+  landingFeeTotals: Record<string, number>; landingFeeCount: number;
+};
+const emptyMovement = (): Movement => ({
+  received: 0, issuedToPss: 0, issuedToB2b: 0, saleOut: 0, lossGain: 0,
+  landingFeeTotals: {}, landingFeeCount: 0,
+});
 const signed = (type: string, quantity: number) =>
   type === "received" || type === "reconcilliationIn" ? quantity : -quantity;
 
@@ -222,6 +235,8 @@ export class OperationsReportRepository {
             id: true,
             deport: { select: { id: true, name: true, location: true } },
             item: { select: { id: true, name: true } },
+            // What it cost to land this receipt.
+            chainStockFees: reportFeeSelect,
             t1Validation: {
               select: {
                 nomination: {
@@ -298,10 +313,25 @@ export class OperationsReportRepository {
           combo.movements.set(key, movement);
           return movement;
         };
+        const landedByStock = new Map(stocks.map((stock) => [stock.id, presentFees(stock.chainStockFees)]));
+        // A receipt's landing cost is counted once, in the period it was
+        // received; a second `received` movement on the same receipt must not
+        // charge it again.
+        const feesCounted = new Set<string>();
         for (const row of transactions) {
           const movement = movementAt(row.centralStockId, row.createdAt);
           const quantity = num(row.quantity);
-          if (row.type === "received") movement.received += quantity;
+          if (row.type === "received") {
+            movement.received += quantity;
+            if (!feesCounted.has(row.centralStockId)) {
+              feesCounted.add(row.centralStockId);
+              const landed = landedByStock.get(row.centralStockId);
+              if (landed) {
+                movement.landingFeeTotals = sumFeeTotals([movement.landingFeeTotals, landed.feeTotals]);
+                movement.landingFeeCount += landed.feeCount;
+              }
+            }
+          }
           else if (row.type === "saleOut") movement.saleOut += quantity;
           else movement.lossGain += signed(row.type, quantity);
         }
@@ -313,6 +343,8 @@ export class OperationsReportRepository {
 
         const buckets = this.buckets(query);
         const totals = { ...emptyMovement(), otherIssues: 0, openingStock: 0, closingBookStock: 0 };
+        const landingFeeTotals: Record<string, number> = {};
+        let landingFeeCount = 0;
         const stockValueByCurrency: Record<string, number> = {};
         const rows = [];
         for (const combo of combos.values()) {
@@ -344,12 +376,18 @@ export class OperationsReportRepository {
               unitCost,
               currency,
               stockValue: unitCost === null ? null : round(closing * unitCost),
+              // What landing the stock received in this period cost. `{}` when
+              // no fee was charged, so every row reads the same way.
+              landingFeeTotals: m.landingFeeTotals,
+              landingFeeCount: m.landingFeeCount,
             });
             totals.received += m.received;
             totals.issuedToPss += m.issuedToPss;
             totals.issuedToB2b += m.issuedToB2b;
             totals.otherIssues += otherIssues;
             totals.lossGain += m.lossGain;
+            Object.assign(landingFeeTotals, sumFeeTotals([landingFeeTotals, m.landingFeeTotals]));
+            landingFeeCount += m.landingFeeCount;
             balance = closing;
           }
           totals.closingBookStock += balance;
@@ -377,6 +415,9 @@ export class OperationsReportRepository {
             lossGain: round(totals.lossGain),
             closingBookStock: round(totals.closingBookStock),
             stockValueByCurrency,
+            // Never added across currencies — see `sumFeeTotals`.
+            landingFeeTotals,
+            landingFeeCount,
           },
         };
       },

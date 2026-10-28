@@ -1,6 +1,5 @@
 import type { PrismaClient, StockStatus } from "../../../prisma/generated/prisma/client.js";
 import { NotFoundError } from "../../utils/errors.js";
-import { totalsOf } from "../fees/fee.repository.js";
 import { CreateStockSchema, StockReportQuerySchema } from "./stock.schema.js";
 export class StockRepository {
   constructor(private db: PrismaClient) {}
@@ -55,14 +54,6 @@ export class StockRepository {
             },
           },
         },
-        // What it cost to land this receipt, beside the receipt itself.
-        chainStockFees: {
-          orderBy: { name: "asc" },
-          select: {
-            id: true, feeTypeId: true, name: true, count: true,
-            unitAmount: true, currencyCode: true, createdAt: true,
-          },
-        },
         nominationVessels: {
           orderBy: { createdAt: "desc" },
           select: {
@@ -114,17 +105,6 @@ export class StockRepository {
       };
       stocks: Array<{
         id: string;
-        fees: Array<{
-          id: string;
-          feeTypeId: string;
-          name: string;
-          count: number;
-          unitAmount: number;
-          lineTotal: number;
-          currencyCode: string;
-          createdAt: Date;
-        }>;
-        feeTotals: Record<string, number>;
         quantityBeforeNominations: number;
         nominatedQuantity: number;
         remainingQuantity: number;
@@ -191,14 +171,6 @@ export class StockRepository {
 
       itemReport.stocks.push({
         id: stock.id,
-        fees: stock.chainStockFees.map((fee) => ({
-          ...fee,
-          unitAmount: Number(fee.unitAmount),
-          lineTotal: Number(fee.unitAmount) * fee.count,
-        })),
-        // Grouped by currency: fees are not always in the money of the stock
-        // they sit beside, so one total would be a wrong number.
-        feeTotals: totalsOf(stock.chainStockFees).byCurrency,
         quantityBeforeNominations: quantity,
         nominatedQuantity,
         remainingQuantity,

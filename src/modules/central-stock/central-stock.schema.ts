@@ -20,6 +20,35 @@ export const centralStockReportQuerySchema = z.object({
 
 export type CentralStockReportQuerySchema = z.infer<typeof centralStockReportQuerySchema>;
 
+/**
+ * The landing fees charged as the stock is received: what it cost to clear,
+ * store and move this load. Each is charged from the fee catalogue and copies
+ * its price at this moment, so a landed cost worked out today does not move
+ * when the catalogue is edited tomorrow.
+ *
+ * Sent as a JSON array, since the form posts multipart (it carries the receipt
+ * document): `fees=[{"feeTypeId":"…","count":2}]`.
+ */
+const feesField = z.union([z.string(), z.array(z.unknown())])
+  // Optional here rather than on the array below: the key is usually absent,
+  // and a union member of `z.undefined()` does not make a key optional.
+  .optional()
+  .transform((value, ctx) => {
+    if (value === undefined || value === "") return undefined;
+    if (Array.isArray(value)) return value;
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      ctx.addIssue({ code: "custom", message: "fees must be a JSON array" });
+      return z.NEVER;
+    }
+  })
+  .pipe(z.array(z.object({
+    feeTypeId: uuidSchema,
+    /** How many times it is charged; 3 x a fixed fee, not a volume. */
+    count: z.coerce.number().int().positive().max(10_000).default(1),
+  })).max(50).optional());
+
 export const createCentralStockSchema = z.object({
   deportId: uuidSchema,
   itemId:  uuidSchema,
@@ -32,7 +61,9 @@ export const createCentralStockSchema = z.object({
   createdBy: uuidSchema,
   toleranceRate: z.coerce.number().optional(),
   lossQty: z.coerce.number().optional(),
-  gainQty: z.coerce.number().optional()
+  gainQty: z.coerce.number().optional(),
+  /** What it cost to land this receipt. Left out when there is nothing to charge. */
+  fees: feesField
 
 });
 

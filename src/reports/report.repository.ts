@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient } from "../../prisma/generated/prisma/client.js";
 import { paginatedData, paginationArgs } from "../shared/pagination/index.js";
+import { presentFees, reportFeeSelect, sumFeeTotals } from "../modules/fees/fee.repository.js";
 import {
   CentralStockReportQuery,
   CentralStockInventoryQuery,
@@ -813,6 +814,8 @@ export class ReportRepository {
                   },
                 },
               },
+              // What it cost to land each receipt.
+              chainStockFees: reportFeeSelect,
               _count: {
                 select: {
                   transactions: true,
@@ -859,9 +862,13 @@ export class ReportRepository {
               row.type === "saleOut" || row.type === "reconcilliationOut",
           )
           .reduce((sum, row) => sum.plus(row._sum.quantity ?? 0), zero());
+        const landed = rows.map(({ chainStockFees, ...row }) => ({
+          row,
+          fees: presentFees(chainStockFees),
+        }));
         return {
           ...paginatedData(
-            rows.map((row) => ({
+            landed.map(({ row, fees }) => ({
               ...row,
               ambQuantity: num(row.ambQuantity),
               quantityAt20C: num(row.quantityAt20C),
@@ -869,6 +876,9 @@ export class ReportRepository {
                 row.toleranceRate === null ? null : num(row.toleranceRate),
               lossQty: row.lossQty === null ? null : num(row.lossQty),
               gainQty: row.gainQty === null ? null : num(row.gainQty),
+              // Each charge, with the totals by currency. Empty when none
+              // were charged, so every row reads the same way.
+              ...fees,
             })),
             total,
             query,
@@ -897,6 +907,14 @@ export class ReportRepository {
                 },
               ]),
             ),
+            /**
+             * What landing the receipts on this page cost, grouped by
+             * currency, and how many charges that was. This covers the page
+             * rather than the whole filter, because a charge is read off the
+             * receipt it sits on.
+             */
+            landingFeeTotals: sumFeeTotals(landed.map(({ fees }) => fees.feeTotals)),
+            landingFeeCount: landed.reduce((count, { fees }) => count + fees.feeCount, 0),
           },
         };
       },
@@ -946,6 +964,8 @@ export class ReportRepository {
                   status: true,
                   item: { select: { id: true, name: true } },
                   deport: { select: { id: true, name: true, location: true } },
+                  // What landing the receipt this movement belongs to cost.
+                  chainStockFees: reportFeeSelect,
                 },
               },
             },
@@ -961,10 +981,16 @@ export class ReportRepository {
         ]);
         return {
           ...paginatedData(
-            rows.map(({ user, ...row }) => ({
+            rows.map(({ user, centralStock, ...row }) => ({
               ...row,
               quantity: num(row.quantity),
               createdBy: user,
+              // The receipt, with what it cost to land — the same figures the
+              // central stock report shows, so the two cannot disagree.
+              centralStock: centralStock && (({ chainStockFees, ...receipt }) => ({
+                ...receipt,
+                ...presentFees(chainStockFees),
+              }))(centralStock),
             })),
             total,
             query,
@@ -1035,9 +1061,26 @@ export class ReportRepository {
                 baseUnit: { select: { id: true, name: true, code: true } },
               },
             },
+            // What landing each receipt cost, to fold up to its item.
+            chainStockFees: reportFeeSelect,
           },
         });
         const itemByStock = new Map(stocks.map((stock) => [stock.id, stock.item]));
+
+        /**
+         * What landing the period's receipts cost, per item and grouped by
+         * currency. Counted once per receipt, however many movements it has —
+         * a fee is charged on the receipt, not on each movement of it.
+         */
+        const landingByItem = new Map<string, { feeTotals: Record<string, number>; feeCount: number }>();
+        for (const stock of stocks) {
+          const fees = presentFees(stock.chainStockFees);
+          const landed = landingByItem.get(stock.item.id) ?? { feeTotals: {}, feeCount: 0 };
+          landingByItem.set(stock.item.id, {
+            feeTotals: sumFeeTotals([landed.feeTotals, fees.feeTotals]),
+            feeCount: landed.feeCount + fees.feeCount,
+          });
+        }
 
         type Totals = {
           item: (typeof stocks)[number]["item"];
@@ -1102,6 +1145,10 @@ export class ReportRepository {
                 sold: totals.sold.toNumber(),
                 reconciledOut: totals.reconciledOut.toNumber(),
               },
+              // What landing this item's receipts cost, by currency. `{}` when
+              // no fee was charged against any of them.
+              landingFeeTotals: landingByItem.get(totals.item.id)?.feeTotals ?? {},
+              landingFeeCount: landingByItem.get(totals.item.id)?.feeCount ?? 0,
             };
           });
 
@@ -1118,6 +1165,10 @@ export class ReportRepository {
             consumed: sum((row) => row.consumed),
             closing: sum((row) => row.closing),
             totalStock: sum((row) => row.totalStock),
+            // Never added across currencies: that would be a wrong number
+            // rather than a rounded one.
+            landingFeeTotals: sumFeeTotals(items.map((row) => row.landingFeeTotals)),
+            landingFeeCount: items.reduce((count, row) => count + row.landingFeeCount, 0),
           },
         };
       },

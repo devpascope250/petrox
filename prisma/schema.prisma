@@ -625,7 +625,6 @@ model Stock {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   nominationVessels NominationVessel[]
-  chainStockFees    ChainStockFee[]
 
   @@index([deportId])
   @@index([cargoId])
@@ -801,6 +800,8 @@ model CentralStock {
   stockClearances    StockClearance[]
   transactions       StockTransaction[]
   centralStockOrders CentralStockOrder[]
+  /// What it cost to land this receipt — charged as the stock is received.
+  chainStockFees     ChainStockFee[]
 
   @@index([id])
   @@index([deportId])
@@ -1960,22 +1961,30 @@ model FeeType {
 /// `name`, `unitAmount` and `currencyCode` are copies taken when the fee was
 /// charged: a landed cost worked out last quarter must not move because a price
 /// was edited today.
+/// What it cost to land one receipt of central stock: clearing, storage,
+/// transport and the rest, charged from the fee catalogue.
+///
+/// It hangs off `CentralStock`, not `Stock`: the cost is known when the stock
+/// is received into the depot, which is when a central stock receipt is
+/// written. Each row keeps its own `name`, `unitAmount` and `currencyCode`,
+/// copied from `FeeType` when it is charged, so editing the catalogue later
+/// cannot rewrite what a receipt cost.
 model ChainStockFee {
-  id           String   @id @default(uuid())
-  feeTypeId    String
-  stockId      String
-  count        Int      @default(1)
-  name         String
-  unitAmount   Decimal  @db.Decimal(18, 2)
-  currencyCode String
-  feeType      FeeType  @relation(fields: [feeTypeId], references: [id])
-  stock        Stock    @relation(fields: [stockId], references: [id])
-  createdBy    String?
-  user         User?    @relation("ChainStockFeeCreatedBy", fields: [createdBy], references: [id])
-  createdAt    DateTime @default(now())
+  id             String       @id @default(uuid())
+  feeTypeId      String
+  centralStockId String
+  count          Int          @default(1)
+  name           String
+  unitAmount     Decimal      @db.Decimal(18, 2)
+  currencyCode   String
+  feeType        FeeType      @relation(fields: [feeTypeId], references: [id])
+  centralStock   CentralStock @relation(fields: [centralStockId], references: [id])
+  createdBy      String?
+  user           User?        @relation("ChainStockFeeCreatedBy", fields: [createdBy], references: [id])
+  createdAt      DateTime     @default(now())
 
-  @@unique([stockId, feeTypeId])
-  @@index([stockId])
+  @@unique([centralStockId, feeTypeId])
+  @@index([centralStockId])
   @@index([feeTypeId])
   @@index([createdBy])
 }

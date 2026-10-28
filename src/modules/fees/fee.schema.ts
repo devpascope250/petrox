@@ -37,7 +37,7 @@ export const assignFeesSchema = z.object({
     .max(50),
 });
 
-export const stockParamsSchema = z.object({ stockId: uuidSchema });
+export const centralStockParamsSchema = z.object({ centralStockId: uuidSchema });
 export const pfiParamsSchema = z.object({ pfiId: uuidSchema });
 
 export type FeeTypeListQuery = z.infer<typeof feeTypeListQuerySchema>;
