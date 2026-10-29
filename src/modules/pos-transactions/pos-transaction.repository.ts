@@ -2,7 +2,8 @@ import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/clie
 import { paginatedData, paginationArgs } from "../../shared/pagination/index.js";
 import { NotFoundError } from "../../utils/errors.js";
 import { staticUrl } from "../../utils/static-url.js";
-import type { PosTransactionListQuery, PosTransactionReportQuery } from "./pos-transaction.schema.js";
+import { CompanySettingsRepository } from "../company-settings/company-settings.repository.js";
+import { WALK_IN, type PosTransactionListQuery, type PosTransactionReportQuery } from "./pos-transaction.schema.js";
 
 const person = { select: { id: true, firstName: true, lastName: true, phone: true } } as const;
 const physicalCard = { select: { id: true, cardNumber: true, serialNumber: true } } as const;
@@ -181,15 +182,29 @@ function presentRow<T extends Row>({ cardCopy, ...row }: T) {
  * in full. Recording them stays with the POS (`/mobile/transactions`).
  */
 export class PosTransactionRepository {
+  /**
+   * The company profile the report is printed under: the same letterhead a POS
+   * receipt carries, so one profile answers for both.
+   */
+  private company: CompanySettingsRepository;
+
   /** `staticBase` is put in front of stored picture and document paths. */
-  constructor(private db: PrismaClient, private staticBase?: string) {}
+  constructor(private db: PrismaClient, private staticBase?: string) {
+    this.company = new CompanySettingsRepository(db);
+  }
 
   /** The filters both the report and the paged list narrow by. */
   private where(siteId: string | undefined, query: PosTransactionReportQuery): Prisma.GeneralTransactionWhereInput {
     const search = query.search || undefined;
+    /** A sale carries one when its recorded amount is more than nothing. */
+    const carrying = (has: boolean | undefined) =>
+      has === undefined ? undefined : has ? { gt: new Prisma.Decimal(0) } : { lte: new Prisma.Decimal(0) };
     return {
       ...(siteId ? { siteId } : {}),
       ...(query.status ? { status: query.status } : {}),
+      ...(query.clientId ? { clientId: query.clientId === WALK_IN ? null : query.clientId } : {}),
+      ...(query.hasDiscount === undefined ? {} : { discountAmount: carrying(query.hasDiscount) }),
+      ...(query.hasSubsidy === undefined ? {} : { subsidyAmount: carrying(query.hasSubsidy) }),
       ...(query.startDate || query.endDate ? { createdAt: { gte: query.startDate, lte: query.endDate } } : {}),
       ...(search ? { OR: [
         { transactionCode: { contains: search } },
@@ -310,7 +325,7 @@ export class PosTransactionRepository {
 
     const [
       total, byStatus, totals, bySiteGroup, byItemGroup, byPumpGroup, byNozzleGroup,
-      byShiftGroup, byAttendantGroup, byClientGroup, byAccountGroup, couponTotals, days, rows,
+      byShiftGroup, byAttendantGroup, byClientGroup, byAccountGroup, couponTotals, days, rows, company,
     ] = await Promise.all([
       this.db.generalTransaction.count({ where }),
       this.db.generalTransaction.groupBy({ by: ["status"], where, orderBy: { status: "asc" }, ...sums }),
@@ -337,6 +352,8 @@ export class PosTransactionRepository {
       this.db.generalTransaction.findMany({
         where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: REPORT_ROW_LIMIT, select: reportRowSelect,
       }),
+      // The letterhead: empty until the company profile has been saved once.
+      this.company.receipt(this.staticBase),
     ]);
 
     const [sites, items, pumps, nozzles, shifts, attendants, clients, accounts] = await Promise.all([
@@ -382,8 +399,17 @@ export class PosTransactionRepository {
     const coupons = couponTotals._sum.amount ?? zero;
     const collected = Number(totals._sum.amount ?? zero);
 
+    /** The client the report was narrowed to, named for the printed header. */
+    const narrowedClient = query.clientId && query.clientId !== WALK_IN
+      ? clients.find((client) => client.id === query.clientId)
+        ?? await this.db.client.findUnique({
+          where: { id: query.clientId }, select: { id: true, clientCode: true, name: true } })
+      : null;
+
     return {
       generatedAt: new Date(),
+      /** Who the report is printed under; empty until the profile is saved. */
+      company,
       filters: {
         site: siteId ? sites.find((site) => site.id === siteId)
           ?? await this.db.tblSite.findUnique({ where: { id: siteId }, select: { id: true, name: true } }) : null,
@@ -391,6 +417,11 @@ export class PosTransactionRepository {
         startDate: query.startDate ?? null,
         endDate: query.endDate ?? null,
         search: query.search ?? null,
+        /** `walkIn` when the report was narrowed to the sales with no client. */
+        client: narrowedClient,
+        walkInOnly: query.clientId === WALK_IN,
+        hasDiscount: query.hasDiscount ?? null,
+        hasSubsidy: query.hasSubsidy ?? null,
       },
       totals: {
         ...figures(totals),

@@ -2,6 +2,16 @@ import { z } from "zod";
 import { GeneralTransactionStatus } from "../../../prisma/generated/prisma/enums.js";
 import { paginationQuerySchema, uuidSchema } from "../../shared/validation/index.js";
 
+/** The sales no client account paid for: a walk-in at the pump. */
+export const WALK_IN = "none";
+
+/**
+ * A yes/no filter. A query string sends the word, so `z.coerce.boolean()` is
+ * no use — it reads `"false"` as true — and both forms are spelled out, as the
+ * car form's flags are.
+ */
+const flagSchema = z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).optional();
+
 /**
  * What narrows the POS sales report. Dates are moments, not days: the browser
  * sends the start and end of the days picked in its own timezone.
@@ -13,6 +23,12 @@ const filtersSchema = z.object({
   endDate: z.coerce.date().optional(),
   /** Matches the transaction code, plate number, client name or card number. */
   search: z.string().trim().max(100).optional(),
+  /** One client's sales, or `none` for the sales nobody's account paid for. */
+  clientId: z.union([uuidSchema, z.literal(WALK_IN)]).optional(),
+  /** On: only the sales carrying a discount. Off: only those without one. */
+  hasDiscount: flagSchema,
+  /** On: only the sales carrying a subsidy. Off: only those without one. */
+  hasSubsidy: flagSchema,
 });
 
 /** The dates have to be the right way round, whichever endpoint they reach. */
