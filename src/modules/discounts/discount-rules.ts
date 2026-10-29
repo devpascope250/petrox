@@ -6,17 +6,24 @@ type Db = PrismaClient | Prisma.TransactionClient;
 const money = (value: number | string | Prisma.Decimal) => new Prisma.Decimal(value).toDecimalPlaces(2);
 
 /**
- * A discount **rate is per unit sold** — so many francs off each litre — for
- * both kinds: a `fixed` discount's `value` and a `ranging` tier's `rate`. The
- * sale's own discount is therefore `quantity × rate`, never a share of the
- * amount.
+ * A discount **rate is a percentage of what the sale is worth** — for both
+ * kinds: a `fixed` discount's `value` and a `ranging` tier's `rate`. The
+ * sale's own discount is therefore `grossAmount × rate ÷ 100`, rounded to the
+ * two decimals the money columns hold:
+ *
+ *     11.34 litres × 1,764 = 20,003.76 gross
+ *     20,003.76 × 10% ....... 2,000.38 off  (2,000.376 rounded)
+ *     ....................... 18,003.38 to collect
+ *
+ * The litres only decide **which** tier a `ranging` discount gives; they are
+ * not multiplied by the rate.
  */
 export type SaleDiscount = {
   discountId: string;
   type: DiscountType;
-  /** Off each unit sold, as it stood when the sale was priced. */
+  /** The percentage off, as it stood when the sale was priced. */
   rate: Prisma.Decimal;
-  /** `quantity × rate`, never more than the sale itself. */
+  /** `grossAmount × rate ÷ 100`, never more than the sale itself. */
   amount: Prisma.Decimal;
   /** The volume tier that gave it, for a `ranging` discount. */
   tier: { id: string; from: Prisma.Decimal; to: Prisma.Decimal } | null;
@@ -69,7 +76,7 @@ export async function discountsInForce(db: Db, where: { siteId: string; clientId
 type Candidate = Awaited<ReturnType<typeof discountsInForce>>[number];
 
 /**
- * The rate one discount gives on this quantity: a `fixed` discount's own
+ * The percentage one discount gives on this quantity: a `fixed` discount's own
  * value, or the rate of the volume tier the quantity falls in. `null` when a
  * ranging discount has no tier for this volume.
  *
@@ -99,9 +106,9 @@ export function bestDiscount(discounts: Candidate[], quantity: Prisma.Decimal, g
   for (const discount of discounts) {
     const found = rateOf(discount, quantity);
     if (!found || found.rate.lessThanOrEqualTo(0)) continue;
-    // Never more than the sale is worth: a rate above the pump price would
-    // otherwise hand money back.
-    const amount = Prisma.Decimal.min(money(quantity.times(found.rate)), grossAmount);
+    // A share of the sale, and never more than the whole of it: a rate written
+    // above 100% would otherwise hand money back.
+    const amount = Prisma.Decimal.min(money(grossAmount.times(found.rate).dividedBy(100)), grossAmount);
     if (amount.lessThanOrEqualTo(0)) continue;
     const better = !best
       || amount.greaterThan(best.amount)

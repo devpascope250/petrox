@@ -324,18 +324,20 @@ the open sale at the litres the pump shows and answers with what to collect:
   "client": { "id": "…", "clientCode": "C-0007", "name": "Acme Ltd" },
   "quantity": 40, "unitPrice": 1500,
   "grossAmount": 60000,
-  "discountAmount": 1200,
-  "amount": 58800,
-  "discount": { "id": "…", "type": "fixed", "rate": 30, "amount": 1200, "tier": null }
+  "discountAmount": 6000,
+  "amount": 54000,
+  "discount": { "id": "…", "type": "fixed", "rate": 10, "amount": 6000, "tier": null }
 }
 ```
 
 - `grossAmount` is quantity × price — what the pump display shows.
 - `discountAmount` is what the discount takes off; `0` and `discount: null` when none applies.
 - **`amount` is what the attendant collects**, and what the `payments` must add up to.
-- `discount.rate` is **off each litre**, not a percentage: 40 litres at a rate of 30 is 1200.
-  `discount.tier` is the volume band that gave it (`{id, from, to}`), or `null` for a client's
-  own rate.
+- `discount.rate` is **a percentage of the sale**: a rate of 10 on a gross of 60,000 is 6,000
+  off. Worked to two decimals — 11.34 litres at 1,764 is 20,003.76, and 10% of that is
+  2,000.38 off, leaving 18,003.38. `discount.tier` is the volume band that gave the rate
+  (`{id, from, to}`), or `null` for a client's own rate; a band is chosen by the litres sold,
+  but the rate is still applied to the amount.
 
 A sale gets **one** discount — the best of those in force, never two added together. Which
 one applies depends on the site, the client (a card or coupon sale) and the litres, so the
@@ -372,7 +374,7 @@ including one sent at the same moment, gets `409 TRANSACTION_ALREADY_CONFIRMED`.
 
 **What the sale comes back as.** Every sale returned carries all three figures:
 `grossAmount` (the pump), `discountAmount`, `amount` (collected, already net), plus
-`discountRate` — the rate off each litre, **copied onto the sale**. Editing or retiring a
+`discountRate` — the percentage, **copied onto the sale**. Editing or retiring a
 discount later never changes a sale already recorded. A sale at full price has
 `discountAmount: 0` and `discountRate: 0`, and `amount` equals `grossAmount`.
 

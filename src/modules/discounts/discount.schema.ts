@@ -7,11 +7,19 @@ const decimalSchema = (label: string, allowZero = false) => z.union([z.string(),
   .pipe(z.string().regex(/^(?:0|[1-9]\d{0,10})(?:\.\d)?$/, `${label} must have at most 11 integer digits and 1 decimal place`))
   .refine((value) => allowZero || Number(value) > 0, `${label} must be greater than zero`);
 
+/**
+ * A discount rate is a **percentage of what the sale is worth**, so it cannot
+ * exceed 100: at 100% the fuel is free, and above it the pump would be paying
+ * the customer. One decimal place, matching the column.
+ */
+const percentSchema = (label: string, allowZero = false) => decimalSchema(label, allowZero)
+  .refine((value) => Number(value) <= 100, `${label} is a percentage, so it cannot be more than 100`);
+
 const rangeSchema = z.object({
   from: decimalSchema("Range start", true),
   to: decimalSchema("Range end"),
-  /** Off each unit sold inside this volume band — so many francs a litre. */
-  rate: decimalSchema("Discount rate"),
+  /** The percentage off a sale whose quantity falls inside this volume band. */
+  rate: percentSchema("Discount rate"),
   siteId: uuidSchema,
   status: z.enum(StatusType).default(StatusType.active)
 }).strict().refine((range) => Number(range.from) < Number(range.to), {
@@ -28,15 +36,16 @@ const commonSchema = {
 
 const fixedDiscountSchema = z.object({
   type: z.literal("fixed"),
-  /** Off each unit sold, for this client — the same rate at any volume. */
-  value: decimalSchema("Discount value"),
+  /** The percentage off a sale for this client — the same rate at any volume. */
+  value: percentSchema("Discount value"),
   clientId: uuidSchema,
   ...commonSchema
 }).strict();
 
 const rangingDiscountSchema = z.object({
   type: z.literal("ranging"),
-  value: decimalSchema("Discount value", true),
+  /** Always `0`: a ranging discount's tiers carry the percentages. */
+  value: percentSchema("Discount value", true),
   rangingDiscounts: z.array(rangeSchema).min(1, "At least one ranging discount is required"),
   ...commonSchema
 }).strict();

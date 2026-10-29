@@ -37,6 +37,15 @@ describe("discount input validation", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects a rate of more than 100, because it is a percentage", () => {
+    expect(createDiscountSchema.safeParse({ type: "fixed", value: 100, clientId: uuid, ...dates }).success).toBe(true);
+    expect(createDiscountSchema.safeParse({ type: "fixed", value: 150, clientId: uuid, ...dates }).success).toBe(false);
+    expect(createDiscountSchema.safeParse({
+      type: "ranging", value: 0, ...dates,
+      rangingDiscounts: [{ from: 0, to: 100, rate: 101, siteId: uuid }]
+    }).success).toBe(false);
+  });
+
   it("rejects invalid validity dates", () => {
     expect(createDiscountSchema.safeParse({
       type: "fixed", value: 10, clientId: uuid,

@@ -23,17 +23,25 @@ function ranging(id: string, tiers: Array<[number, number, number]>, createdAt =
 }
 
 describe("the discount one sale gets", () => {
-  it("takes the rate off each unit sold, not off the amount", () => {
-    // 40 litres at 15 off each is 600 off, whatever the pump price is.
+  it("takes the rate as a percentage of what the sale is worth", () => {
+    // 15% of 60,000 is 9,000 — the litres do not come into it.
     const best = bestDiscount([fixed("d", 15)], decimal(40), decimal(60_000));
-    expect(best?.amount.toString()).toBe("600");
+    expect(best?.amount.toString()).toBe("9000");
     expect(best?.rate.toString()).toBe("15");
   });
 
+  it("rounds the discount to the two decimals the money columns hold", () => {
+    // 11.34 litres at 1,764 a litre: 20,003.76 gross, and 10% of it is
+    // 2,000.376 — which is charged as 2,000.38.
+    const best = bestDiscount([fixed("d", 10)], decimal("11.34"), decimal("20003.76"));
+    expect(best?.amount.toString()).toBe("2000.38");
+  });
+
   it("uses the volume tier the quantity falls in", () => {
+    // The litres pick the band; the band's percentage then prices the sale.
     const discount = ranging("d", [[0, 100, 2], [100, 500, 5]]);
-    expect(bestDiscount([discount], decimal(50), decimal(75_000))?.amount.toString()).toBe("100");
-    expect(bestDiscount([discount], decimal(200), decimal(300_000))?.amount.toString()).toBe("1000");
+    expect(bestDiscount([discount], decimal(50), decimal(75_000))?.amount.toString()).toBe("1500");
+    expect(bestDiscount([discount], decimal(200), decimal(300_000))?.amount.toString()).toBe("15000");
   });
 
   it("gives a shared bound to the higher band", () => {
@@ -47,10 +55,10 @@ describe("the discount one sale gets", () => {
   });
 
   it("takes the best single discount and never adds two together", () => {
-    // The client's own rate is 15 a litre; the volume promotion is 5.
+    // The client's own rate is 15%; the volume promotion is 5%.
     const best = bestDiscount([fixed("own", 15), ranging("promo", [[0, 1000, 5]])], decimal(40), decimal(60_000));
     expect(best?.discountId).toBe("own");
-    expect(best?.amount.toString()).toBe("600");
+    expect(best?.amount.toString()).toBe("9000");
   });
 
   it("prefers the client's own rate when two come to the same", () => {
@@ -59,6 +67,9 @@ describe("the discount one sale gets", () => {
   });
 
   it("never discounts more than the sale is worth", () => {
+    // A rate written above 100% — which the input schema refuses, but a row
+    // left over from the per-litre rates would read as — gives the sale away
+    // rather than paying the customer.
     const best = bestDiscount([fixed("d", 5000)], decimal(40), decimal(60_000));
     expect(best?.amount.toString()).toBe("60000");
   });
@@ -77,8 +88,8 @@ describe("what the sale is charged", () => {
       siteId: SITE, quantity: decimal(40), unitPrice: decimal(1500),
     });
     expect(priced.grossAmount.toString()).toBe("60000");
-    expect(priced.discountAmount.toString()).toBe("800");
-    expect(priced.amount.toString()).toBe("59200");
+    expect(priced.discountAmount.toString()).toBe("12000");
+    expect(priced.amount.toString()).toBe("48000");
   });
 
   it("charges the full price when nothing is in force", async () => {
@@ -97,7 +108,16 @@ describe("what the sale is charged", () => {
     const columns = discountColumns(priced);
     expect(columns.discountId).toBe("d");
     expect(columns.discountRate.toString()).toBe("25");
-    expect(columns.discountAmount.toString()).toBe("250");
+    expect(columns.discountAmount.toString()).toBe("3750");
+  });
+
+  it("prices the worked example end to end", async () => {
+    const priced = await priceWithDiscount(dbWith([fixed("d", 10)]), {
+      siteId: SITE, quantity: decimal("11.34"), unitPrice: decimal(1764),
+    });
+    expect(priced.grossAmount.toString()).toBe("20003.76");
+    expect(priced.discountAmount.toString()).toBe("2000.38");
+    expect(priced.amount.toString()).toBe("18003.38");
   });
 });
 
