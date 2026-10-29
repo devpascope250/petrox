@@ -19,6 +19,7 @@
         "backup:decrypt": "tsx scripts/decrypt-backup.ts",
         "phones:normalize": "tsx scripts/normalize-phones.ts",
         "fees:placement": "tsx scripts/landing-fee-placement.ts",
+        "discounts:check": "tsx scripts/discount-check.ts",
         "postinstall": "prisma generate"
     },
     "engines": {
