@@ -1,7 +1,7 @@
 import { isSiteBound, type AuthUser } from "../../shared/auth/context-user.js";
 import { forbidden } from "../../utils/errors.js";
 import { PosTransactionRepository } from "./pos-transaction.repository.js";
-import type { PosTransactionListQuery } from "./pos-transaction.schema.js";
+import type { PosTransactionListQuery, PosTransactionReportQuery } from "./pos-transaction.schema.js";
 
 export class PosTransactionService {
   constructor(private repo: PosTransactionRepository) {}
@@ -9,6 +9,11 @@ export class PosTransactionService {
   /** A super administrator sees every site, or narrows to one; site staff always get their own. */
   list(query: PosTransactionListQuery, actor: AuthUser) {
     return this.repo.list(this.scope(actor) ?? query.siteId, query);
+  }
+
+  /** The financial report over everything the same filters match. */
+  report(query: PosTransactionReportQuery, actor: AuthUser) {
+    return this.repo.report(this.scope(actor) ?? query.siteId, query);
   }
 
   find(id: string, actor: AuthUser) {

@@ -2,13 +2,15 @@ import type { FastifyPluginAsync } from "fastify";
 import { success } from "../../shared/http/index.js";
 import { idParamsSchema, parseInput } from "../../shared/validation/index.js";
 import { PosTransactionRepository } from "./pos-transaction.repository.js";
-import { posTransactionListQuerySchema } from "./pos-transaction.schema.js";
+import { posTransactionListQuerySchema, posTransactionReportQuerySchema } from "./pos-transaction.schema.js";
 import { PosTransactionService } from "./pos-transaction.service.js";
 
 /**
  * The web's read of sales recorded by the POS devices: `/pos-transactions`
- * (the report, with totals) and `/pos-transactions/:id` (one sale in full,
- * pictures included). Guarded by the "POS Transactions" module.
+ * (a page of sales, with totals), `/pos-transactions/report` (the financial
+ * report the PDF is printed from, over everything the filters match) and
+ * `/pos-transactions/:id` (one sale in full, pictures included). Guarded by
+ * the "POS Transactions" module.
  */
 const routes: FastifyPluginAsync = async (app) => {
   const service = new PosTransactionService(
@@ -18,6 +20,9 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.get("/", { preHandler: [app.authenticate, read] }, async (request) =>
     success(await service.list(parseInput(posTransactionListQuerySchema, request.query), request.contextUser!)));
+  // Before `/:id`, which would otherwise take "report" for an id.
+  app.get("/report", { preHandler: [app.authenticate, read] }, async (request) =>
+    success(await service.report(parseInput(posTransactionReportQuerySchema, request.query), request.contextUser!)));
   app.get("/:id", { preHandler: [app.authenticate, read] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
 };
