@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { NotFoundError } from "../../utils/errors.js";
 
 const num = (value: Prisma.Decimal | null | undefined) => Number(value ?? 0);
 const round = (value: number) => Math.round(value * 100) / 100;
@@ -196,7 +197,9 @@ export class OrderReportRepository {
         },
       },
     });
-    if (!order) return order;
+    // A missing order is a 404, not a successful answer carrying nothing: a
+    // caller handed `{ success: true, data: null }` can only sit and wait.
+    if (!order) throw new NotFoundError("Order");
 
     const fullName = (user: { firstName: string; lastName: string } | null | undefined) =>
       user ? `${user.firstName} ${user.lastName}`.trim() : null;

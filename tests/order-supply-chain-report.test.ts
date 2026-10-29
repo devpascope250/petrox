@@ -268,7 +268,13 @@ describe("order supply-chain report", () => {
     );
   });
 
-  it("returns nothing for an unknown order", async () => {
-    expect(await repositoryFor(null).getOrderDetails("nope")).toBeNull();
+  it("refuses an unknown order rather than answering with nothing", async () => {
+    // It used to resolve to `null`, which the API dressed up as
+    // `{ success: true, data: null }` — a caller could only sit and wait. A
+    // missing order is a 404.
+    await expect(repositoryFor(null).getOrderDetails("nope")).rejects.toMatchObject({
+      statusCode: 404,
+      code: "RESOURCE_NOT_FOUND",
+    });
   });
 });
