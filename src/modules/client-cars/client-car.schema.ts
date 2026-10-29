@@ -14,6 +14,13 @@ const plateSchema = z.string().trim().min(2, "Plate number is required").max(20,
   .transform(normalizePlate)
   .refine((plate) => /^[A-Z0-9]{2,15}$/.test(plate), "Plate number may only contain letters and digits");
 
+/**
+ * A yes/no field. A JSON body sends a real boolean, a form sends the string,
+ * and `z.coerce.boolean()` would read `"false"` as true — so both are spelled
+ * out, as `printStatus` does on the POS sales.
+ */
+const flagSchema = z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).optional();
+
 /** The car fields, shared by the car form and the client form that can add cars. */
 export const carFieldsSchema = z.object({
   plateNo: plateSchema,
@@ -25,6 +32,11 @@ export const carFieldsSchema = z.object({
   /** The car's tank, in the product's base unit. */
   tancapacity: z.coerce.number("Tank capacity must be a number").positive("Tank capacity must be more than zero")
     .max(1_000_000, "Tank capacity is too large"),
+  /**
+   * Whether this car may earn the product's subsidy. The client must be
+   * allowed one as well, and the car only earns it on the product it takes.
+   */
+  subsidyAllowed: flagSchema.default(false),
 });
 
 export const createClientCarSchema = carFieldsSchema.extend({ clientId: uuidSchema });
@@ -35,6 +47,7 @@ export const updateClientCarSchema = z.object({
   trackNo: z.string().trim().max(50, "Tracker number is too long").nullable().optional()
     .transform((value) => value === undefined ? undefined : value || null),
   tancapacity: carFieldsSchema.shape.tancapacity.optional(),
+  subsidyAllowed: flagSchema,
 }).refine((data) => Object.values(data).some((value) => value !== undefined), "At least one field is required");
 
 export const clientCarListQuerySchema = paginationQuerySchema.extend({

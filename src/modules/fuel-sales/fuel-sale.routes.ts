@@ -31,8 +31,9 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.get("/options", { preHandler: [app.authenticate, app.authorize("fuel.sales.read", "fuel.sales.create", "fuel.sales.report.read")] }, async (request) =>
     success(await service.options(parseInput(fuelSaleOptionsQuerySchema, request.query).siteId, request.contextUser!)));
-  // What a sale of a given volume would come to, discount included: the form
-  // asks as the litres are typed, so it can collect the discounted amount.
+  // What a sale of a given volume would come to, with the discount recorded
+  // against it: the form asks as the litres are typed, so it can show both
+  // figures. A discount is not deducted, so what is collected is the gross.
   app.get("/quote", { preHandler: [app.authenticate, app.authorize("fuel.sales.create", "fuel.sales.read")] }, async (request) =>
     success(await service.quote(parseInput(fuelSaleQuoteQuerySchema, request.query), request.contextUser!)));
   app.get("/report", { preHandler: [app.authenticate, app.authorize("fuel.sales.report.read")] }, async (request) =>

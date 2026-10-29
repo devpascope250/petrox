@@ -39,6 +39,7 @@ function presentAssignment({ cardCopy, ...row }: Prisma.ClientCarCardAssignmentG
 
 const carSelect = {
   id: true, clientId: true, plateNo: true, trackNo: true, tancapacity: true, status: true, createdAt: true, updatedAt: true,
+  subsidyAllowed: true,
   itemId: true, item: { select: { id: true, name: true, baseUnit: { select: { id: true, code: true } } } },
   client: { select: { id: true, clientCode: true, name: true, status: true } },
   clientCarCardAssignments: { where: { status: "active" }, select: assignmentSelect, orderBy: { assignedAt: "asc" } },

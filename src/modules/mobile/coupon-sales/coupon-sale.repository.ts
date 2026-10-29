@@ -3,6 +3,7 @@ import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js
 import { verifyClientPin } from "../../clients/client-pin.js";
 import { expireCoupons, redeemCoupons } from "../../client-coupons/coupon-rules.js";
 import { discountColumns, priceWithDiscount } from "../../discounts/discount-rules.js";
+import { subsidyColumns, subsidyForSale } from "../../subsidies/subsidy-rules.js";
 import { MobileTransactionsRepository, transactionCode } from "../transactions/transactions.repository.js";
 import { accountOfType, checkAmount, checkPayments, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "../transactions/sale-rules.js";
 import type { ConfirmCouponSaleInput, InitiateCouponSaleInput } from "./coupon-sale.schema.js";
@@ -103,12 +104,18 @@ export class CouponSaleRepository {
         422, { unitPrice: unitPrice.toFixed(2) });
     }
     const quantity = money(input.quantity);
-    // `amount` is what the pump display showed, before any discount.
+    // `amount` is what the pump display showed, and what is collected.
     checkAmount(quantity, unitPrice, money(input.amount));
-    // What a discount in force takes off this volume for this client. The
-    // litres are already known here, so a coupon sale is priced as it starts
-    // and the coupons are asked for the discounted amount.
+    // The discount in force for this volume for this client, and the subsidy
+    // this client's car earns on this product. The litres are already known
+    // here, so a coupon sale is priced as it starts.
+    //
+    // Both are **recorded, not deducted**: the coupons are asked for the full
+    // pump amount, and the two figures are written down beside it.
     const priced = await priceWithDiscount(this.db, { siteId, clientId: client.id, quantity, unitPrice });
+    const subsidised = await subsidyForSale(this.db, {
+      itemId: input.itemId, siteId, quantity, clientId: client.id, platNumber: input.platNumber,
+    });
     const amount = priced.amount;
     await accountOfType(this.db, siteId, "coupon");
     // Not refused when the coupons fall short: the fuel is already in the car.
@@ -124,7 +131,8 @@ export class CouponSaleRepository {
           data: {
             transactionCode: transactionCode(new Date(startedAt + attempt)),
             itemId: input.itemId, cuveId: input.cuveId, pumpId: input.pumpId, nozzleId: input.nozzleId,
-            clientId: client.id, siteId, deviceId, quantity, unitPrice, amount, ...discountColumns(priced),
+            clientId: client.id, siteId, deviceId, quantity, unitPrice, amount,
+            ...discountColumns(priced), ...subsidyColumns(subsidised),
             platNumber: input.platNumber ?? null, displayPictureUrl: input.displayPictureUrl,
             platePictureUrl: input.platePictureUrl ?? null,
             appVersion: input.appVersion ?? null,
@@ -156,6 +164,7 @@ export class CouponSaleRepository {
       select: {
         id: true, status: true, expiresAt: true, clientId: true, quantity: true, unitPrice: true, amount: true,
         discountId: true, discountRate: true, discountAmount: true,
+        subsidyId: true, subsidyRate: true, subsidyAmount: true,
         cuveId: true, cuve: { select: { name: true } },
         nozzle: { select: { id: true, name: true, pump: { select: { id: true, name: true } } } },
       },
@@ -252,6 +261,7 @@ export class CouponSaleRepository {
           quantity: sale.quantity, unitPrice: sale.unitPrice, amount: sale.amount, createdBy: doneBy,
           // The same figures the sale was priced with when it started.
           discountId: sale.discountId, discountRate: sale.discountRate, discountAmount: sale.discountAmount,
+          subsidyId: sale.subsidyId, subsidyRate: sale.subsidyRate, subsidyAmount: sale.subsidyAmount,
           note: `Coupon sale ${code}`, dateOn: new Date(`${rota.workingDay}T00:00:00.000Z`),
           payments: { create: paymentRows },
         },

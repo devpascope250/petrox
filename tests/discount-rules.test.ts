@@ -83,13 +83,15 @@ describe("what the sale is charged", () => {
   /** A stand-in for `db.discount.findMany`, so the rules can be checked without a database. */
   const dbWith = (rows: unknown[]) => ({ discount: { findMany: async () => rows } }) as never;
 
-  it("subtracts the discount from the gross the pump shows", async () => {
+  it("records the discount without taking it off what is collected", async () => {
     const priced = await priceWithDiscount(dbWith([ranging("d", [[0, 100, 20]])]), {
       siteId: SITE, quantity: decimal(40), unitPrice: decimal(1500),
     });
     expect(priced.grossAmount.toString()).toBe("60000");
     expect(priced.discountAmount.toString()).toBe("12000");
-    expect(priced.amount.toString()).toBe("48000");
+    // The customer still pays the pump: the 12,000 is written down for later.
+    expect(priced.amount.toString()).toBe("60000");
+    expect(priced.amount.equals(priced.grossAmount)).toBe(true);
   });
 
   it("charges the full price when nothing is in force", async () => {
@@ -117,7 +119,8 @@ describe("what the sale is charged", () => {
     });
     expect(priced.grossAmount.toString()).toBe("20003.76");
     expect(priced.discountAmount.toString()).toBe("2000.38");
-    expect(priced.amount.toString()).toBe("18003.38");
+    // Recorded, not deducted: 20,003.76 is collected and 2,000.38 noted.
+    expect(priced.amount.toString()).toBe("20003.76");
   });
 });
 

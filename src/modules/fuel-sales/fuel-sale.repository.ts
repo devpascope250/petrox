@@ -13,6 +13,7 @@ const itemSelect = { select: { id: true, name: true, baseUnit: true } } as const
 export const saleSelect = {
   id: true, siteId: true, dateOn: true, quantity: true, unitPrice: true, amount: true, note: true, createdAt: true,
   discountId: true, discountRate: true, discountAmount: true,
+  subsidyId: true, subsidyRate: true, subsidyAmount: true,
   nozzle: { select: { id: true, name: true, nozzleCode: true } },
   pump: { select: { id: true, name: true } },
   shift: { select: { id: true, shift: { select: { id: true, name: true, startAt: true, endAt: true } } } },
@@ -32,12 +33,21 @@ export function presentSale({ cuveTransaction, ...sale }: Prisma.FuelSaleGetPayl
     dateOn: fromDate(sale.dateOn),
     quantity: Number(sale.quantity),
     unitPrice: Number(sale.unitPrice),
-    /** What was collected: already net of any discount. */
+    /** What was collected — the full pump amount. */
     amount: Number(sale.amount),
+    /** The percentage off, recorded against the sale. */
     discountRate: Number(sale.discountRate),
+    /**
+     * What the discount came to. **Recorded, not deducted**: it was not taken
+     * off `amount`, which is why `grossAmount` is the same figure.
+     */
     discountAmount: Number(sale.discountAmount),
-    /** What the pump showed, before the discount: `amount` + `discountAmount`. */
-    grossAmount: Number(sale.amount.plus(sale.discountAmount)),
+    /** What the pump showed — the same as `amount`. */
+    grossAmount: Number(sale.amount),
+    /** Towards each unit sold: a fixed amount a litre, not a percentage. */
+    subsidyRate: Number(sale.subsidyRate),
+    /** `quantity × subsidyRate`, recorded the same way. */
+    subsidyAmount: Number(sale.subsidyAmount),
     shift: sale.shift ? presentSiteShift(sale.shift) : null,
     cuve: cuveTransaction?.cuve ?? null,
     payments: sale.payments.map((payment) => ({ ...payment, amount: Number(payment.amount) })),
@@ -55,23 +65,28 @@ const zero = new Prisma.Decimal(0);
 /**
  * A groupBy row's totals as plain numbers, with the average price they imply.
  *
- * `amount` is what was collected, so `averagePrice` is the price actually
- * realised — below the pump price wherever a discount applied. `grossAmount`
- * is what the pumps showed, and `discountAmount` the difference.
+ * A discount and a subsidy are **recorded, not deducted**, so `amount` is what
+ * the pumps showed and what was collected — `grossAmount` is the same figure,
+ * kept for the screens that print the two side by side. `discountAmount` and
+ * `subsidyAmount` are what has been recorded over the period, to settle or
+ * claim later; neither has been taken out of `amount`.
  */
 function figures(row: {
   _count: { _all: number };
-  _sum: { quantity: Prisma.Decimal | null; amount: Prisma.Decimal | null; discountAmount?: Prisma.Decimal | null };
+  _sum: {
+    quantity: Prisma.Decimal | null; amount: Prisma.Decimal | null;
+    discountAmount?: Prisma.Decimal | null; subsidyAmount?: Prisma.Decimal | null;
+  };
 }) {
   const quantity = row._sum.quantity ?? zero;
   const amount = row._sum.amount ?? zero;
-  const discountAmount = row._sum.discountAmount ?? zero;
   return {
     saleCount: row._count._all,
     quantity: Number(quantity),
     amount: Number(amount),
-    discountAmount: Number(discountAmount),
-    grossAmount: Number(amount.plus(discountAmount)),
+    discountAmount: Number(row._sum.discountAmount ?? zero),
+    subsidyAmount: Number(row._sum.subsidyAmount ?? zero),
+    grossAmount: Number(amount),
     averagePrice: quantity.isZero() ? 0 : Number(amount.div(quantity).toDecimalPlaces(2)),
   };
 }
@@ -170,7 +185,8 @@ export class FuelSaleRepository {
       this.db.fuelSale.findMany({
         where, select: saleSelect, ...paginationArgs(query), orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       }),
-      this.db.fuelSale.aggregate({ where, _count: { _all: true }, _sum: { quantity: true, amount: true, discountAmount: true } }),
+      this.db.fuelSale.aggregate({ where, _count: { _all: true },
+        _sum: { quantity: true, amount: true, discountAmount: true, subsidyAmount: true } }),
     ]);
     return { ...paginatedData(rows.map(presentSale), totals._count._all, query), summary: figures(totals) };
   }
@@ -245,8 +261,15 @@ export class FuelSaleRepository {
           422, { unitPrice: unitPrice.toFixed(2) });
       }
       const priced = await priceWithDiscount(tx, { siteId: cuve.siteId, quantity, unitPrice });
-      // `amount` is what the pump showed, before any discount.
       checkAmount(quantity, unitPrice, money(input.amount));
+      /**
+       * What is collected: what the pump showed. A discount is **recorded,
+       * not deducted** — it is written down against the sale and settled
+       * later, so the payments must still add up to the full amount.
+       *
+       * A sale entered on the web has no client and no car, so it never
+       * carries a subsidy either.
+       */
       const amount = priced.amount;
 
       const accountIds = input.payments.map((payment) => payment.accountId);
@@ -270,11 +293,10 @@ export class FuelSaleRepository {
         paid = paid.plus(money(payment.amount));
       }
       if (!paid.equals(amount)) {
+        // A discount does not change what is due, so the message never offers
+        // one as the reason the figures differ.
         throw new BusinessError("PAYMENTS_DO_NOT_MATCH",
-          priced.discountAmount.isZero()
-            ? `The payments add up to ${paid.toString()}, but the sale is ${amount.toString()}`
-            : `The payments add up to ${paid.toString()}, but the sale is ${priced.grossAmount.toString()}`
-              + ` less ${priced.discountAmount.toString()} discount — ${amount.toString()} to collect`,
+          `The payments add up to ${paid.toString()}, but the sale is ${amount.toString()}`,
           422, { ...presentDiscount(priced), paidAmount: Number(paid) });
       }
 
@@ -313,12 +335,13 @@ export class FuelSaleRepository {
 
   /**
    * What a sale of this volume from this tank would come to, before it is
-   * recorded: the price in force, the gross the pump will show, the discount
-   * in force for that volume, and what is left to collect.
+   * recorded: the price in force, the amount the pump will show, and the
+   * discount recorded against it.
    *
-   * The sale form asks for this as the litres are typed, so the payments it
-   * sends already add up to the discounted amount — and `record` works the
-   * same figures out again for itself, so the answer here is never trusted.
+   * The discount is **not deducted**, so `amount` is the gross and that is
+   * what the payments must add up to. The sale form asks for this as the
+   * litres are typed, and `record` works the same figures out again for
+   * itself, so the answer here is never trusted.
    */
   async quote(siteId: string, query: FuelSaleQuoteQuery) {
     const cuve = await this.db.tblCuve.findFirst({
@@ -364,7 +387,8 @@ export class FuelSaleRepository {
   async report(siteId: string, query: FuelSaleReportQuery) {
     const period = await this.period(siteId, query);
     const where = this.where(siteId, { ...period, shiftId: query.shiftId });
-    const sums = { _count: { _all: true }, _sum: { quantity: true, amount: true, discountAmount: true } } as const;
+    const sums = { _count: { _all: true },
+      _sum: { quantity: true, amount: true, discountAmount: true, subsidyAmount: true } } as const;
     const days = { gte: toDate(period.startDate), lte: toDate(period.endDate) };
 
     const [site, totals, byDay, byShift, byPump, byNozzle, bySeller, byAccount, roster, siteShifts, cuves] = await Promise.all([
@@ -425,7 +449,7 @@ export class FuelSaleRepository {
       if (!row) {
         row = { dateOn, shift: shiftId ? shiftOf.get(shiftId) ?? null : null,
           rostered: 0, chief: null, supporter: null, saleCount: 0, quantity: 0, amount: 0,
-          discountAmount: 0, grossAmount: 0, averagePrice: 0 };
+          discountAmount: 0, subsidyAmount: 0, grossAmount: 0, averagePrice: 0 };
         shiftRows.set(key, row);
       }
       return row;
@@ -446,7 +470,8 @@ export class FuelSaleRepository {
     const dayRows = new Map(byDay.map((group) => [fromDate(group.dateOn), figures(group)]));
     for (const dateOn of rosteredByDay.keys()) {
       if (!dayRows.has(dateOn)) {
-        dayRows.set(dateOn, { saleCount: 0, quantity: 0, amount: 0, discountAmount: 0, grossAmount: 0, averagePrice: 0 });
+        dayRows.set(dateOn, { saleCount: 0, quantity: 0, amount: 0,
+          discountAmount: 0, subsidyAmount: 0, grossAmount: 0, averagePrice: 0 });
       }
     }
 
@@ -457,16 +482,18 @@ export class FuelSaleRepository {
       ...figures(group),
     }));
     const items = new Map<string, { item: (typeof cuves)[number]["item"]; saleCount: number;
-      quantity: Prisma.Decimal; amount: Prisma.Decimal; discountAmount: Prisma.Decimal }>();
+      quantity: Prisma.Decimal; amount: Prisma.Decimal;
+      discountAmount: Prisma.Decimal; subsidyAmount: Prisma.Decimal }>();
     cuves.forEach((cuve, index) => {
       const group = byCuve[index];
       if (group._count._all === 0) return;
       const row = items.get(cuve.item.id)
-        ?? { item: cuve.item, saleCount: 0, quantity: zero, amount: zero, discountAmount: zero };
+        ?? { item: cuve.item, saleCount: 0, quantity: zero, amount: zero, discountAmount: zero, subsidyAmount: zero };
       row.saleCount += group._count._all;
       row.quantity = row.quantity.plus(group._sum.quantity ?? 0);
       row.amount = row.amount.plus(group._sum.amount ?? 0);
       row.discountAmount = row.discountAmount.plus(group._sum.discountAmount ?? 0);
+      row.subsidyAmount = row.subsidyAmount.plus(group._sum.subsidyAmount ?? 0);
       items.set(cuve.item.id, row);
     });
 
@@ -477,7 +504,8 @@ export class FuelSaleRepository {
       totals: figures(totals),
       byItem: byAmount([...items.values()].map((row) => ({
         item: row.item, saleCount: row.saleCount, quantity: Number(row.quantity), amount: Number(row.amount),
-        discountAmount: Number(row.discountAmount), grossAmount: Number(row.amount.plus(row.discountAmount)),
+        discountAmount: Number(row.discountAmount), subsidyAmount: Number(row.subsidyAmount),
+        grossAmount: Number(row.amount),
         averagePrice: row.quantity.isZero() ? 0 : Number(row.amount.div(row.quantity).toDecimalPlaces(2)),
       }))),
       byDay: [...dayRows.entries()]

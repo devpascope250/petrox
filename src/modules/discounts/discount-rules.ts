@@ -29,11 +29,21 @@ export type SaleDiscount = {
   tier: { id: string; from: Prisma.Decimal; to: Prisma.Decimal } | null;
 };
 
-/** What a sale is worth before and after a discount, and the discount itself. */
+/**
+ * What a sale is worth, and the discount recorded against it.
+ *
+ * 🔴 **A discount is recorded, not deducted.** The customer pays what the pump
+ * shows; `discountAmount` is written down beside it, to be settled or claimed
+ * later. So `amount` — what is collected, what the payments must add up to and
+ * what a card is charged — **is the same figure as `grossAmount`**. Both names
+ * are kept because a receipt shows the two separately, and because a sale
+ * recorded before this rule changed still has an `amount` net of its discount.
+ */
 export type DiscountedSale = {
   grossAmount: Prisma.Decimal;
+  /** Recorded against the sale, never taken off what is collected. */
   discountAmount: Prisma.Decimal;
-  /** What the customer owes: gross less the discount, never below zero. */
+  /** What the customer owes — the full gross. */
   amount: Prisma.Decimal;
   discount: SaleDiscount | null;
 };
@@ -119,13 +129,13 @@ export function bestDiscount(discounts: Candidate[], quantity: Prisma.Decimal, g
 }
 
 /**
- * What a sale comes to once any discount in force is applied: the gross the
- * pump shows (`quantity × unitPrice`), what a discount takes off it, and what
- * is left to collect.
+ * What a sale comes to, and the discount in force for it: the gross the pump
+ * shows (`quantity × unitPrice`), the discount **recorded** against it, and
+ * what is collected — which is the gross, because a discount is not deducted.
  *
  * The figures are returned to be **copied onto the sale** — `discountRate` and
  * `discountAmount` — so editing or retiring a discount later cannot rewrite
- * what a sale was charged.
+ * what was recorded for a sale already made.
  */
 export async function priceWithDiscount(db: Db, input: {
   siteId: string;
@@ -137,7 +147,8 @@ export async function priceWithDiscount(db: Db, input: {
   const grossAmount = money(input.quantity.times(input.unitPrice));
   const discount = bestDiscount(await discountsInForce(db, input), input.quantity, grossAmount);
   const discountAmount = discount?.amount ?? new Prisma.Decimal(0);
-  return { grossAmount, discountAmount, amount: money(grossAmount.minus(discountAmount)), discount };
+  // `amount` is the gross: the discount is written down, not taken off.
+  return { grossAmount, discountAmount, amount: grossAmount, discount };
 }
 
 /** The discount columns a sale carries, from what `priceWithDiscount` worked out. */

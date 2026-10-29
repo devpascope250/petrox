@@ -163,6 +163,8 @@ model Client {
   sector              String?
   sectorLocation      Location?            @relation("SectorLocationRef", fields: [sector], references: [id], onDelete: SetNull)
   status              Boolean              @default(true)
+  /// Whether this client may earn a subsidy at all. The car at the pump must
+  /// be allowed one too, so both flags have to be on.
   subsidyAllowed      Boolean              @default(false)
   /// The client's PIN, hashed: they enter it at the pump to pay with their coupons.
   pinHash             String?
@@ -1142,8 +1144,17 @@ model FuelSale {
   discount        Discount?         @relation(fields: [discountId], references: [id], onDelete: SetNull)
   /// The percentage off, as the discount stood when the sale was priced.
   discountRate    Decimal           @default(0.00) @db.Decimal(18, 2)
-  /// What the discount took off: `amount` is already net of it.
+  /// What the discount came to. **Recorded, not deducted**: `amount` is the
+  /// full gross, and this is written down beside it for later.
   discountAmount  Decimal           @default(0.00) @db.Decimal(18, 2)
+  /// The subsidy the sale earned, kept only to trace it back.
+  subsidyId       String?
+  subsidy         Subsidy?          @relation(fields: [subsidyId], references: [id], onDelete: SetNull)
+  /// Towards each unit sold, as the subsidy stood when the sale was priced —
+  /// a fixed amount a litre, never a percentage.
+  subsidyRate     Decimal           @default(0.00) @db.Decimal(12, 2)
+  /// `quantity × subsidyRate`. Recorded, never taken off what was collected.
+  subsidyAmount   Decimal           @default(0.00) @db.Decimal(18, 2)
   note            String?
   createdBy       String
   user            User              @relation(fields: [createdBy], references: [id])
@@ -1160,6 +1171,7 @@ model FuelSale {
   @@index([shiftId])
   @@index([createdAt])
   @@index([discountId])
+  @@index([subsidyId])
 }
 
 /// Where a sale's money went. A sale can be split across several accounts.
@@ -1713,6 +1725,10 @@ model ClientCar {
   item                     Item                      @relation(fields: [itemId], references: [id])
   tancapacity              Decimal                   @db.Decimal(18, 2)
   status                   StatusType                @default(active)
+  /// Whether this car may earn the product's subsidy. The client must be
+  /// allowed one as well, and the car must take the product being pumped: one
+  /// allowed diesel earns nothing on a tank of petrol.
+  subsidyAllowed           Boolean                   @default(false)
   createdAt                DateTime                  @default(now())
   updatedAt                DateTime                  @updatedAt
   clientCarCardAssignments ClientCarCardAssignment[]
@@ -1756,7 +1772,8 @@ model GeneralTransaction {
   amount                     Decimal                     @default(0.0) @db.Decimal(18, 2)
   siteId                     String
   site                       TblSite                     @relation(fields: [siteId], references: [id])
-  /// What a discount took off: `amount` is already net of it.
+  /// What the discount came to. **Recorded, not deducted**: `amount` is the
+  /// full gross, and this is written down beside it for later.
   discountAmount             Decimal                     @default(0.0) @db.Decimal(18, 2)
   /// The percentage off, as the discount stood when the sale was priced.
   discountRate               Decimal                     @default(0.00) @db.Decimal(18, 2)
@@ -1772,8 +1789,14 @@ model GeneralTransaction {
   comments                   String?
   printStatus                Boolean                     @default(false)
   appVersion                 String?
+  /// Towards each unit sold, as the subsidy stood when the sale was priced —
+  /// a fixed amount a litre, never a percentage.
   subsidyRate                Decimal                     @default(0.0) @db.Decimal(12, 2)
+  /// `quantity × subsidyRate`. Recorded, never taken off what was collected.
   subsidyAmount              Decimal                     @default(0.0) @db.Decimal(18, 2)
+  /// The subsidy the sale earned, kept only to trace it back.
+  subsidyId                  String?
+  subsidy                    Subsidy?                    @relation(fields: [subsidyId], references: [id], onDelete: SetNull)
   /// initiated by the POS, then confirmed once (or cancelled).
   status                     GeneralTransactionStatus    @default(initiated)
   /// When an initiated sale is cancelled if not confirmed by then; empty = never
@@ -1794,6 +1817,7 @@ model GeneralTransaction {
   @@index([siteId, id])
   @@index([status])
   @@index([discountId])
+  @@index([subsidyId])
 }
 
 /// What the state pays towards a litre of a product, for a period.
@@ -1819,6 +1843,10 @@ model Subsidy {
   user      User       @relation(fields: [createdBy], references: [id])
   createdAt DateTime   @default(now())
   updated   DateTime   @updatedAt
+
+  /// The sales that earned it; each keeps its own copy of the figures.
+  fuelSales           FuelSale[]
+  generalTransactions GeneralTransaction[]
 
   @@index([itemId, status])
   @@index([siteId])

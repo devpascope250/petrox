@@ -2,6 +2,7 @@ import { Prisma, type GeneralTransactionStatus, type PrismaClient } from "../../
 import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js";
 import { staticUrl } from "../../../utils/static-url.js";
 import { discountColumns, presentDiscount, priceWithDiscount } from "../../discounts/discount-rules.js";
+import { presentSaleSubsidy, subsidyColumns, subsidyForSale } from "../../subsidies/subsidy-rules.js";
 import { accountOfType, attendantBy, checkAmount, checkPayments, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "./sale-rules.js";
 import type { ConfirmTransactionInput, InitiateTransactionInput } from "./transactions.schema.js";
 
@@ -139,13 +140,20 @@ function presentRow({  generalTransactionPayments, couponRedemptions, user, ...r
     // card: cardCopy ? (cardCopy.copyCard ?? cardCopy.card) : null,
     quantity: Number(row.quantity),
     unitPrice: Number(row.unitPrice),
-    /** What is collected: already net of any discount. */
+    /** What was collected — the full pump amount. */
     amount: Number(row.amount),
+    /** The percentage off, recorded against the sale. */
     discountRate: Number(row.discountRate),
+    /**
+     * What the discount came to. **Recorded, not deducted**: it was not taken
+     * off `amount`, which is why `grossAmount` is the same figure.
+     */
     discountAmount: Number(row.discountAmount),
-    /** What the pump display showed, before the discount. */
-    grossAmount: Number(row.amount.plus(row.discountAmount)),
+    /** What the pump display showed — the same as `amount`. */
+    grossAmount: Number(row.amount),
+    /** Towards each unit sold: a fixed amount a litre, not a percentage. */
     subsidyRate: Number(row.subsidyRate),
+    /** `quantity × subsidyRate`, recorded the same way. */
     subsidyAmount: Number(row.subsidyAmount),
     // shift: shift ? { id: shift.id, name: shift.shift.name } : null,
     /** The attendant who confirmed it; `null` until the sale is confirmed. */
@@ -340,19 +348,21 @@ export class MobileTransactionsRepository {
 
   /**
    * What an open sale comes to at a given volume: the price fixed when it
-   * started, the gross the pump display will show, the discount in force for
-   * that volume (and for the sale's client, when it has one), and what is
-   * left to collect.
+   * started, the amount the pump display will show, and the discount and
+   * subsidy recorded against it.
    *
-   * The POS asks for this before confirming, so the attendant collects — and
-   * sends as `payments` — the discounted amount. `confirm` works the same
-   * figures out again for itself, so this answer is never trusted.
+   * The POS asks for this before confirming, so the receipt can show the two
+   * figures. **Both are recorded, not deducted**: `amount` is the full gross,
+   * and that is what the attendant collects and sends as `payments`.
+   * `confirm` works the same figures out again for itself, so this answer is
+   * never trusted.
    */
   async quote(code: string, siteId: string, quantity: number) {
     await this.expire({ transactionCode: code });
     const sale = await this.db.generalTransaction.findFirst({
       where: { transactionCode: code, siteId },
       select: { transactionCode: true, status: true, unitPrice: true, clientId: true,
+        itemId: true, platNumber: true, cardCopyId: true,
         client: { select: { id: true, clientCode: true, name: true } } },
     });
     if (!sale) throw new NotFoundError("Transaction");
@@ -362,12 +372,17 @@ export class MobileTransactionsRepository {
     const priced = await priceWithDiscount(this.db, {
       siteId, clientId: sale.clientId, quantity: money(quantity), unitPrice: sale.unitPrice,
     });
+    const subsidised = await subsidyForSale(this.db, {
+      itemId: sale.itemId, siteId, quantity: money(quantity),
+      clientId: sale.clientId, cardCopyId: sale.cardCopyId, platNumber: sale.platNumber,
+    });
     return {
       transactionCode: sale.transactionCode,
       client: sale.client,
       quantity: Number(money(quantity)),
       unitPrice: Number(sale.unitPrice),
       ...presentDiscount(priced),
+      ...presentSaleSubsidy(subsidised),
     };
   }
 
@@ -410,7 +425,7 @@ export class MobileTransactionsRepository {
       const sale = await tx.generalTransaction.findFirst({
         where: { transactionCode: code, siteId },
         select: { id: true, status: true, unitPrice: true, cuveId: true, cardCopyId: true, expiresAt: true,
-          clientId: true,
+          clientId: true, itemId: true, platNumber: true,
           cuve: { select: { name: true } },
           nozzle: { select: { id: true, name: true, pump: { select: { id: true, name: true } } } },
           cardCopy: { select: { cardId: true,
@@ -458,13 +473,22 @@ export class MobileTransactionsRepository {
           `The price of this sale is ${sale.unitPrice.toString()}, not ${unitPrice.toString()}`,
           422, { unitPrice: sale.unitPrice.toFixed(2) });
       }
-      // `amount` is what the pump display shows, before any discount.
+      // `amount` is what the pump display shows.
       checkAmount(quantity, unitPrice, amount);
-      // What a discount in force takes off this volume, for this client at
-      // this site. Worked out here and not at `initiate`, because until the
-      // fuel is in the car nobody knows how many litres it was.
+      // The discount in force for this volume, for this client at this site,
+      // and the subsidy the client's car earns on this product. Both are
+      // worked out here and not at `initiate`, because until the fuel is in
+      // the car nobody knows how many litres it was.
       const priced = await priceWithDiscount(tx, { siteId, clientId: sale.clientId, quantity, unitPrice });
-      /** What is actually collected: the pump's amount less the discount. */
+      const subsidised = await subsidyForSale(tx, {
+        itemId: sale.itemId, siteId, quantity,
+        clientId: sale.clientId, cardCopyId: sale.cardCopyId, platNumber: sale.platNumber,
+      });
+      /**
+       * What is actually collected: the pump's own amount. A discount and a
+       * subsidy are **recorded, not deducted** — they are settled later, so
+       * the customer pays, and the card is charged, what the pump showed.
+       */
       const due = priced.amount;
       const payments = input.payments ?? [];
       // A card sale is paid by the card, in full, and by nothing else: taking
@@ -478,12 +502,11 @@ export class MobileTransactionsRepository {
       if (payments.length > 0) {
         const paid = await checkPayments(tx, payments, siteId);
         if (!paid.equals(due)) {
+          // A discount does not change what is due, so the message never
+          // offers one as the reason the figures differ.
           throw new BusinessError("PAYMENTS_DO_NOT_MATCH",
-            priced.discountAmount.isZero()
-              ? `The payments add up to ${paid.toString()}, but the sale is ${due.toString()}`
-              : `The payments add up to ${paid.toString()}, but the sale is ${priced.grossAmount.toString()}`
-                + ` less ${priced.discountAmount.toString()} discount — ${due.toString()} to collect`,
-            422, { ...presentDiscount(priced), paidAmount: Number(paid) });
+            `The payments add up to ${paid.toString()}, but the sale is ${due.toString()}`,
+            422, { ...presentDiscount(priced), ...presentSaleSubsidy(subsidised), paidAmount: Number(paid) });
         }
       }
       // What the card pays is recorded like any other payment, so the sale is
@@ -503,7 +526,8 @@ export class MobileTransactionsRepository {
       const fuelSale = await tx.fuelSale.create({
         data: {
           siteId, pumpId: sale.nozzle.pump.id, nozzleId: sale.nozzle.id, shiftId: input.shiftId ?? rotaShiftId,
-          quantity, unitPrice: sale.unitPrice, amount: due, ...discountColumns(priced),
+          quantity, unitPrice: sale.unitPrice, amount: due,
+          ...discountColumns(priced), ...subsidyColumns(subsidised),
           note: `POS sale ${code}`, createdBy: doneBy,
           dateOn: new Date(`${workingDay}T00:00:00.000Z`),
           payments: { create: cardPayment.length ? cardPayment : payments.map((payment, index) => ({
@@ -533,7 +557,7 @@ export class MobileTransactionsRepository {
         where: { id: sale.id },
         data: {
           // The attendant's shift on the rota, unless the POS names one.
-          quantity, amount: due, ...discountColumns(priced),
+          quantity, amount: due, ...discountColumns(priced), ...subsidyColumns(subsidised),
           shiftId: input.shiftId ?? rotaShiftId, displayPictureUrl: input.displayPictureUrl ?? null,
           comments: input.comments ?? null, ...(input.appVersion ? { appVersion: input.appVersion } : {}),
           ...(input.printStatus !== undefined ? { printStatus: input.printStatus } : {}),

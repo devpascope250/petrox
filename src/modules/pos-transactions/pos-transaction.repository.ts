@@ -58,11 +58,16 @@ function presentRow<T extends Row>({ cardCopy, ...row }: T) {
     ...row,
     quantity: Number(row.quantity),
     unitPrice: Number(row.unitPrice),
-    /** What was collected: already net of any discount. */
+    /** What was collected — the full pump amount. */
     amount: Number(row.amount),
+    /**
+     * What the discount came to. **Recorded, not deducted**: it was not taken
+     * off `amount`, which is why `grossAmount` is the same figure.
+     */
     discountAmount: Number(row.discountAmount),
-    /** What the pump display showed, before the discount. */
-    grossAmount: Number(row.amount.plus(row.discountAmount)),
+    /** What the pump display showed — the same as `amount`. */
+    grossAmount: Number(row.amount),
+    /** `quantity × subsidyRate`, recorded the same way. */
     subsidyAmount: Number(row.subsidyAmount),
     card: cardCopy ? {
       cardCopyId: cardCopy.id.toString(),
@@ -156,7 +161,9 @@ export class PosTransactionRepository {
     const { cardCopy } = sale;
     return {
       ...presentRow(rest),
+      /** Towards each unit sold: a fixed amount a litre, not a percentage. */
       subsidyRate: Number(sale.subsidyRate),
+      /** The percentage off, recorded against the sale. */
       discountRate: Number(sale.discountRate),
       /** The discount that priced it — the figures above are the sale's own. */
       discount: sale.discount && { ...sale.discount, value: Number(sale.discount.value) },
