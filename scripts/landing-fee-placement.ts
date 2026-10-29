@@ -145,6 +145,44 @@ function clashes() {
 
 const money = (value: string) => Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 });
 
+const MIGRATION = "20261028120000_fees_on_central_stock";
+
+/**
+ * How to finish, which depends on what Prisma thinks of the migration.
+ *
+ * Marking a failed migration `--applied` (Prisma offers it as the "I fixed it
+ * by hand" option) tells Prisma it is done, so `migrate deploy` will never run
+ * the rest of it — the table is left half-changed and the only way on is to
+ * run the migration body again. Printing the wrong one of these two is how a
+ * database ends up stuck, so the record is read rather than assumed.
+ */
+async function howToFinish() {
+  const [record] = await db.$queryRawUnsafe<Array<{ finished: number; rolledBack: number }>>(
+    `SELECT finished_at IS NOT NULL AS finished, rolled_back_at IS NOT NULL AS rolledBack
+     FROM _prisma_migrations WHERE migration_name = ? ORDER BY started_at DESC LIMIT 1`,
+    MIGRATION,
+  );
+
+  if (!record || Number(record.rolledBack) === 1) {
+    return ["  npx prisma migrate deploy"];
+  }
+  if (Number(record.finished) === 1) {
+    // Recorded as done, so deploy skips it: run the body itself. Every step of
+    // it checks the database first, so what already happened is not repeated.
+    return [
+      `  # Prisma has ${MIGRATION} recorded as applied, so`,
+      "  # `migrate deploy` will skip it. Run the migration body instead:",
+      "  npx prisma db execute \\",
+      `    --file prisma/migrations/${MIGRATION}/migration.sql \\`,
+      "    --schema prisma/schema.prisma",
+    ];
+  }
+  return [
+    `  npx prisma migrate resolve --rolled-back "${MIGRATION}"`,
+    "  npx prisma migrate deploy",
+  ];
+}
+
 async function main() {
   const present = await columns();
   if (!present.has("stockId")) {
@@ -221,12 +259,17 @@ async function main() {
     console.log("central stock receipt once the load is received.");
   }
 
-  if (rows.length > 0 && !has("--discard")) {
+  const left = await db.$queryRawUnsafe<Array<{ unplaced: bigint }>>(
+    "SELECT COUNT(*) AS unplaced FROM ChainStockFee WHERE centralStockId IS NULL");
+  const remaining = Number(left[0]?.unplaced ?? 0);
+
+  if (remaining > 0) {
     console.log("Next: place them (`--place-earliest`), or export and discard them");
-    console.log("(`--export fees.json --discard`), then:");
-    console.log('  npx prisma migrate resolve --rolled-back "20261028120000_fees_on_central_stock"');
-    console.log("  npx prisma migrate deploy");
+    console.log("(`--export fees.json --discard`). Then finish the migration with:");
+  } else {
+    console.log("Every charge is placed. Finish the migration with:");
   }
+  for (const line of await howToFinish()) console.log(line);
 }
 
 main()
