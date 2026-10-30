@@ -15,6 +15,7 @@ const pumpAttendantSelect = {
   id: true,
   pumpId: true,
   timeTableId: true,
+  fromPlanId: true,
   createdAt: true,
   pump: { select: { id: true, name: true } },
   timeTable: {
@@ -60,6 +61,8 @@ function present(row: Row) {
     site: timeTable.site,
     user: timeTable.user,
     siteShift: { id: timeTable.shiftSite.id, shift: presentShift(timeTable.shiftSite.shift) },
+    /** Written from the weekday plan, rather than arranged for this day alone. */
+    fromPlan: row.fromPlanId !== null,
     /** The roster row itself: its role for the day, and whether they turned up. */
     roster: {
       id: timeTable.id, status: timeTable.status,
@@ -189,6 +192,9 @@ export class PumpAttendantRepository {
         where: { id },
         data: {
           pumpId: data.pumpId,
+          // Changed by hand, so the weekday plan no longer owns this day:
+          // applying the plan again will leave it exactly as it is.
+          fromPlanId: null,
           pumpAttendantNozzles: { create: [...new Set(data.nozzleIds)].map((nozzleId) => ({ nozzleId })) },
         },
         select: pumpAttendantSelect,

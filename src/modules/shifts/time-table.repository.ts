@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { applyPlans } from "./pump-plan-apply.js";
 import { CreateTimeTableSchema, TimeTableQuerySchema } from "./time-table.schema.js";
 import { dayOfWeek, fromDate, presentShift, shiftWithHours, toDate } from "./shift-scope.js";
 
@@ -149,7 +150,11 @@ export class TimeTableRepository {
     return this.db.$transaction(async (tx) => {
       const replaced = await this.takeRolesFromOthers(tx, fields, fields);
       const row = await tx.tblTimeTable.create({ data: { ...fields, status: 0 }, select: timeTableSelect });
-      return { ...present(row), replaced };
+      // The standing arrangement for that weekday, put into effect: rostering
+      // someone is all it takes to put them on their pump.
+      const fromPlan = await applyPlans(tx, [{ id: row.id, userId: fields.userId,
+        siteShiftId: fields.siteShiftId, days: fields.days }]);
+      return { ...present(row), replaced, fromPlan };
     });
   }
 
@@ -246,6 +251,13 @@ export class TimeTableRepository {
       }
 
       if (rows.length) await tx.tblTimeTable.createMany({ data: rows });
+      // Every day just rostered gets whatever its weekday's plan says, so a
+      // copied week arrives with its pumps already on it.
+      const written = await tx.tblTimeTable.findMany({
+        where: { dateOn: { gte: targetFrom, lte: targetTo }, ...(siteId ? { siteId } : {}) },
+        select: { id: true, userId: true, siteShiftId: true, days: true },
+      });
+      const fromPlan = await applyPlans(tx, written);
       return {
         from: { startDate: fromDate(from), endDate: fromDate(to) },
         to: { startDate: fromDate(targetFrom), endDate: fromDate(targetTo) },
@@ -253,6 +265,8 @@ export class TimeTableRepository {
         copied: rows.length,
         skipped,
         rolesNotCopied,
+        /** Pump assignments written from the weekday plans. */
+        fromPlan,
       };
     });
   }

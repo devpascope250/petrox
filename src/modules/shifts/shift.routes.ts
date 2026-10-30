@@ -10,6 +10,9 @@ import { SiteShiftRepository } from "./site-shift.repository.js";
 import {
   copyPumpAttendantWeekSchema, createPumpAttendantSchema, pumpAttendantQuerySchema, updatePumpAttendantSchema,
 } from "./pump-attendant.schema.js";
+import { PumpPlanRepository } from "./pump-plan.repository.js";
+import { createPumpPlanSchema, pumpPlanQuerySchema, updatePumpPlanSchema } from "./pump-plan.schema.js";
+import { PumpPlanService } from "./pump-plan.service.js";
 import { PumpAttendantService } from "./pump-attendant.service.js";
 import { PumpAttendantRepository } from "./pump-attendant.repository.js";
 import { copyTimeTableWeekSchema, createTimeTableSchema, timeTableQuerySchema, timeTableRoleSchema, timeTableStatusSchema } from "./time-table.schema.js";
@@ -27,7 +30,9 @@ import { TimeTableRepository } from "./time-table.repository.js";
 const routes: FastifyPluginAsync = async (app) => {
   const shifts = new ShiftService(new ShiftRepository(app.prisma), app.config);
   const siteShifts = new SiteShiftService(new SiteShiftRepository(app.prisma), app.config);
-  const attendants = new PumpAttendantService(new PumpAttendantRepository(app.prisma), app.config);
+  const attendantRepo = new PumpAttendantRepository(app.prisma);
+  const attendants = new PumpAttendantService(attendantRepo, app.config);
+  const plans = new PumpPlanService(new PumpPlanRepository(app.prisma), attendantRepo);
   const timeTable = new TimeTableService(new TimeTableRepository(app.prisma), app.config);
 
   const read = { preHandler: [app.authenticate, app.authorize("shifts.read", "shifts.manage")] };
@@ -79,6 +84,25 @@ const routes: FastifyPluginAsync = async (app) => {
     success(await attendants.copyWeek(parseInput(copyPumpAttendantWeekSchema, request.body), request.contextUser!)));
   app.delete("/attendants/:id", remove, async (request) =>
     success(await attendants.delete(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
+
+  /* ------------------------ Pump plans (weekly) ------------------------
+   * The standing arrangement — who is usually on which pump on a weekday of a
+   * shift. Rostering someone then writes their pump for that date from it, so
+   * the time table only ever needs the pompist, the day and the shift. */
+  app.get("/attendant-plans", read, async (request) =>
+    success(await plans.list(parseInput(pumpPlanQuerySchema, request.query), request.contextUser!)));
+  app.get("/attendant-plans/:id", read, async (request) =>
+    success(await plans.find(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
+  app.post("/attendant-plans", create, async (request, reply) =>
+    created(reply, await plans.create(parseInput(createPumpPlanSchema, request.body), request.contextUser!)));
+  app.put("/attendant-plans/:id", edit, async (request) =>
+    success(await plans.update(
+      parseInput(idParamsSchema, request.params).id,
+      parseInput(updatePumpPlanSchema, request.body),
+      request.contextUser!,
+    )));
+  app.delete("/attendant-plans/:id", remove, async (request) =>
+    success(await plans.delete(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
 
   /* ----------------------------- Time table ---------------------------- */
   app.get("/time-table", read, async (request) =>

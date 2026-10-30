@@ -137,6 +137,8 @@ model User {
   createdBypumpIndexes   PumpIndex[]        @relation("pumpIndexCreatedBy")
   confirmedByPumpIndexes PumpIndex[]        @relation("pumpIndexConfirmed")
   attendedPumpIndexes    PumpIndex[]        @relation("pumpIndexAttendant")
+  pumpPlans              PumpAttendantPlan[] @relation("pumpPlanAttendant")
+  pumpPlansCreated       PumpAttendantPlan[] @relation("pumpPlanCreatedBy")
 
   @@index([roleId])
   @@index([siteId])
@@ -984,6 +986,7 @@ model TblSite {
   couponRedemptions CouponRedemption[]
   subsidies         Subsidy[]
   pumpIndexes       PumpIndex[]
+  pumpAttendantPlans PumpAttendantPlan[]
 
   @@index([id])
 }
@@ -1207,6 +1210,7 @@ model TblPump {
   displays            TblDisplay[]
   nozzles             TblNozzle[]
   tblPumpAttendants   TblPumpAttendant[]
+  pumpAttendantPlans  PumpAttendantPlan[]
   fuelSales           FuelSale[]
   generalTransactions GeneralTransaction[]
   pumpIndexes         PumpIndex[]
@@ -1244,6 +1248,7 @@ model TblNozzle {
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
   pumpAttendantNozzles PumpAttendantNozzle[]
+  pumpPlanNozzles      PumpAttendantPlanNozzle[]
   fuelSales            FuelSale[]
   generalTransactions  GeneralTransaction[]
   pumpIndexes          PumpIndex[]
@@ -1656,6 +1661,7 @@ model TblShiftSite {
   turnonAt            DateTime             @default(now())
   status              Int                  @default(1)
   tblTimeTables       TblTimeTable[]
+  pumpAttendantPlans  PumpAttendantPlan[]
   fuelSales           FuelSale[]
   generalTransactions GeneralTransaction[]
   pumpIndexes         PumpIndex[]
@@ -1667,6 +1673,59 @@ model TblShiftSite {
 /// Which pump and nozzles an attendant handles in a site shift. Not which
 /// days he works: the time table (`TblTimeTable`) rosters people by date, and
 /// that is what a sale checks.
+/// The standing arrangement: which pump an attendant works, and its nozzles,
+/// on a **weekday** of a shift — "Jean is on PUMP1, nozzles 1 and 5, Mondays,
+/// Shift 1".
+///
+/// A plan is not a record of anything: it is how the rota gets filled in.
+/// Rostering someone on a date writes the pump assignment for that date from
+/// the plan that matches its weekday, so the time table only ever needs the
+/// pompist, the day and the shift. What was actually worked stays on
+/// `TblPumpAttendant`, per day, where editing a plan cannot rewrite it.
+model PumpAttendantPlan {
+  id          String                    @id @default(uuid())
+  siteId      String
+  site        TblSite                   @relation(fields: [siteId], references: [id])
+  siteShiftId String
+  siteShift   TblShiftSite              @relation(fields: [siteShiftId], references: [id])
+  userId      String
+  user        User                      @relation(name: "pumpPlanAttendant", fields: [userId], references: [id])
+  pumpId      String
+  pump        TblPump                   @relation(fields: [pumpId], references: [id])
+  /// 1 = Monday … 7 = Sunday, as `TblTimeTable.days` counts them.
+  weekday     Int
+  status      StatusType                @default(active)
+  createdBy   String
+  user2       User                      @relation(name: "pumpPlanCreatedBy", fields: [createdBy], references: [id])
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+  nozzles     PumpAttendantPlanNozzle[]
+  /// The days written from it, while they still say so.
+  wroteDays   TblPumpAttendant[]
+
+  /// One plan per person per weekday of a shift per pump.
+  @@unique([siteShiftId, userId, weekday, pumpId])
+  @@index([siteId, weekday])
+  @@index([siteShiftId])
+  @@index([userId])
+  @@index([pumpId])
+  @@index([createdBy])
+}
+
+model PumpAttendantPlanNozzle {
+  id        String            @id @default(uuid())
+  planId    String
+  /// Cascades: the nozzles are part of the plan, not records of their own.
+  plan      PumpAttendantPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  nozzleId  String
+  nozzle    TblNozzle         @relation(fields: [nozzleId], references: [id])
+  createdAt DateTime          @default(now())
+
+  @@unique([planId, nozzleId])
+  @@index([planId])
+  @@index([nozzleId])
+}
+
 /// Which pump an attendant works, and the nozzles of it, **on one rostered
 /// day**.
 ///
@@ -1682,6 +1741,12 @@ model TblPumpAttendant {
   /// The rostered day this assignment belongs to.
   timeTableId          String
   timeTable            TblTimeTable          @relation(fields: [timeTableId], references: [id], onDelete: Cascade)
+  /// The weekday plan that wrote it, if one did. Cleared the moment somebody
+  /// changes the day by hand — from then on it is theirs, and applying the
+  /// plan again leaves it alone. Cleared too if the plan is deleted: the day
+  /// was still worked.
+  fromPlanId           String?
+  fromPlan             PumpAttendantPlan?    @relation(fields: [fromPlanId], references: [id], onDelete: SetNull)
   createdAt            DateTime              @default(now())
   pumpAttendantNozzles PumpAttendantNozzle[]
 
@@ -1689,6 +1754,7 @@ model TblPumpAttendant {
   @@unique([timeTableId, pumpId])
   @@index([pumpId])
   @@index([timeTableId])
+  @@index([fromPlanId])
 }
 
 model PumpAttendantNozzle {
