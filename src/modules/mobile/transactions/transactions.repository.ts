@@ -3,7 +3,7 @@ import { AppError, BusinessError, NotFoundError } from "../../../utils/errors.js
 import { staticUrl } from "../../../utils/static-url.js";
 import { discountColumns, presentDiscount, priceWithDiscount } from "../../discounts/discount-rules.js";
 import { presentSaleSubsidy, subsidyColumns, subsidyForSale } from "../../subsidies/subsidy-rules.js";
-import { accountOfType, attendantBy, checkAmount, checkPayments, drawFromTank, loadSaleNozzle, money, priceInForce, pumpAssignment } from "./sale-rules.js";
+import { accountOfType, attendantBy, checkAmount, checkPayments, drawFromTank, loadSaleNozzle, money, ownShift, priceInForce, pumpAssignment } from "./sale-rules.js";
 import type { ConfirmTransactionInput, InitiateTransactionInput } from "./transactions.schema.js";
 
 const CODE_PREFIX = "PSST";
@@ -413,10 +413,16 @@ export class MobileTransactionsRepository {
    * tank (never below zero) with a ledger row, the payments are recorded, a
    * card sale is charged to its main card (never below zero unless the card
    * type allows credit) with a card ledger row, a fuel sale is recorded as
-   * if entered on the web, and the sale is marked
-   * confirmed by the attendant, who must be on the rota for its pump and
-   * nozzle in the shift running now; the sale is recorded under that shift. Only one confirm can win: the row is claimed
-   * first, so a repeated or concurrent confirm finds it already taken.
+   * if entered on the web, and the sale is marked confirmed by the attendant.
+   *
+   * The attendant must be on the time table for a shift running now, and on
+   * the rota for the pump and the nozzle **the sale was started on** — both
+   * read from the sale itself, so a confirm cannot move it onto equipment they
+   * do hold. The sale is recorded under the shift those checks agree on, and a
+   * `shiftId` from the POS may only name that same shift.
+   *
+   * Only one confirm can win: the row is claimed first, so a repeated or
+   * concurrent confirm finds it already taken.
    */
   async confirm(code: string, siteId: string, input: ConfirmTransactionInput & { displayPictureUrl?: string; referenceDocs: Record<number, string> }, doneBy: string) {
     // An overdue sale is cancelled now rather than at the next sweep, so it cannot be confirmed late.
@@ -458,11 +464,9 @@ export class MobileTransactionsRepository {
         throw new BusinessError("DISPLAY_PICTURE_REQUIRED", "This card needs a picture of the pump display (displayPicture)");
       }
 
-      if (input.shiftId) {
-        const shift = await tx.tblShiftSite.findFirst({ where: { id: input.shiftId, siteId }, select: { status: true } });
-        if (!shift) throw new BusinessError("SHIFT_NOT_AT_SITE", "That shift does not run at this site");
-        if (shift.status !== 1) throw new BusinessError("SHIFT_SWITCHED_OFF", "That shift is switched off at this site");
-      }
+      // A `shiftId` from the POS may only name the shift the attendant is
+      // working now, which the time table and the rota have just agreed on.
+      await ownShift(tx, input.shiftId, rotaShiftId, siteId);
 
       const quantity = money(input.quantity);
       const unitPrice = money(input.unitPrice);
@@ -525,7 +529,9 @@ export class MobileTransactionsRepository {
       // records, so the litres are never counted twice.
       const fuelSale = await tx.fuelSale.create({
         data: {
-          siteId, pumpId: sale.nozzle.pump.id, nozzleId: sale.nozzle.id, shiftId: input.shiftId ?? rotaShiftId,
+          // The shift the attendant is working: `input.shiftId`, when the POS
+          // sends one, has already been checked to be this same shift.
+          siteId, pumpId: sale.nozzle.pump.id, nozzleId: sale.nozzle.id, shiftId: rotaShiftId,
           quantity, unitPrice: sale.unitPrice, amount: due,
           ...discountColumns(priced), ...subsidyColumns(subsidised),
           note: `POS sale ${code}`, createdBy: doneBy,
@@ -556,9 +562,9 @@ export class MobileTransactionsRepository {
       const row = await tx.generalTransaction.update({
         where: { id: sale.id },
         data: {
-          // The attendant's shift on the rota, unless the POS names one.
+          // The shift the attendant is working, from the time table and rota.
           quantity, amount: due, ...discountColumns(priced), ...subsidyColumns(subsidised),
-          shiftId: input.shiftId ?? rotaShiftId, displayPictureUrl: input.displayPictureUrl ?? null,
+          shiftId: rotaShiftId, displayPictureUrl: input.displayPictureUrl ?? null,
           comments: input.comments ?? null, ...(input.appVersion ? { appVersion: input.appVersion } : {}),
           ...(input.printStatus !== undefined ? { printStatus: input.printStatus } : {}),
         },

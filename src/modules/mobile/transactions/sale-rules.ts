@@ -203,6 +203,28 @@ export async function pumpAssignment(db: Db, userId: string, siteId: string,
   return { siteShiftId: onNozzle.siteShiftId, workingDay };
 }
 
+/**
+ * A `shiftId` the POS sends with a confirm: it may only name the shift the
+ * attendant is **working now**, the one the time table and the rota agreed on.
+ *
+ * It exists so a POS can state which of their shifts a sale belongs to, not so
+ * it can file the sale elsewhere: crediting the litres and the money to a
+ * shift nobody on it worked is how a shift's figures stop meaning anything.
+ * A shift that is not at the site, or switched off, is named as such first —
+ * those are mistakes of a different kind.
+ */
+export async function ownShift(db: Db, named: string | undefined, working: string, siteId: string) {
+  if (!named || named === working) return;
+  const shift = await db.tblShiftSite.findFirst({
+    where: { id: named, siteId },
+    select: { status: true, shift: { select: { name: true } } },
+  });
+  if (!shift) throw new BusinessError("SHIFT_NOT_AT_SITE", "That shift does not run at this site");
+  if (shift.status !== 1) throw new BusinessError("SHIFT_SWITCHED_OFF", "That shift is switched off at this site");
+  throw new BusinessError("SHIFT_NOT_YOURS",
+    `You are not working ${shift.shift.name} now, so this sale cannot be recorded under it`);
+}
+
 /** `<prefix>` + the moment, by the server's clock: `PSST20261008-092056-536`. */
 export function codeAt(prefix: string, at: Date) {
   const pad = (value: number, size = 2) => String(value).padStart(size, "0");

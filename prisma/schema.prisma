@@ -130,11 +130,13 @@ model User {
   itemPrices                 ItemPrice[]
   generalTransactions        GeneralTransaction[]
 
-  backupsRequested  Backup[]           @relation("BackupCreator")
-  backupsDownloaded Backup[]           @relation("BackupDownloader")
-  couponRedemptions CouponRedemption[] @relation("CouponRedeemer")
-  vehicleLocations  VehicleLocation[]
-  subsidies         Subsidy[]
+  backupsRequested       Backup[]           @relation("BackupCreator")
+  backupsDownloaded      Backup[]           @relation("BackupDownloader")
+  couponRedemptions      CouponRedemption[] @relation("CouponRedeemer")
+  vehicleLocations       VehicleLocation[]
+  subsidies              Subsidy[]
+  createdBypumpIndexes   PumpIndex[]        @relation("pumpIndexCreatedBy")
+  confirmedByPumpIndexes PumpIndex[]        @relation("pumpIndexConfirmed")
 
   @@index([roleId])
   @@index([siteId])
@@ -226,6 +228,7 @@ model Item {
   clientCars          ClientCar[]
   generalTransactions GeneralTransaction[]
   subsidies           Subsidy[]
+  pumpIndexes         PumpIndex[]
 
   @@index([id])
   @@index([parentId])
@@ -981,6 +984,7 @@ model TblSite {
 
   couponRedemptions CouponRedemption[]
   subsidies         Subsidy[]
+  pumpIndexes       PumpIndex[]
 
   @@index([id])
 }
@@ -1206,6 +1210,7 @@ model TblPump {
   tblPumpAttendants   TblPumpAttendant[]
   fuelSales           FuelSale[]
   generalTransactions GeneralTransaction[]
+  pumpIndexes         PumpIndex[]
 
   @@index([id])
   @@index([siteId])
@@ -1242,6 +1247,7 @@ model TblNozzle {
   pumpAttendantNozzles PumpAttendantNozzle[]
   fuelSales            FuelSale[]
   generalTransactions  GeneralTransaction[]
+  pumpIndexes          PumpIndex[]
 
   @@index([id])
   @@index([pumpId])
@@ -1654,6 +1660,7 @@ model TblShiftSite {
   tblTimeTables       TblTimeTable[]
   fuelSales           FuelSale[]
   generalTransactions GeneralTransaction[]
+  pumpIndexes         PumpIndex[]
 
   @@index([shiftId])
   @@index([siteId])
@@ -2042,3 +2049,61 @@ model PfiFee {
   @@index([feeTypeId])
   @@index([createdBy])
 }
+
+/// One nozzle's meter readings for one shift of one working day: what the
+/// counter stood at when the shift opened and when it closed, and the price a
+/// litre was selling at.
+///
+/// The readings of a nozzle are a **chain**: `startIndex` is the previous
+/// reading's `endIndex`, so only the closing figure is ever typed. The first
+/// reading on a nozzle is the exception — it carries the counter as it stood
+/// when the station started recording.
+///
+/// Approved (`confirmedBy`) is final: a reading is never deleted and never
+/// edited after that, so the chain behind it cannot be rewritten.
+model PumpIndex {
+  id            String       @id @default(uuid())
+  pumpId        String
+  pump          TblPump      @relation(fields: [pumpId], references: [id])
+  nozzleId      String
+  nozzle        TblNozzle    @relation(fields: [nozzleId], references: [id])
+  /// The product the nozzle's tank holds, copied when the reading is recorded.
+  itemId        String
+  item          Item         @relation(fields: [itemId], references: [id])
+  /// What a litre was selling at, copied from the price in force: a later
+  /// price change must not rewrite what this shift sold at.
+  sellingPrice  Decimal      @default(0.0) @db.Decimal(18, 2)
+  shiftSiteId   String
+  shiftSite     TblShiftSite @relation(fields: [shiftSiteId], references: [id])
+  siteId        String
+  site          TblSite      @relation(fields: [siteId], references: [id])
+  /// The working day the shift belongs to, as the fuel sales and the time
+  /// table count it: a night shift's small hours still count towards the day
+  /// it started on.
+  dateOn        DateTime     @db.Date
+  /// Carried from the previous reading on this nozzle; typed only for the first.
+  startIndex    Decimal      @default(0.0) @db.Decimal(18, 2)
+  /// What the counter stood at when the shift closed. The litres through the
+  /// nozzle are `endIndex - startIndex`.
+  endIndex      Decimal      @default(0.0) @db.Decimal(18, 2)
+  createdBy     String
+  user          User         @relation(name: "pumpIndexCreatedBy", fields: [createdBy], references: [id])
+  /// Who approved it. Set once, and the reading is frozen from then on.
+  confirmedBy   String?
+  confirmedUser User?        @relation(name: "pumpIndexConfirmed", fields: [confirmedBy], references: [id])
+  confirmedAt   DateTime?
+  createdAt     DateTime     @default(now())
+
+  /// One reading per nozzle per shift per working day.
+  @@unique([nozzleId, shiftSiteId, dateOn])
+  @@index([siteId, dateOn])
+  @@index([nozzleId, dateOn])
+  @@index([pumpId])
+  @@index([itemId])
+  @@index([shiftSiteId])
+  @@index([createdBy])
+  @@index([confirmedBy])
+}
+
+
+

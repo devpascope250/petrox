@@ -136,6 +136,9 @@ export const MODULE_TREE: ModuleNode[] = [
       { id: "e144bc35-8fb4-443f-8beb-52cefffb21c4", code: "CUVE", name: "Cuve", icon: "Container", prefix: "cuve" },
       { code: "MOBILE_DEVICES", name: "Mobile Devices", icon: "Smartphone", prefix: "mobile.devices" },
       { code: "SHIFTS", name: "Shifts", icon: "CalendarClock", prefix: "shifts" },
+      // A nozzle's meter at the open and close of a shift. Recording one is a
+      // station's job; `pump.index.manage` approves, which freezes it for good.
+      { code: "PUMP_INDEX", name: "Pump Index", icon: "Gauge", prefix: "pump.index" },
       { code: "POS_TRANSACTIONS", name: "POS Transactions", icon: "ReceiptText", prefix: "pos.transactions" },
     ] },
     { id: "5ad8d068-de07-42f9-bbf9-73142395eead", code: "PSS_STOCK_MANAGEMENT", name: "PSS Stock Management", icon: "ClipboardCheck", children: [
@@ -230,6 +233,9 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     "mobile.devices.read", "mobile.devices.create", "mobile.devices.edit",
     "shifts.read", "shifts.create", "shifts.edit", "shifts.delete",
     "fuel.sales.read", "fuel.sales.create", "fuel.sales.report.read", "pos.transactions.read",
+    // Records and corrects its own meter readings; approving them — which
+    // freezes them — stays with the administrator.
+    "pump.index.read", "pump.index.create", "pump.index.edit",
     "stockout.orders.read", "stockout.orders.create", "loading.orders.read",
     "items.read", "item.price.read", "item.units.read", "units.read", "company.account.read",
     // A subsidy changes what a litre costs at the pump, so a station manager

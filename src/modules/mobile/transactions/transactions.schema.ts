@@ -46,11 +46,15 @@ export const paymentsField = z.string().transform((value, ctx) => {
 }).pipe(z.array(paymentSchema).max(10, "At most 10 payments"));
 
 /**
- * Closes a sale: the attendant who served it signs with phone and PIN — they
- * must be on the rota for the sale's pump and nozzle in the shift running
- * now — and the litres delivered, the price, the amount and how it was paid
- * are recorded, as the pump display shows them. The picture of the pump
- * display arrives as the `displayPicture` file.
+ * Closes a sale: the attendant who served it signs with phone and PIN — the
+ * time table must put them on a shift running now, and the rota on the pump
+ * and nozzle **the sale was started on** — and the litres delivered, the
+ * price, the amount and how it was paid are recorded, as the pump display
+ * shows them. The picture of the pump display arrives as the `displayPicture`
+ * file.
+ *
+ * `shiftId` may only name the shift they are working now: it says which of
+ * their shifts this is, and never files the sale against another.
  */
 export const confirmTransactionSchema = z.object({
   phone: phoneSchema.transform((value) => value.replace(/\s+/g, "")),

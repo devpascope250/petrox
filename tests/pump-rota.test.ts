@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MobileTransactionsRepository } from "../src/modules/mobile/transactions/transactions.repository.js";
+import { ownShift } from "../src/modules/mobile/transactions/sale-rules.js";
 
 const time = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00.000Z`);
 const SHIFTS = {
@@ -91,5 +92,38 @@ describe("the shift an attendant is working when a sale is confirmed", () => {
     ).rejects.toMatchObject({ code: "ATTENDANT_NOT_ON_SHIFT" });
     expect(db.tblTimeTable.findMany.mock.calls[0][0].where.status).toEqual({ not: 2 });
     expect(db.tblPumpAttendant.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("the shift a confirm may name", () => {
+  /** A site whose shift list holds one switched-on shift and one switched off. */
+  const db = {
+    tblShiftSite: {
+      findFirst: vi.fn().mockImplementation(async ({ where }) =>
+        where.id === "evening" ? { status: 1, shift: { name: "Evening" } }
+          : where.id === "off" ? { status: 0, shift: { name: "Retired" } }
+            : null),
+    },
+  };
+
+  it("passes when the POS names no shift, or names the one being worked", async () => {
+    await expect(ownShift(db as never, undefined, "morning", "site")).resolves.toBeUndefined();
+    await expect(ownShift(db as never, "morning", "morning", "site")).resolves.toBeUndefined();
+    // Neither needed a lookup: the answer is already known.
+    expect(db.tblShiftSite.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("refuses a shift the attendant is not working, however real it is", async () => {
+    // The old behaviour filed the sale under it; the figures of a shift nobody
+    // worked are worth nothing to whoever is held to them.
+    await expect(ownShift(db as never, "evening", "morning", "site"))
+      .rejects.toMatchObject({ code: "SHIFT_NOT_YOURS" });
+  });
+
+  it("names a shift that is not at the site, or switched off, as such first", async () => {
+    await expect(ownShift(db as never, "elsewhere", "morning", "site"))
+      .rejects.toMatchObject({ code: "SHIFT_NOT_AT_SITE" });
+    await expect(ownShift(db as never, "off", "morning", "site"))
+      .rejects.toMatchObject({ code: "SHIFT_SWITCHED_OFF" });
   });
 });

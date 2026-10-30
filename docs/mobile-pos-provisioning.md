@@ -386,7 +386,7 @@ shows in the Fuel sales pages and report. If any check fails, nothing changes.
 | `payments` | JSON array | `[{"accountId","amount","reference"?}]`. Required **without** a card, and the amounts must add up to **the pump's own amount** — a discount or a subsidy never changes what is due. Anything else is refused with `422 PAYMENTS_DO_NOT_MATCH`, whose `data` carries `grossAmount`, `discountAmount`, `amount`, `discount`, `subsidyAmount`, `subsidy` and `paidAmount`. **Not allowed with a card** (`422 PAYMENTS_NOT_FOR_CARD`): the card pays the whole sale, so taking payments as well would charge the client twice. |
 | `referenceDoc.<n>` (file) | optional | PDF or picture for payment `n`. |
 | `displayPicture` (file) | optional | Picture of the pump display. Required when the card type has `captureDisplay`. |
-| `shiftId`, `comments`, `appVersion`, `printStatus` (`true`/`false`) | optional | `shiftId` overrides the shift taken from the time table. |
+| `shiftId`, `comments`, `appVersion`, `printStatus` (`true`/`false`) | optional | `shiftId` may only name the shift the attendant is **working now** — the one the time table and the pump rota agree on, which is what the sale is filed under either way. Another shift at the site is refused with `422 SHIFT_NOT_YOURS`, one from elsewhere with `SHIFT_NOT_AT_SITE`, a retired one with `SHIFT_SWITCHED_OFF`. |
 
 Limited to 20 a minute per device. A sale can only be confirmed once: a second confirm,
 including one sent at the same moment, gets `409 TRANSACTION_ALREADY_CONFIRMED`.
@@ -532,6 +532,21 @@ shift running now cannot confirm a sale (`422 ATTENDANT_NOT_ON_SHIFT`), even
 with a rota entry for the pump. Rostering is on the web, under Shifts → Time
 table, which can copy a week onto the next.
 
+Confirming a sale therefore asks three questions, in this order, and the sale
+is refused at the first "no":
+
+1. Does the time table put this attendant on a shift **running now** at this
+   site, not marked absent? (`ATTENDANT_NOT_ON_SHIFT`)
+2. Does the rota put them on **the pump the sale was started on**, in that same
+   shift? (`ATTENDANT_NOT_ON_PUMP`)
+3. Is **the nozzle the sale was started on** one of theirs on that pump?
+   (`ATTENDANT_NOT_ON_NOZZLE`)
+
+The pump and the nozzle are read from the sale itself, written when it was
+initiated, so a confirm cannot move a sale onto equipment the attendant does
+hold. The shift those checks agree on is the one the sale — and the fuel sale
+mirrored for the web — is recorded under.
+
 `PATCH /mobile/transactions/:code/print-status` records whether the receipt of a confirmed sale
 was printed: `printStatus` (`true`/`false`, as form data or JSON), `true` when left out. It returns
 the sale; sending the same value again is harmless. A sale that is not confirmed gets
@@ -544,7 +559,8 @@ the sale; sending the same value again is harmless. A sale that is not confirmed
 | 404 | `RESOURCE_NOT_FOUND` | Unknown nozzle, card or transaction code at this site. |
 | 422 | `INVALID_ATTENDANT` | Wrong phone number or PIN (one answer for both). |
 | 422 | `ATTENDANT_NOT_ON_SHIFT` | Confirming: the time table does not put the attendant on any shift running now at this site, or it marks them absent. |
-| 422 | `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE` | Confirming: the attendant is on the shift but not on the rota for the sale's pump, or its nozzle is not one of theirs. |
+| 422 | `ATTENDANT_NOT_ON_PUMP`, `ATTENDANT_NOT_ON_NOZZLE` | Confirming: the attendant is on the shift but not on the rota for the sale's pump, or its nozzle is not one of theirs. The pump and nozzle are the **sale's own**, as it was started — the confirm cannot name others. |
+| 422 | `SHIFT_NOT_YOURS` | Confirming: the `shiftId` sent names a shift the attendant is not working now. The sale is filed under the shift the time table and the rota agree on. |
 | 422 | `NOZZLE_NOT_ON_PUMP`, `NOZZLE_CUVE_MISMATCH`, `ITEM_CUVE_MISMATCH`, `*_INACTIVE`, `PRICE_NOT_SET` | The sale does not match the site's equipment. |
 | 422 | `PLATE_NUMBER_REQUIRED`, `PLATE_PICTURE_REQUIRED`, `DISPLAY_PICTURE_REQUIRED` | The card type's rules. |
 | 422 | `CAR_NOT_ASSIGNED_TO_CARD` | The plate is not one of the active cars assigned to the card. |
