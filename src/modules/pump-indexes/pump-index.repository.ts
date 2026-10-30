@@ -5,12 +5,17 @@ import { priceInForce } from "../mobile/transactions/sale-rules.js";
 import { fromDate, fromTime, toDate } from "../shifts/shift-scope.js";
 import type { CreatePumpIndexInput, PumpIndexListQuery, UpdatePumpIndexInput } from "./pump-index.schema.js";
 
+/** `TblTimeTable.status`: 0 planned, 1 present, 2 absent — as the POS reads it. */
+const ABSENT = 2;
+
 /** Two decimals: what the index and money columns hold. */
 const money = (value: number | string | Prisma.Decimal) => new Prisma.Decimal(value).toDecimalPlaces(2);
 
 const readingSelect = {
   id: true, dateOn: true, startIndex: true, endIndex: true, sellingPrice: true,
-  confirmedBy: true, confirmedAt: true, createdAt: true,
+  confirmedBy: true, confirmedAt: true, createdAt: true, attendantId: true,
+  /** Whose shift on this nozzle it was, from the time table and the rota. */
+  attendant: { select: { id: true, firstName: true, lastName: true, phone: true } },
   pump: { select: { id: true, name: true } },
   nozzle: { select: { id: true, name: true, nozzleCode: true } },
   item: { select: { id: true, name: true, baseUnit: { select: { id: true, name: true, code: true } } } },
@@ -65,6 +70,7 @@ export class PumpIndexRepository {
       ...(query.nozzleId ? { nozzleId: query.nozzleId } : {}),
       ...(query.shiftSiteId ? { shiftSiteId: query.shiftSiteId } : {}),
       ...(query.itemId ? { itemId: query.itemId } : {}),
+      ...(query.attendantId ? { attendantId: query.attendantId } : {}),
       ...(query.approved === undefined ? {} : { confirmedBy: query.approved ? { not: null } : null }),
       ...(query.startDate || query.endDate ? { dateOn: { gte: query.startDate, lte: query.endDate } } : {}),
     };
@@ -109,7 +115,7 @@ export class PumpIndexRepository {
     return this.db.pumpIndex.findFirst({
       where: { id, ...(siteId ? { siteId } : {}) },
       select: { id: true, nozzleId: true, dateOn: true, startIndex: true, endIndex: true,
-        confirmedBy: true, confirmedAt: true, siteId: true },
+        confirmedBy: true, confirmedAt: true, siteId: true, shiftSiteId: true, attendantId: true },
     });
   }
 
@@ -129,6 +135,24 @@ export class PumpIndexRepository {
     });
     if (!nozzle || (siteId && nozzle.pump.siteId !== siteId)) throw new NotFoundError("Nozzle at this site");
     return nozzle;
+  }
+
+  /**
+   * The shift the form is cascading from, named for the answer. Site staff are
+   * held to their own site here as everywhere else.
+   */
+  async shiftForRoster(shiftSiteId: string, siteId: string | undefined) {
+    const shift = await this.db.tblShiftSite.findFirst({
+      where: { id: shiftSiteId, ...(siteId ? { siteId } : {}) },
+      select: { id: true, status: true, siteId: true,
+        site: { select: { id: true, name: true } },
+        shift: { select: { id: true, name: true, startAt: true, endAt: true } } },
+    });
+    if (!shift) throw new NotFoundError("Shift at this site");
+    return {
+      id: shift.id, status: shift.status, site: shift.site,
+      name: shift.shift.name, startAt: fromTime(shift.shift.startAt), endAt: fromTime(shift.shift.endAt),
+    };
   }
 
   /** The shift a reading belongs to: it must run at the nozzle's own site. */
@@ -167,6 +191,75 @@ export class PumpIndexRepository {
     return later;
   }
 
+  /**
+   * The roster row putting an attendant on this shift that day: the time table
+   * is the authority on **when** someone works, and `status` 2 is absent, which
+   * never counts. `null` when they are not on it.
+   */
+  rosteredOn(attendantId: string, shiftSiteId: string, dateOn: string) {
+    return this.db.tblTimeTable.findFirst({
+      where: { userId: attendantId, siteShiftId: shiftSiteId, dateOn: toDate(dateOn), status: { not: ABSENT } },
+      select: { id: true, status: true, isChief: true, isSuport: true, extraShift: true,
+        user: { select: { id: true, firstName: true, lastName: true, phone: true } } },
+    });
+  }
+
+  /**
+   * The rota rows for an attendant in a shift: which pumps are theirs, and the
+   * nozzles of each. The rota has no date of its own — the roster above decides
+   * which days they work.
+   */
+  rotaFor(attendantId: string, shiftSiteId: string) {
+    return this.db.tblPumpAttendant.findMany({
+      where: { userId: attendantId, siteShiftId: shiftSiteId },
+      orderBy: { pump: { name: "asc" } },
+      select: {
+        id: true,
+        pump: { select: { id: true, name: true, siteId: true, status: true } },
+        pumpAttendantNozzles: {
+          select: { nozzle: { select: { id: true, name: true, nozzleCode: true, status: true,
+            cuve: { select: { id: true, name: true,
+              item: { select: { id: true, name: true, status: true, baseUnitId: true,
+                baseUnit: { select: { id: true, name: true, code: true } } } } } } } } },
+        },
+      },
+    });
+  }
+
+  /**
+   * Everyone the time table puts on a shift that day, with the pumps and
+   * nozzles the rota gives each of them — what the recording form cascades
+   * down, in one answer.
+   */
+  async rosterFor(shiftSiteId: string, dateOn: string) {
+    const rostered = await this.db.tblTimeTable.findMany({
+      where: { siteShiftId: shiftSiteId, dateOn: toDate(dateOn), status: { not: ABSENT } },
+      orderBy: [{ isChief: "desc" }, { isSuport: "desc" }],
+      select: { id: true, status: true, isChief: true, isSuport: true, extraShift: true,
+        user: { select: { id: true, firstName: true, lastName: true, phone: true } } },
+    });
+    const rotas = await Promise.all(rostered.map((row) => this.rotaFor(row.user.id, shiftSiteId)));
+    return rostered.map((row, index) => ({ ...row, rota: rotas[index] }));
+  }
+
+  /**
+   * What each of these nozzles opens at: the close of its own last reading.
+   * One query each — a shift is a handful of nozzles, and reading every row
+   * ever recorded to find the last one would not be.
+   */
+  openingFor(nozzleIds: string[]) {
+    return Promise.all(nozzleIds.map(async (nozzleId) => ({ nozzleId, previous: await this.latestFor(nozzleId) })));
+  }
+
+  /** The readings these nozzles already have for one shift on one day. */
+  recordedFor(nozzleIds: string[], shiftSiteId: string, dateOn: string) {
+    return this.db.pumpIndex.findMany({
+      where: { nozzleId: { in: nozzleIds }, shiftSiteId, dateOn: toDate(dateOn) },
+      select: { id: true, nozzleId: true, startIndex: true, endIndex: true, confirmedBy: true,
+        attendant: { select: { id: true, firstName: true, lastName: true } } },
+    });
+  }
+
   /** The price in force for a product, for a reading that does not carry its own. */
   priceFor(item: { id: string; name: string; baseUnitId: string | null }) {
     return priceInForce(this.db, item);
@@ -174,7 +267,7 @@ export class PumpIndexRepository {
 
   async create(data: {
     nozzle: { id: string; pump: { id: string; siteId: string }; cuve: { item: { id: string } } };
-    shiftSiteId: string; dateOn: string;
+    shiftSiteId: string; dateOn: string; attendantId: string;
     startIndex: Prisma.Decimal; endIndex: Prisma.Decimal; sellingPrice: Prisma.Decimal;
     createdBy: string;
   }) {
@@ -183,6 +276,7 @@ export class PumpIndexRepository {
         data: {
           pumpId: data.nozzle.pump.id, nozzleId: data.nozzle.id, itemId: data.nozzle.cuve.item.id,
           siteId: data.nozzle.pump.siteId, shiftSiteId: data.shiftSiteId, dateOn: toDate(data.dateOn),
+          attendantId: data.attendantId,
           startIndex: data.startIndex, endIndex: data.endIndex, sellingPrice: data.sellingPrice,
           createdBy: data.createdBy,
         },
@@ -199,7 +293,7 @@ export class PumpIndexRepository {
   }
 
   async update(id: string, data: {
-    shiftSiteId?: string; dateOn?: string;
+    shiftSiteId?: string; dateOn?: string; attendantId?: string;
     startIndex?: Prisma.Decimal; endIndex?: Prisma.Decimal; sellingPrice?: Prisma.Decimal;
   }) {
     try {
@@ -208,6 +302,7 @@ export class PumpIndexRepository {
         data: {
           ...(data.shiftSiteId ? { shiftSiteId: data.shiftSiteId } : {}),
           ...(data.dateOn ? { dateOn: toDate(data.dateOn) } : {}),
+          ...(data.attendantId ? { attendantId: data.attendantId } : {}),
           ...(data.startIndex ? { startIndex: data.startIndex } : {}),
           ...(data.endIndex ? { endIndex: data.endIndex } : {}),
           ...(data.sellingPrice ? { sellingPrice: data.sellingPrice } : {}),

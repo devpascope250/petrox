@@ -137,6 +137,7 @@ model User {
   subsidies              Subsidy[]
   createdBypumpIndexes   PumpIndex[]        @relation("pumpIndexCreatedBy")
   confirmedByPumpIndexes PumpIndex[]        @relation("pumpIndexConfirmed")
+  attendedPumpIndexes    PumpIndex[]        @relation("pumpIndexAttendant")
 
   @@index([roleId])
   @@index([siteId])
@@ -2081,6 +2082,12 @@ model PumpIndex {
   /// table count it: a night shift's small hours still count towards the day
   /// it started on.
   dateOn        DateTime     @db.Date
+  /// Whose shift on this nozzle the reading is for. The time table must put
+  /// them on the shift that day, and the rota on that pump and nozzle — the
+  /// same three facts the POS checks before it lets them confirm a sale, so
+  /// the meter and the sales can be read against each other.
+  attendantId   String
+  attendant     User         @relation(name: "pumpIndexAttendant", fields: [attendantId], references: [id])
   /// Carried from the previous reading on this nozzle; typed only for the first.
   startIndex    Decimal      @default(0.0) @db.Decimal(18, 2)
   /// What the counter stood at when the shift closed. The litres through the
@@ -2101,6 +2108,7 @@ model PumpIndex {
   @@index([pumpId])
   @@index([itemId])
   @@index([shiftSiteId])
+  @@index([attendantId])
   @@index([createdBy])
   @@index([confirmedBy])
 }

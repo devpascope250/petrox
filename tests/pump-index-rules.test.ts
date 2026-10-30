@@ -22,7 +22,12 @@ function repoWith(options: {
   later?: { id: string; dateOn: Date; createdAt: Date } | null;
   /** `null` for "no such reading"; left out means an ordinary unapproved one. */
   reading?: Partial<{ id: string; nozzleId: string; dateOn: Date; startIndex: Prisma.Decimal;
-    endIndex: Prisma.Decimal; confirmedBy: string | null; siteId: string }> | null;
+    endIndex: Prisma.Decimal; confirmedBy: string | null; siteId: string;
+    shiftSiteId: string; attendantId: string }> | null;
+  /** `null` for an attendant the time table does not put on that shift. */
+  rostered?: { user: { id: string; firstName: string; lastName: string } } | null;
+  /** The pumps and nozzles the rota gives them in that shift. */
+  rota?: Array<{ pump: { id: string; name: string }; nozzleIds: string[] }>;
   price?: Prisma.Decimal;
 } = {}) {
   const written: Array<Record<string, unknown>> = [];
@@ -30,6 +35,20 @@ function repoWith(options: {
     written,
     repo: {
       nozzleFor: vi.fn().mockResolvedValue(NOZZLE),
+      rosteredOn: vi.fn().mockResolvedValue(
+        options.rostered === undefined
+          ? { id: 'roster-1', status: 1, isChief: false, isSuport: false, extraShift: 0,
+              user: { id: 'attendant-1', firstName: 'Jean', lastName: 'Uwase' } }
+          : options.rostered,
+      ),
+      rotaFor: vi.fn().mockResolvedValue(
+        (options.rota ?? [{ pump: { id: 'pump-1', name: 'PUMP1' }, nozzleIds: ['nozzle-1'] }])
+          .map((row) => ({
+            id: `rota-${row.pump.id}`,
+            pump: { ...row.pump, siteId: 'site-1', status: 'active' },
+            pumpAttendantNozzles: row.nozzleIds.map((id) => ({ nozzle: { id, name: id } })),
+          })),
+      ),
       shiftFor: vi.fn().mockResolvedValue({ id: "shift-1", status: 1, shift: { name: "Morning" } }),
       latestFor: vi.fn().mockResolvedValue(options.previous ?? null),
       hasLaterThan: vi.fn().mockResolvedValue(options.later ?? null),
@@ -37,6 +56,7 @@ function repoWith(options: {
       findForWrite: vi.fn().mockResolvedValue(options.reading === null ? null : {
         id: "reading-1", nozzleId: "nozzle-1", dateOn: day("2026-10-30"),
         startIndex: decimal(1000), endIndex: decimal(1100), confirmedBy: null, siteId: "site-1",
+        shiftSiteId: "shift-1", attendantId: "attendant-1",
         ...options.reading,
       }),
       create: vi.fn().mockImplementation(async (data: Record<string, unknown>) => {
@@ -69,10 +89,15 @@ function row(over: Partial<{ startIndex: Prisma.Decimal; endIndex: Prisma.Decima
       startAt: new Date("1970-01-01T06:00:00.000Z"), endAt: new Date("1970-01-01T14:00:00.000Z") } },
     user: { id: "user-1", firstName: "A", lastName: "B" },
     confirmedUser: null,
+    attendantId: "attendant-1",
+    attendant: { id: "attendant-1", firstName: "Jean", lastName: "Uwase", phone: null },
   };
 }
 
-const input = { nozzleId: "nozzle-1", shiftSiteId: "shift-1", dateOn: "2026-10-30", endIndex: "1200" };
+const input = {
+  nozzleId: "nozzle-1", shiftSiteId: "shift-1", dateOn: "2026-10-30",
+  attendantId: "attendant-1", endIndex: "1200",
+};
 
 describe("the chain a nozzle's readings make", () => {
   it("opens the first reading on a nozzle at the figure typed", async () => {
@@ -187,5 +212,46 @@ describe("who may read and record", () => {
       .rejects.toMatchObject({ statusCode: 403 });
     await expect(service.create(input, actor("siteManager", null)))
       .rejects.toMatchObject({ statusCode: 403 });
+  });
+});
+
+describe("whose shift the reading is for", () => {
+  it("records the attendant the time table and the rota agree was there", async () => {
+    const { repo, written } = repoWith({ previous: null });
+    await new PumpIndexService(repo as never).create(input, actor());
+    expect(repo.rosteredOn).toHaveBeenCalledWith("attendant-1", "shift-1", "2026-10-30");
+    expect(written[0].attendantId).toBe("attendant-1");
+  });
+
+  it("refuses an attendant the time table does not put on that shift that day", async () => {
+    // The roster is the authority on when someone works, so a rota entry alone
+    // is not enough — exactly as the POS refuses the sale.
+    const service = new PumpIndexService(repoWith({ previous: null, rostered: null }).repo as never);
+    await expect(service.create(input, actor())).rejects.toMatchObject({ code: "ATTENDANT_NOT_ON_SHIFT" });
+  });
+
+  it("refuses a pump, or a nozzle, that is not theirs in that shift", async () => {
+    const otherPump = new PumpIndexService(repoWith({ previous: null,
+      rota: [{ pump: { id: "pump-9", name: "PUMP9" }, nozzleIds: ["nozzle-9"] }] }).repo as never);
+    await expect(otherPump.create(input, actor())).rejects.toMatchObject({ code: "ATTENDANT_NOT_ON_PUMP" });
+
+    const otherNozzle = new PumpIndexService(repoWith({ previous: null,
+      rota: [{ pump: { id: "pump-1", name: "PUMP1" }, nozzleIds: ["nozzle-2"] }] }).repo as never);
+    await expect(otherNozzle.create(input, actor())).rejects.toMatchObject({ code: "ATTENDANT_NOT_ON_NOZZLE" });
+  });
+
+  it("checks the roster again when a correction moves the shift, the day or the attendant", async () => {
+    const { repo } = repoWith({ previous: null });
+    const service = new PumpIndexService(repo as never);
+    await service.update("reading-1", { attendantId: "attendant-2" }, actor());
+    // The whole of it, not just the part that moved: the reading's own shift
+    // and day go with the new attendant.
+    expect(repo.rosteredOn).toHaveBeenCalledWith("attendant-2", "shift-1", "2026-10-30");
+  });
+
+  it("leaves the roster alone for a correction that only changes a figure", async () => {
+    const { repo } = repoWith({ previous: null });
+    await new PumpIndexService(repo as never).update("reading-1", { endIndex: "1300" }, actor());
+    expect(repo.rosteredOn).not.toHaveBeenCalled();
   });
 });

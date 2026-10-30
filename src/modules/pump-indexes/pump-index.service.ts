@@ -5,7 +5,7 @@ import { BusinessError, NotFoundError, forbidden } from "../../utils/errors.js";
 import { fromDate } from "../shifts/shift-scope.js";
 import { presentPumpIndex, PumpIndexRepository } from "./pump-index.repository.js";
 import type {
-  CreatePumpIndexInput, PumpIndexListQuery, PumpIndexOpeningQuery, UpdatePumpIndexInput,
+  CreatePumpIndexInput, PumpIndexListQuery, PumpIndexOpeningQuery, PumpIndexRosterQuery, UpdatePumpIndexInput,
 } from "./pump-index.schema.js";
 
 const decimal = (value: string | number) => new Prisma.Decimal(value);
@@ -22,6 +22,12 @@ const decimal = (value: string | number) => new Prisma.Decimal(value);
  * 3. **A counter does not run backwards.** `endIndex` is never below the
  *    opening figure, and a reading is never recorded for a day before the last
  *    one on its nozzle.
+ * 4. **A reading belongs to whoever worked the shift.** The time table must put
+ *    the attendant on that shift that day, and the rota on that pump and that
+ *    nozzle — the same three facts the POS checks before it lets them confirm
+ *    a sale, checked here in the same order and refused with the same codes.
+ *    There is no way to record a reading for a shift nobody was rostered on:
+ *    the roster has to be filled in first.
  */
 export class PumpIndexService {
   constructor(private repo: PumpIndexRepository) {}
@@ -42,10 +48,13 @@ export class PumpIndexService {
    * anything is typed: the last reading's close, the price in force, and
    * whether this would be the first reading on the nozzle — the one case where
    * the opening figure is typed rather than carried.
+   *
+   * `exceptId` leaves the reading being corrected out of the chain, so a
+   * correction is told what it opens at and whether it is itself the first.
    */
   async opening(query: PumpIndexOpeningQuery, actor: AuthUser) {
     const nozzle = await this.repo.nozzleFor(query.nozzleId, this.scope(actor));
-    const previous = await this.repo.latestFor(nozzle.id);
+    const previous = await this.repo.latestFor(nozzle.id, query.exceptId);
     const price = await this.repo.priceFor(nozzle.cuve.item).catch(() => null);
     return {
       nozzle: { id: nozzle.id, name: nozzle.name, nozzleCode: nozzle.nozzleCode },
@@ -65,6 +74,84 @@ export class PumpIndexService {
   }
 
   /**
+   * Who the time table puts on a shift that day, and what each of them may be
+   * read for: their pumps, the nozzles of each, the figure every nozzle opens
+   * at, and the reading it already has if someone has recorded it.
+   *
+   * This is the form's cascade in one answer — shift and day, then attendant,
+   * then pump, then nozzle — so nothing has to be looked up by hand and an
+   * already-recorded nozzle is visible before anything is typed.
+   */
+  async roster(query: PumpIndexRosterQuery, actor: AuthUser) {
+    const site = this.scope(actor);
+    const shift = await this.repo.shiftForRoster(query.shiftSiteId, site);
+    const rostered = await this.repo.rosterFor(query.shiftSiteId, query.dateOn);
+
+    // Every nozzle anyone on the shift holds, each looked up once however many
+    // attendants share it.
+    const nozzles = new Map<string, { id: string; name: string; nozzleCode: string; status: string;
+      item: { id: string; name: string; baseUnitId: string | null;
+        baseUnit: { id: string; name: string; code: string } | null } }>();
+    for (const person of rostered) {
+      for (const rota of person.rota) {
+        for (const { nozzle } of rota.pumpAttendantNozzles) {
+          nozzles.set(nozzle.id, { id: nozzle.id, name: nozzle.name, nozzleCode: nozzle.nozzleCode,
+            status: nozzle.status, item: nozzle.cuve.item });
+        }
+      }
+    }
+    const ids = [...nozzles.keys()];
+    const [openings, recorded] = await Promise.all([
+      this.repo.openingFor(ids),
+      ids.length ? this.repo.recordedFor(ids, query.shiftSiteId, query.dateOn) : [],
+    ]);
+    // One price lookup per product, not per nozzle.
+    const items = [...new Map([...nozzles.values()].map((nozzle) => [nozzle.item.id, nozzle.item])).values()];
+    const prices = new Map(await Promise.all(items.map(async (item) =>
+      [item.id, await this.repo.priceFor(item).then(Number).catch(() => null)] as const)));
+
+    const openingOf = new Map(openings.map((row) => [row.nozzleId, row.previous]));
+    const readingOf = new Map(recorded.map((row) => [row.nozzleId, row]));
+    const presentNozzle = (nozzle: NonNullable<ReturnType<typeof nozzles.get>>) => {
+      const previous = openingOf.get(nozzle.id) ?? null;
+      const reading = readingOf.get(nozzle.id);
+      return {
+        id: nozzle.id, name: nozzle.name, nozzleCode: nozzle.nozzleCode, status: nozzle.status,
+        item: { id: nozzle.item.id, name: nozzle.item.name, baseUnit: nozzle.item.baseUnit },
+        /** What a new reading here opens at: the close of the last one. */
+        startIndex: previous ? Number(previous.endIndex) : 0,
+        isFirst: previous === null,
+        previous: previous && { id: previous.id, dateOn: fromDate(previous.dateOn),
+          endIndex: Number(previous.endIndex), approved: previous.confirmedBy !== null },
+        /** Already recorded for this shift and day — there is only ever one. */
+        reading: reading && { id: reading.id, startIndex: Number(reading.startIndex),
+          endIndex: Number(reading.endIndex), approved: reading.confirmedBy !== null,
+          attendant: reading.attendant },
+        sellingPrice: prices.get(nozzle.item.id) ?? null,
+      };
+    };
+
+    return {
+      shift, dateOn: query.dateOn,
+      /** Empty when nobody was rostered: the time table has to be filled in first. */
+      attendants: rostered.map((person) => ({
+        user: person.user,
+        isChief: person.isChief,
+        isSuport: person.isSuport,
+        extraShift: Boolean(person.extraShift),
+        /** 0 planned, 1 present. The absent are not listed at all. */
+        status: person.status,
+        pumps: person.rota.map((rota) => ({
+          id: rota.pump.id, name: rota.pump.name, status: rota.pump.status,
+          nozzles: rota.pumpAttendantNozzles
+            .map(({ nozzle }) => presentNozzle(nozzles.get(nozzle.id)!))
+            .sort((left, right) => left.name.localeCompare(right.name)),
+        })),
+      })),
+    };
+  }
+
+  /**
    * Records the close of a shift on one nozzle. The pump, the product and the
    * site come from the nozzle; the opening figure comes from the reading
    * before it. Nothing but the closing figure — and, for the first reading on
@@ -75,6 +162,8 @@ export class PumpIndexService {
     if (nozzle.status !== "active") throw new BusinessError("NOZZLE_INACTIVE", `${nozzle.name} is not active`);
     if (nozzle.pump.status !== "active") throw new BusinessError("PUMP_INACTIVE", `${nozzle.pump.name} is not active`);
     await this.repo.shiftFor(input.shiftSiteId, nozzle.pump.siteId);
+
+    await this.assertOnDuty(input.attendantId, input.shiftSiteId, input.dateOn, nozzle);
 
     const previous = await this.repo.latestFor(nozzle.id);
     if (previous && input.startIndex !== undefined) {
@@ -99,7 +188,7 @@ export class PumpIndexService {
       : await this.repo.priceFor(nozzle.cuve.item);
 
     const created = await this.repo.create({
-      nozzle, shiftSiteId: input.shiftSiteId, dateOn: input.dateOn,
+      nozzle, shiftSiteId: input.shiftSiteId, dateOn: input.dateOn, attendantId: input.attendantId,
       startIndex, endIndex, sellingPrice: decimal(sellingPrice.toString()),
       createdBy: actor.userId,
     });
@@ -130,6 +219,18 @@ export class PumpIndexService {
     const nozzle = await this.repo.nozzleFor(reading.nozzleId, site);
     if (input.shiftSiteId) await this.repo.shiftFor(input.shiftSiteId, nozzle.pump.siteId);
 
+    // The attendant, the shift and the day decide each other, so a change to
+    // any of them is checked against the roster and the rota again — as the
+    // whole of it, not just the part that moved.
+    if (input.attendantId || input.shiftSiteId || input.dateOn) {
+      await this.assertOnDuty(
+        input.attendantId ?? reading.attendantId,
+        input.shiftSiteId ?? reading.shiftSiteId,
+        input.dateOn ?? fromDate(reading.dateOn),
+        nozzle,
+      );
+    }
+
     const previous = await this.repo.latestFor(reading.nozzleId, reading.id);
     if (input.startIndex !== undefined && previous) {
       throw new BusinessError("START_INDEX_IS_CARRIED",
@@ -149,6 +250,7 @@ export class PumpIndexService {
     const updated = await this.repo.update(id, {
       shiftSiteId: input.shiftSiteId,
       dateOn: input.dateOn,
+      attendantId: input.attendantId,
       startIndex: input.startIndex === undefined ? undefined : startIndex,
       endIndex: input.endIndex === undefined ? undefined : endIndex,
       sellingPrice: input.sellingPrice === undefined ? undefined : decimal(input.sellingPrice),
@@ -165,6 +267,37 @@ export class PumpIndexService {
     const reading = await this.repo.findForWrite(id, this.scope(actor));
     if (!reading) throw new NotFoundError("Pump index reading");
     return presentPumpIndex(await this.repo.approve(id, actor.userId));
+  }
+
+  /**
+   * That the attendant was on duty there: the time table puts them on that
+   * shift that day, and the rota on that pump and that nozzle.
+   *
+   * The same three questions the POS asks before it lets someone confirm a
+   * sale, in the same order and with the same codes — a reading and a sale are
+   * then only ever recorded against a person the roster agrees was there.
+   */
+  private async assertOnDuty(attendantId: string, shiftSiteId: string, dateOn: string,
+    nozzle: { id: string; name: string; pump: { id: string; name: string } }) {
+    const rostered = await this.repo.rosteredOn(attendantId, shiftSiteId, dateOn);
+    if (!rostered) {
+      throw new BusinessError("ATTENDANT_NOT_ON_SHIFT",
+        `The time table does not put this attendant on that shift on ${dateOn}, or marks them absent`);
+    }
+    const who = `${rostered.user.firstName} ${rostered.user.lastName}`.trim();
+    const rota = await this.repo.rotaFor(attendantId, shiftSiteId);
+    const onPump = rota.filter((row) => row.pump.id === nozzle.pump.id);
+    if (onPump.length === 0) {
+      throw new BusinessError("ATTENDANT_NOT_ON_PUMP",
+        `${who} is not on the rota for ${nozzle.pump.name} in that shift`);
+    }
+    const onNozzle = onPump.some((row) =>
+      row.pumpAttendantNozzles.some(({ nozzle: theirs }) => theirs.id === nozzle.id));
+    if (!onNozzle) {
+      throw new BusinessError("ATTENDANT_NOT_ON_NOZZLE",
+        `${nozzle.name} is not one of ${who}'s nozzles on ${nozzle.pump.name} in that shift`);
+    }
+    return rostered;
   }
 
   /** A counter does not run backwards, whatever was typed. */

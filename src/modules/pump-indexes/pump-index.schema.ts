@@ -28,6 +28,12 @@ export const createPumpIndexSchema = z.object({
   nozzleId: uuidSchema,
   shiftSiteId: uuidSchema,
   dateOn: daySchema,
+  /**
+   * Whose shift it is. The time table must put them on that shift that day,
+   * and the rota on that pump and nozzle — there is no way to record a reading
+   * for a shift nobody was rostered on.
+   */
+  attendantId: uuidSchema,
   endIndex: indexSchema("End index"),
   /** The opening reading, for the first one on a nozzle. */
   startIndex: indexSchema("Start index").optional(),
@@ -43,6 +49,8 @@ export const createPumpIndexSchema = z.object({
 export const updatePumpIndexSchema = z.object({
   shiftSiteId: uuidSchema.optional(),
   dateOn: daySchema.optional(),
+  /** Still checked against the roster and the rota for the day and shift. */
+  attendantId: uuidSchema.optional(),
   endIndex: indexSchema("End index").optional(),
   /** Only while this is the first reading on its nozzle. */
   startIndex: indexSchema("Start index").optional(),
@@ -60,6 +68,8 @@ export const pumpIndexListQuerySchema = pagedDatesQuerySchema.extend({
   nozzleId: uuidSchema.optional(),
   shiftSiteId: uuidSchema.optional(),
   itemId: uuidSchema.optional(),
+  /** Whose shifts to list. */
+  attendantId: uuidSchema.optional(),
   /** On: approved only. Off: still awaiting approval. */
   approved: z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).optional(),
 });
@@ -68,9 +78,31 @@ export const pumpIndexListQuerySchema = pagedDatesQuerySchema.extend({
  * What a new reading on a nozzle would open at: the figure the form shows
  * before anything is typed, so nobody has to look up the last shift's close.
  */
-export const pumpIndexOpeningQuerySchema = z.object({ nozzleId: uuidSchema });
+export const pumpIndexOpeningQuerySchema = z.object({
+  nozzleId: uuidSchema,
+  /**
+   * The reading being corrected, which does not count as its own predecessor:
+   * a correction opens where the reading **before** it closed, and may type
+   * its own opening figure when there is none.
+   */
+  exceptId: uuidSchema.optional(),
+});
+
+/**
+ * Who was on a shift that day, and what each of them may be read for.
+ *
+ * This is what the form cascades down: the shift and the working day decide
+ * the attendants (the time table), an attendant decides the pumps and nozzles
+ * (the rota), and each nozzle comes back with the figure it opens at and the
+ * reading it already has, if any.
+ */
+export const pumpIndexRosterQuerySchema = z.object({
+  shiftSiteId: uuidSchema,
+  dateOn: daySchema,
+});
 
 export type CreatePumpIndexInput = z.infer<typeof createPumpIndexSchema>;
 export type UpdatePumpIndexInput = z.infer<typeof updatePumpIndexSchema>;
 export type PumpIndexListQuery = z.infer<typeof pumpIndexListQuerySchema>;
 export type PumpIndexOpeningQuery = z.infer<typeof pumpIndexOpeningQuerySchema>;
+export type PumpIndexRosterQuery = z.infer<typeof pumpIndexRosterQuerySchema>;

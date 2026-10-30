@@ -3,7 +3,8 @@ import { created, success } from "../../shared/http/index.js";
 import { idParamsSchema, parseInput } from "../../shared/validation/index.js";
 import { PumpIndexRepository } from "./pump-index.repository.js";
 import {
-  createPumpIndexSchema, pumpIndexListQuerySchema, pumpIndexOpeningQuerySchema, updatePumpIndexSchema,
+  createPumpIndexSchema, pumpIndexListQuerySchema, pumpIndexOpeningQuerySchema,
+  pumpIndexRosterQuerySchema, updatePumpIndexSchema,
 } from "./pump-index.schema.js";
 import { PumpIndexService } from "./pump-index.service.js";
 
@@ -18,6 +19,11 @@ import { PumpIndexService } from "./pump-index.service.js";
  *
  * Approving is gated on `pump.index.manage` rather than `edit`: it is the act
  * that freezes a reading for good, so it is held apart from recording one.
+ *
+ * A reading is always recorded against the attendant the time table put on
+ * that shift that day, on a pump and nozzle the rota gives them. `/roster`
+ * answers all of that at once, and there is no path that skips it: a shift
+ * nobody was rostered on cannot be recorded until the time table is filled in.
  */
 const routes: FastifyPluginAsync = async (app) => {
   const service = new PumpIndexService(new PumpIndexRepository(app.prisma));
@@ -26,6 +32,11 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.get("/", { preHandler: [app.authenticate, read] }, async (request) =>
     success(await service.list(parseInput(pumpIndexListQuerySchema, request.query), request.contextUser!)));
+
+  // Who was on a shift that day, with their pumps and nozzles: the recording
+  // form's whole cascade in one answer. Before `/:id`, as `/opening` is.
+  app.get("/roster", { preHandler: [app.authenticate, read] }, async (request) =>
+    success(await service.roster(parseInput(pumpIndexRosterQuerySchema, request.query), request.contextUser!)));
 
   // What a new reading on a nozzle opens at — before `/:id`, which would
   // otherwise take "opening" for an id.
