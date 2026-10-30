@@ -45,6 +45,8 @@ type Undated = {
   shiftName: string | null;
   siteName: string | null;
   nozzles: number;
+  /** Named, not just counted: a row about to be discarded is re-entered by hand. */
+  nozzleNames: string | null;
   /** How many rostered days from `from` onward this row will be written to. */
   days: number;
 };
@@ -65,6 +67,12 @@ function undated(from: string) {
       a.userId, u.firstName, u.lastName,
       a.siteShiftId, s.name AS shiftName, site.name AS siteName,
       (SELECT COUNT(*) FROM PumpAttendantNozzle n WHERE n.pumpAttendantId = a.id) AS nozzles,
+      (
+        SELECT GROUP_CONCAT(z.name ORDER BY z.name SEPARATOR ', ')
+        FROM PumpAttendantNozzle n
+        JOIN TblNozzle z ON z.id = n.nozzleId
+        WHERE n.pumpAttendantId = a.id
+      ) AS nozzleNames,
       (
         SELECT COUNT(*) FROM TblTimeTable t
         WHERE t.userId = a.userId AND t.siteShiftId = a.siteShiftId AND t.dateOn >= ?
@@ -193,8 +201,11 @@ async function main() {
       console.log(`── ${title} ──`);
       for (const row of group) {
         console.log(`  ${person(row)} · ${row.shiftName ?? "?"} · ${row.pumpName ?? "?"}`
-          + ` · ${row.nozzles} nozzle(s) · ${row.siteName ?? "?"}`
+          + ` · ${row.siteName ?? "?"}`
           + (Number(row.days) > 0 ? ` → ${row.days} day(s)` : ""));
+        // Spelled out for the unplaceable ones especially: discarding one means
+        // typing it back in, and "1 nozzle(s)" is not enough to type back.
+        console.log(`      nozzles: ${row.nozzleNames ?? "none"}`);
       }
       console.log("");
     }
@@ -206,7 +217,8 @@ async function main() {
     } else {
       const { rows: dropped, nozzles } = await discard();
       console.log(`Discarded ${dropped} assignment(s) and ${nozzles} nozzle link(s) that no roster day covered.`);
-      console.log("Re-enter them on the Shifts page once those days are rostered.");
+      console.log("They are listed above, nozzles and all: re-enter them on the Shifts page");
+      console.log("once those days are rostered.");
     }
   }
 
