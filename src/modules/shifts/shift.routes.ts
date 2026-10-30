@@ -7,7 +7,9 @@ import { ShiftRepository } from "./shift.repository.js";
 import { createSiteShiftSchema, siteShiftQuerySchema } from "./site-shift.schema.js";
 import { SiteShiftService } from "./site-shift.service.js";
 import { SiteShiftRepository } from "./site-shift.repository.js";
-import { createPumpAttendantSchema, pumpAttendantQuerySchema } from "./pump-attendant.schema.js";
+import {
+  copyPumpAttendantWeekSchema, createPumpAttendantSchema, pumpAttendantQuerySchema, updatePumpAttendantSchema,
+} from "./pump-attendant.schema.js";
 import { PumpAttendantService } from "./pump-attendant.service.js";
 import { PumpAttendantRepository } from "./pump-attendant.repository.js";
 import { copyTimeTableWeekSchema, createTimeTableSchema, timeTableQuerySchema, timeTableRoleSchema, timeTableStatusSchema } from "./time-table.schema.js";
@@ -53,19 +55,28 @@ const routes: FastifyPluginAsync = async (app) => {
   app.put("/sites/status/:id", edit, async (request) =>
     success(await siteShifts.updateStatus(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
 
-  /* -------------------------- Pump attendants -------------------------- */
+  /* -------------------------- Pump attendants --------------------------
+   * Which pump someone works, and its nozzles, **per rostered day**: a row
+   * hangs off the time table entry, so the roster stays the one place that
+   * says who works when. Creating writes a day each and reports the days the
+   * roster does not cover. */
   app.get("/attendants", read, async (request) =>
     success(await attendants.list(parseInput(pumpAttendantQuerySchema, request.query), request.contextUser!)));
   app.get("/attendants/:id", read, async (request) =>
     success(await attendants.find(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
   app.post("/attendants", create, async (request, reply) =>
     created(reply, await attendants.create(parseInput(createPumpAttendantSchema, request.body), request.contextUser!)));
+  // One day's assignment: its pump and nozzles. The day and the person belong
+  // to the roster row, so another day is another row.
   app.put("/attendants/:id", edit, async (request) =>
     success(await attendants.update(
       parseInput(idParamsSchema, request.params).id,
-      parseInput(createPumpAttendantSchema, request.body),
+      parseInput(updatePumpAttendantSchema, request.body),
       request.contextUser!,
     )));
+  // This week's rota onto next week's rostered days.
+  app.post("/attendants/copy-week", create, async (request) =>
+    success(await attendants.copyWeek(parseInput(copyPumpAttendantWeekSchema, request.body), request.contextUser!)));
   app.delete("/attendants/:id", remove, async (request) =>
     success(await attendants.delete(parseInput(idParamsSchema, request.params).id, request.contextUser!)));
 

@@ -20,6 +20,7 @@
         "phones:normalize": "tsx scripts/normalize-phones.ts",
         "fees:placement": "tsx scripts/landing-fee-placement.ts",
         "discounts:check": "tsx scripts/discount-check.ts",
+        "rota:dates": "tsx --env-file=.env scripts/pump-rota-dates.ts",
         "postinstall": "prisma generate"
     },
     "engines": {

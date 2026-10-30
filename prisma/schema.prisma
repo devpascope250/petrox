@@ -117,7 +117,6 @@ model User {
   discounts                  Discount[]
   cardCopyTransactions       CardCopyTransaction[]
   timeTablesUser             TblTimeTable[]           @relation("TimeTableUsers")
-  tblPumpAttendants          TblPumpAttendant[]
   cuveTransactions           CuveTransaction[]
   loadingOrderShares         LoadingOrderShare[]      @relation("LoadingOrderSharedBy")
   centralStockOrderEvents    CentralStockOrderEvent[] @relation("CentralStockOrderEventActor")
@@ -974,7 +973,6 @@ model TblSite {
   discounts           Discount[]
   rangingDiscounts    RangingDiscount[]
   tblShiftSites       TblShiftSite[]
-  tblPumpAttendants   TblPumpAttendant[]
   tblTimeTables       TblTimeTable[]
   companyAccounts     CompanyAccount[]
   fuelSales           FuelSale[]
@@ -1657,7 +1655,6 @@ model TblShiftSite {
   site                TblSite              @relation(fields: [siteId], references: [id])
   turnonAt            DateTime             @default(now())
   status              Int                  @default(1)
-  tblPumpAttendants   TblPumpAttendant[]
   tblTimeTables       TblTimeTable[]
   fuelSales           FuelSale[]
   generalTransactions GeneralTransaction[]
@@ -1670,30 +1667,36 @@ model TblShiftSite {
 /// Which pump and nozzles an attendant handles in a site shift. Not which
 /// days he works: the time table (`TblTimeTable`) rosters people by date, and
 /// that is what a sale checks.
+/// Which pump an attendant works, and the nozzles of it, **on one rostered
+/// day**.
+///
+/// It hangs off the roster row (`TblTimeTable`), which already says who, which
+/// shift, which site and which day — so the two can never disagree, a pump
+/// cannot be given to someone who is not rostered, and taking someone off a
+/// day takes their pump with it. A pump assignment is per day because the
+/// forecourt rotates: the same person is on another pump next week.
 model TblPumpAttendant {
   id                   String                @id @default(uuid())
   pumpId               String
   pump                 TblPump               @relation(fields: [pumpId], references: [id])
-  siteShiftId          String
-  siteShift            TblShiftSite          @relation(fields: [siteShiftId], references: [id])
-  userId               String
-  user                 User                  @relation(fields: [userId], references: [id])
-  siteId               String
-  site                 TblSite               @relation(fields: [siteId], references: [id])
+  /// The rostered day this assignment belongs to.
+  timeTableId          String
+  timeTable            TblTimeTable          @relation(fields: [timeTableId], references: [id], onDelete: Cascade)
   createdAt            DateTime              @default(now())
   pumpAttendantNozzles PumpAttendantNozzle[]
 
-  @@unique([userId, siteShiftId, pumpId])
+  /// One row per pump per rostered day; the nozzles hang off it.
+  @@unique([timeTableId, pumpId])
   @@index([pumpId])
-  @@index([siteShiftId])
-  @@index([userId])
-  @@index([siteId])
+  @@index([timeTableId])
 }
 
 model PumpAttendantNozzle {
   id              String           @id @default(uuid())
   pumpAttendantId String
-  pumpAttendant   TblPumpAttendant @relation(fields: [pumpAttendantId], references: [id])
+  /// Cascades: a rota row removed — because the roster row it hung off was —
+  /// takes its nozzles with it, or nothing could be un-rostered at all.
+  pumpAttendant   TblPumpAttendant @relation(fields: [pumpAttendantId], references: [id], onDelete: Cascade)
   nozzleId        String
   nozzle          TblNozzle        @relation(fields: [nozzleId], references: [id])
   createdAt       DateTime         @default(now())
@@ -1717,6 +1720,8 @@ model TblTimeTable {
   createdAt   DateTime     @default(now())
   isChief     Boolean      @default(false)
   isSuport    Boolean      @default(false)
+  /// The pumps this rostered day puts them on, with the nozzles of each.
+  tblPumpAttendants TblPumpAttendant[]
 
   @@index([siteShiftId])
   @@index([userId])

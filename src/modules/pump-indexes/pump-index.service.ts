@@ -276,6 +276,9 @@ export class PumpIndexService {
    * The same three questions the POS asks before it lets someone confirm a
    * sale, in the same order and with the same codes — a reading and a sale are
    * then only ever recorded against a person the roster agrees was there.
+   *
+   * Both read the rota **of that day**, so a reading typed a week late is
+   * checked against the pump they held then, not the one they hold now.
    */
   private async assertOnDuty(attendantId: string, shiftSiteId: string, dateOn: string,
     nozzle: { id: string; name: string; pump: { id: string; name: string } }) {
@@ -285,7 +288,8 @@ export class PumpIndexService {
         `The time table does not put this attendant on that shift on ${dateOn}, or marks them absent`);
     }
     const who = `${rostered.user.firstName} ${rostered.user.lastName}`.trim();
-    const rota = await this.repo.rotaFor(attendantId, shiftSiteId);
+    // The rota of that very rostered day, not of the shift in general.
+    const rota = await this.repo.rotaFor(rostered.id);
     const onPump = rota.filter((row) => row.pump.id === nozzle.pump.id);
     if (onPump.length === 0) {
       throw new BusinessError("ATTENDANT_NOT_ON_PUMP",

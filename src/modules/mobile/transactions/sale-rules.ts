@@ -159,9 +159,11 @@ const ABSENT = 2;
  * started on, so in its small hours yesterday's roster applies — and its own
  * date is the working day the sale counts towards.
  *
- * **Where** comes from the pump rota (`TblPumpAttendant`), which now says only
- * which pump and nozzles an attendant handles in a shift, not which days he
- * works: the roster decides that.
+ * **Where** comes from the pump rota (`TblPumpAttendant`), which hangs off the
+ * roster row itself — so it says which pump and nozzles an attendant handles
+ * **on that very day**. The forecourt rotates, so the same person is on
+ * another pump next week, and asking the rota without a day would answer for
+ * the wrong one.
  */
 export async function pumpAssignment(db: Db, userId: string, siteId: string,
   nozzle: { id: string; name: string; pump: { id: string; name: string } }, now = new Date()) {
@@ -171,7 +173,7 @@ export async function pumpAssignment(db: Db, userId: string, siteId: string,
   const yesterday = new Date(Date.parse(today) - 86_400_000).toISOString().slice(0, 10);
   const rostered = await db.tblTimeTable.findMany({
     where: { userId, siteId, dateOn: { in: [toDate(today), toDate(yesterday)] }, status: { not: ABSENT }, shiftSite: { status: 1 } },
-    select: { dateOn: true, siteShiftId: true,
+    select: { id: true, dateOn: true, siteShiftId: true,
       shiftSite: { select: { shift: { select: { name: true, startAt: true, endAt: true } } } } },
   });
   const working = rostered.filter(({ dateOn, shiftSite: { shift } }) => {
@@ -186,9 +188,11 @@ export async function pumpAssignment(db: Db, userId: string, siteId: string,
     throw new BusinessError("ATTENDANT_NOT_ON_SHIFT",
       `You are not on the time table for the shift running now (${clock})`);
   }
+  // The rota rows of the very days and shifts the roster just returned, which
+  // is what makes this the rota *as it stands for this shift*, not for today's.
   const assignments = await db.tblPumpAttendant.findMany({
-    where: { userId, siteId, pumpId: nozzle.pump.id, siteShiftId: { in: working.map((row) => row.siteShiftId) } },
-    select: { siteShiftId: true, pumpAttendantNozzles: { select: { nozzleId: true } } },
+    where: { pumpId: nozzle.pump.id, timeTableId: { in: working.map((row) => row.id) } },
+    select: { timeTableId: true, pumpAttendantNozzles: { select: { nozzleId: true } } },
   });
   if (assignments.length === 0) {
     throw new BusinessError("ATTENDANT_NOT_ON_PUMP",
@@ -199,8 +203,8 @@ export async function pumpAssignment(db: Db, userId: string, siteId: string,
     throw new BusinessError("ATTENDANT_NOT_ON_NOZZLE", `${nozzle.name} is not one of your nozzles on ${nozzle.pump.name} in this shift`);
   }
   // The roster row's own date: a night shift's small hours still count towards the day it started.
-  const workingDay = fromDate(working.find((row) => row.siteShiftId === onNozzle.siteShiftId)!.dateOn);
-  return { siteShiftId: onNozzle.siteShiftId, workingDay };
+  const roster = working.find((row) => row.id === onNozzle.timeTableId)!;
+  return { siteShiftId: roster.siteShiftId, workingDay: fromDate(roster.dateOn) };
 }
 
 /**

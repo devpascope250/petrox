@@ -205,13 +205,14 @@ export class PumpIndexRepository {
   }
 
   /**
-   * The rota rows for an attendant in a shift: which pumps are theirs, and the
-   * nozzles of each. The rota has no date of its own — the roster above decides
-   * which days they work.
+   * The rota rows of one rostered day: which pumps are theirs on it, and the
+   * nozzles of each. The day is the roster row's own, so a reading recorded
+   * late is checked against the rota **as it was that day**, not as it stands
+   * now — the forecourt rotates.
    */
-  rotaFor(attendantId: string, shiftSiteId: string) {
+  rotaFor(timeTableId: string) {
     return this.db.tblPumpAttendant.findMany({
-      where: { userId: attendantId, siteShiftId: shiftSiteId },
+      where: { timeTableId },
       orderBy: { pump: { name: "asc" } },
       select: {
         id: true,
@@ -238,7 +239,7 @@ export class PumpIndexRepository {
       select: { id: true, status: true, isChief: true, isSuport: true, extraShift: true,
         user: { select: { id: true, firstName: true, lastName: true, phone: true } } },
     });
-    const rotas = await Promise.all(rostered.map((row) => this.rotaFor(row.user.id, shiftSiteId)));
+    const rotas = await Promise.all(rostered.map((row) => this.rotaFor(row.id)));
     return rostered.map((row, index) => ({ ...row, rota: rotas[index] }));
   }
 

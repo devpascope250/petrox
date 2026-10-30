@@ -9,19 +9,31 @@ const SHIFTS = {
 };
 const nozzle = { id: "nozzle-1", name: "Nozzle1", pump: { id: "pump-1", name: "PUMP1" } };
 
+/** A roster row's id, as the harness names them: one per date and shift. */
+const rosterId = (date: string, shift: string) => `${date}|${shift}`;
+
 /**
- * The time table rosters the attendant onto shifts by date; the pump rota says
- * which nozzles he handles in a shift, with no date of its own.
+ * The time table rosters the attendant onto shifts by date; the pump rota
+ * hangs off those rows, so it says which nozzles he handles **on that day**.
+ *
+ * `rota` is therefore given per rostered day. Leaving it out puts him on
+ * `nozzle-1` on every day he is rostered, which is the ordinary case.
  */
 function check(
   roster: Array<{ date: string; shift: keyof typeof SHIFTS }>,
   now: string,
-  rota: Array<{ shift: keyof typeof SHIFTS; nozzles?: string[] }> = [{ shift: "morning" }, { shift: "night" }],
+  rota?: Array<{ date: string; shift: keyof typeof SHIFTS; nozzles?: string[] }>,
 ) {
+  const rotaRows = (rota ?? roster.map((row) => ({ ...row, nozzles: ["nozzle-1"] })))
+    .map((row) => ({
+      timeTableId: rosterId(row.date, row.shift),
+      pumpAttendantNozzles: (row.nozzles ?? ["nozzle-1"]).map((nozzleId) => ({ nozzleId })),
+    }));
   const db = {
     tblTimeTable: {
       findMany: vi.fn().mockResolvedValue(
         roster.map((row) => ({
+          id: rosterId(row.date, row.shift),
           dateOn: new Date(`${row.date}T00:00:00.000Z`),
           siteShiftId: row.shift,
           shiftSite: { shift: SHIFTS[row.shift] },
@@ -30,12 +42,7 @@ function check(
     },
     tblPumpAttendant: {
       findMany: vi.fn().mockImplementation(async ({ where }) =>
-        rota
-          .filter((row) => (where.siteShiftId.in as string[]).includes(row.shift))
-          .map((row) => ({
-            siteShiftId: row.shift,
-            pumpAttendantNozzles: (row.nozzles ?? ["nozzle-1"]).map((nozzleId) => ({ nozzleId })),
-          })),
+        rotaRows.filter((row) => (where.timeTableId.in as string[]).includes(row.timeTableId)),
       ),
     },
   };
@@ -66,7 +73,8 @@ describe("the shift an attendant is working when a sale is confirmed", () => {
   it("refuses a pump or a nozzle that is not the attendant's, though he is on the shift", async () => {
     await expect(check([{ date: "2026-10-14", shift: "morning" }], "2026-10-14T08:00:00Z", []))
       .rejects.toMatchObject({ code: "ATTENDANT_NOT_ON_PUMP" });
-    await expect(check([{ date: "2026-10-14", shift: "morning" }], "2026-10-14T08:00:00Z", [{ shift: "morning", nozzles: ["nozzle-2"] }]))
+    await expect(check([{ date: "2026-10-14", shift: "morning" }], "2026-10-14T08:00:00Z",
+      [{ date: "2026-10-14", shift: "morning", nozzles: ["nozzle-2"] }]))
       .rejects.toMatchObject({ code: "ATTENDANT_NOT_ON_NOZZLE" });
   });
 
@@ -125,5 +133,29 @@ describe("the shift a confirm may name", () => {
       .rejects.toMatchObject({ code: "SHIFT_NOT_AT_SITE" });
     await expect(ownShift(db as never, "off", "morning", "site"))
       .rejects.toMatchObject({ code: "SHIFT_SWITCHED_OFF" });
+  });
+});
+
+describe("the rota of the day, not of the shift", () => {
+  // The forecourt rotates: the same attendant is on another pump next week.
+  // The rota hangs off the roster row, so each day answers for itself.
+  const roster = [
+    { date: "2026-10-13", shift: "morning" as const },
+    { date: "2026-10-14", shift: "morning" as const },
+  ];
+  const rota = [
+    { date: "2026-10-13", shift: "morning" as const, nozzles: ["nozzle-1"] },
+    { date: "2026-10-14", shift: "morning" as const, nozzles: ["nozzle-9"] },
+  ];
+
+  it("takes the nozzles he held on the day being confirmed", async () => {
+    await expect(check(roster, "2026-10-13T08:00:00Z", rota))
+      .resolves.toMatchObject({ workingDay: "2026-10-13" });
+  });
+
+  it("refuses the same nozzle on a day it was somebody else's", async () => {
+    // Monday's nozzle is not Tuesday's, and the sale is Tuesday's.
+    await expect(check(roster, "2026-10-14T08:00:00Z", rota))
+      .rejects.toMatchObject({ code: "ATTENDANT_NOT_ON_NOZZLE" });
   });
 });

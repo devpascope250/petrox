@@ -2,9 +2,21 @@ import type { AppConfig } from "../../config/env.js";
 import type { AuthUser } from "../../shared/auth/context-user.js";
 import { BusinessError, ConflictError, NotFoundError } from "../../utils/errors.js";
 import { PumpAttendantRepository } from "./pump-attendant.repository.js";
-import { CreatePumpAttendantSchema, PumpAttendantQuerySchema } from "./pump-attendant.schema.js";
-import { assertSiteAccess, siteScope } from "./shift-scope.js";
+import type {
+  CopyPumpAttendantWeekSchema, CreatePumpAttendantSchema, PumpAttendantQuerySchema, UpdatePumpAttendantSchema,
+} from "./pump-attendant.schema.js";
+import { assertSiteAccess, fromDate, siteScope } from "./shift-scope.js";
 
+/**
+ * Which pump an attendant works, and the nozzles of it, **on each rostered
+ * day**.
+ *
+ * A pump assignment hangs off the roster row, so the time table stays the one
+ * place that says who works when: a day it does not roster them on is reported
+ * back, never written. That is what lets the rota rotate — the same person on
+ * another pump next week — and what lets a sale or a meter reading for a past
+ * day be checked against the rota **as it was that day**.
+ */
 export class PumpAttendantService {
   constructor(private repo: PumpAttendantRepository, private config: AppConfig) {}
 
@@ -20,15 +32,65 @@ export class PumpAttendantService {
     return row;
   }
 
+  /**
+   * Writes the assignment to each day given, and says what it did:
+   * `assigned` for the days written, `notRostered` for the days the time table
+   * does not put them on that shift, and `alreadyHeld` for the days they were
+   * already on that pump.
+   */
   async create(input: CreatePumpAttendantSchema, actor: AuthUser) {
-    const siteId = await this.validate(input, actor);
-    return this.repo.create(input, siteId);
+    await this.validate(input, actor);
+
+    const days = [...new Set(input.dates)].sort();
+    const roster = await this.repo.rosterRows(input.userId, input.siteShiftId, days);
+    const rosteredOn = new Map(roster.map((row) => [fromDate(row.dateOn), row]));
+    const held = await this.repo.held(input.userId, input.siteShiftId, days);
+    const samePump = new Set(held
+      .filter((row) => row.pumpId === input.pumpId)
+      .map((row) => fromDate(row.timeTable.dateOn)));
+
+    const toWrite = days.filter((day) => rosteredOn.has(day) && !samePump.has(day));
+    if (toWrite.length === 0) {
+      // Nothing to do, and the reason matters: say which it is rather than
+      // answering with an empty success.
+      if (roster.length === 0) {
+        throw new BusinessError("NOT_ROSTERED",
+          "The time table does not put this attendant on that shift on any of those days."
+          + " Roster the days first, under Shifts → Time table.");
+      }
+      throw new ConflictError("ATTENDANT_EXISTS",
+        "This attendant is already on that pump on every day chosen");
+    }
+
+    const written = await this.repo.createMany(
+      input,
+      toWrite.map((day) => rosteredOn.get(day)!),
+    );
+    return {
+      assigned: written,
+      /** Days the roster does not cover, which is why they were not written. */
+      notRostered: days.filter((day) => !rosteredOn.has(day)),
+      /** Days that already had this pump, left as they were. */
+      alreadyHeld: [...samePump].filter((day) => days.includes(day)).sort(),
+      /** The other pumps this person already holds on those days. */
+      otherPumps: held
+        .filter((row) => row.pumpId !== input.pumpId)
+        .map((row) => ({ dateOn: fromDate(row.timeTable.dateOn), pump: row.pump.name })),
+    };
   }
 
-  async update(id: string, input: CreatePumpAttendantSchema, actor: AuthUser) {
-    await this.find(id, actor);
-    const siteId = await this.validate(input, actor, id);
-    return await this.repo.update(id, input, siteId);
+  /** One day's assignment: its pump and the nozzles of it. */
+  async update(id: string, input: UpdatePumpAttendantSchema, actor: AuthUser) {
+    const existing = await this.find(id, actor);
+    await this.validate(
+      { ...input, siteShiftId: existing.siteShiftId, userId: existing.userId, dates: [existing.dateOn] },
+      actor,
+    );
+    if (await this.repo.findDuplicate(existing.roster.id, input.pumpId, id)) {
+      throw new ConflictError("ATTENDANT_EXISTS",
+        `This attendant is already on that pump on ${existing.dateOn}`);
+    }
+    return await this.repo.update(id, input);
   }
 
   async delete(id: string, actor: AuthUser) {
@@ -37,11 +99,21 @@ export class PumpAttendantService {
     return { id };
   }
 
+  /** The next week's rota from this one's, for the days the roster covers. */
+  async copyWeek(input: CopyPumpAttendantWeekSchema, actor: AuthUser) {
+    const siteId = siteScope(actor) ?? input.siteId;
+    if (siteId) assertSiteAccess(siteId, actor);
+    return this.repo.copyWeek(input.startDate, siteId);
+  }
+
   /**
    * Everything must belong to the same site as the shift: the pump, its
-   * nozzles and the attendant. Returns that site, which is stored on the row.
+   * nozzles and the attendant.
    */
-  private async validate(input: CreatePumpAttendantSchema, actor: AuthUser, excludeId?: string) {
+  private async validate(
+    input: Omit<CreatePumpAttendantSchema, "dates"> & { dates: string[] },
+    actor: AuthUser,
+  ) {
     const siteShift = await this.repo.findSiteShift(input.siteShiftId);
     if (!siteShift) throw new NotFoundError("Site shift");
     assertSiteAccess(siteShift.siteId, actor);
@@ -72,12 +144,8 @@ export class PumpAttendantService {
     if (!(await this.repo.findSiteUser(input.userId, siteShift.siteId))) {
       throw new BusinessError("USER_OTHER_SITE", "The attendant must be an active user assigned to this site");
     }
-
-    if (await this.repo.findDuplicate(input, excludeId)) {
-      throw new ConflictError("ATTENDANT_EXISTS", "This attendant is already on this pump for that shift");
-    }
-    // Several attendants may hold the same nozzle in a shift: the time table
-    // says which of them is on which date, so they never work it at once.
+    // Several attendants may hold the same nozzle on one day: a handover is
+    // real, and the meter reading for that shift is one reading either way.
     return siteShift.siteId;
   }
 }
