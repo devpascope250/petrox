@@ -24,6 +24,15 @@ const schema = z.object({
   MOBILE_DEVICE_REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(90),
   /** A POS sale still initiated after this many minutes is cancelled, and its card freed. */
   MOBILE_SALE_TIMEOUT_MINUTES: z.coerce.number().int().positive().max(1440).default(10),
+  /**
+   * How long after a shift's hours an attendant may still record its meter
+   * readings from the POS. A reading is taken while closing up, which is
+   * usually a few minutes after the shift itself has ended.
+   *
+   * It loosens **nothing** else: confirming a sale stays strictly inside the
+   * shift's own hours.
+   */
+  MOBILE_PUMP_INDEX_GRACE_MINUTES: z.coerce.number().int().min(0).max(720).default(120),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   /** Public base address of the server, put in front of `/uploads/…` paths sent to the POS. */
   STATIC_URL: z.url().optional().transform((value) => value?.replace(/\/+$/, "")),

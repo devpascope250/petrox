@@ -150,6 +150,49 @@ export async function drawFromTank(db: Db, cuve: { id: string; name: string }, q
 const ABSENT = 2;
 
 /**
+ * The shifts the time table has an attendant working **now**: a roster row for
+ * this date (or yesterday, for a shift that runs past midnight), not marked
+ * absent, in a shift switched on at the site whose hours cover the time now in
+ * Rwanda.
+ *
+ * `graceMinutes` extends each shift past its end and nothing else. Zero — what
+ * a sale confirm uses — means strictly inside the hours. The meter readings
+ * pass a couple of hours, because closing up and writing the counters down
+ * happens after the shift itself has ended.
+ */
+export async function rosteredNow(db: Db, userId: string, siteId: string, now = new Date(), graceMinutes = 0) {
+  const local = new Date(now.getTime() + BUSINESS_OFFSET_MS);
+  const clock = local.toISOString().slice(11, 16);
+  const today = local.toISOString().slice(0, 10);
+  const yesterday = new Date(Date.parse(today) - 86_400_000).toISOString().slice(0, 10);
+  const rostered = await db.tblTimeTable.findMany({
+    where: { userId, siteId, dateOn: { in: [toDate(today), toDate(yesterday)] }, status: { not: ABSENT }, shiftSite: { status: 1 } },
+    select: { id: true, dateOn: true, siteShiftId: true,
+      shiftSite: { select: { shift: { select: { name: true, startAt: true, endAt: true } } } } },
+  });
+  /** Minutes since midnight, for comparing a clock with a shift's hours. */
+  const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+  const nowMinutes = minutes(clock);
+  const working = rostered.filter(({ dateOn, shiftSite: { shift } }) => {
+    const day = fromDate(dateOn);
+    const start = minutes(fromTime(shift.startAt));
+    // The grace is added to the end, so a shift that ends at 14:00 with two
+    // hours' grace still counts at 15:30 — and a shift ending at 23:30 counts
+    // into the small hours of the next day, which `end` over 1440 expresses.
+    const end = minutes(fromTime(shift.endAt)) + graceMinutes;
+    if (start < minutes(fromTime(shift.endAt))) {
+      return day === today
+        ? nowMinutes >= start && nowMinutes < end
+        // Only the part of the grace that spilled past midnight.
+        : day === yesterday && end > 1440 && nowMinutes < end - 1440;
+    }
+    // Overnight: the evening part on its own date, the small hours on the next.
+    return (day === today && nowMinutes >= start) || (day === yesterday && nowMinutes < end);
+  });
+  return { clock, today, yesterday, working };
+}
+
+/**
  * The site shift an attendant is working that nozzle in right now, in two steps.
  *
  * **When** comes from the time table (`TblTimeTable`), which is the roster: a
@@ -167,23 +210,7 @@ const ABSENT = 2;
  */
 export async function pumpAssignment(db: Db, userId: string, siteId: string,
   nozzle: { id: string; name: string; pump: { id: string; name: string } }, now = new Date()) {
-  const local = new Date(now.getTime() + BUSINESS_OFFSET_MS);
-  const clock = local.toISOString().slice(11, 16);
-  const today = local.toISOString().slice(0, 10);
-  const yesterday = new Date(Date.parse(today) - 86_400_000).toISOString().slice(0, 10);
-  const rostered = await db.tblTimeTable.findMany({
-    where: { userId, siteId, dateOn: { in: [toDate(today), toDate(yesterday)] }, status: { not: ABSENT }, shiftSite: { status: 1 } },
-    select: { id: true, dateOn: true, siteShiftId: true,
-      shiftSite: { select: { shift: { select: { name: true, startAt: true, endAt: true } } } } },
-  });
-  const working = rostered.filter(({ dateOn, shiftSite: { shift } }) => {
-    const day = fromDate(dateOn);
-    const start = fromTime(shift.startAt);
-    const end = fromTime(shift.endAt);
-    if (start < end) return day === today && clock >= start && clock < end;
-    // Overnight: the evening part on its own date, the small hours on the next.
-    return (day === today && clock >= start) || (day === yesterday && clock < end);
-  });
+  const { clock, working } = await rosteredNow(db, userId, siteId, now);
   if (working.length === 0) {
     throw new BusinessError("ATTENDANT_NOT_ON_SHIFT",
       `You are not on the time table for the shift running now (${clock})`);

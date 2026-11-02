@@ -27,6 +27,18 @@ const readingSelect = {
 
 type Reading = Prisma.PumpIndexGetPayload<{ select: typeof readingSelect }>;
 
+/** What it takes to write one reading: the nozzle it was taken on, and the figures. */
+export interface NewReading {
+  nozzle: { id: string; pump: { id: string; siteId: string }; cuve: { item: { id: string } } };
+  shiftSiteId: string;
+  dateOn: string;
+  attendantId: string;
+  startIndex: Prisma.Decimal;
+  endIndex: Prisma.Decimal;
+  sellingPrice: Prisma.Decimal;
+  createdBy: string;
+}
+
 /**
  * A reading as the screens read it: the figures as numbers, the working day as
  * the calendar day it is stored as, and what the shift put through the nozzle —
@@ -266,30 +278,46 @@ export class PumpIndexRepository {
     return priceInForce(this.db, item);
   }
 
-  async create(data: {
-    nozzle: { id: string; pump: { id: string; siteId: string }; cuve: { item: { id: string } } };
-    shiftSiteId: string; dateOn: string; attendantId: string;
-    startIndex: Prisma.Decimal; endIndex: Prisma.Decimal; sellingPrice: Prisma.Decimal;
-    createdBy: string;
-  }) {
+  /** The columns a reading carries, from the nozzle it was taken on. */
+  private columns(data: NewReading) {
+    return {
+      pumpId: data.nozzle.pump.id, nozzleId: data.nozzle.id, itemId: data.nozzle.cuve.item.id,
+      siteId: data.nozzle.pump.siteId, shiftSiteId: data.shiftSiteId, dateOn: toDate(data.dateOn),
+      attendantId: data.attendantId,
+      startIndex: data.startIndex, endIndex: data.endIndex, sellingPrice: data.sellingPrice,
+      createdBy: data.createdBy,
+    };
+  }
+
+  /** One reading per nozzle per shift per day: the unique key, said in words. */
+  private clash(error: unknown): never {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new BusinessError("READING_ALREADY_RECORDED",
+        "This nozzle already has a reading for that shift on that day");
+    }
+    throw error;
+  }
+
+  async create(data: NewReading) {
     try {
-      return await this.db.pumpIndex.create({
-        data: {
-          pumpId: data.nozzle.pump.id, nozzleId: data.nozzle.id, itemId: data.nozzle.cuve.item.id,
-          siteId: data.nozzle.pump.siteId, shiftSiteId: data.shiftSiteId, dateOn: toDate(data.dateOn),
-          attendantId: data.attendantId,
-          startIndex: data.startIndex, endIndex: data.endIndex, sellingPrice: data.sellingPrice,
-          createdBy: data.createdBy,
-        },
-        select: readingSelect,
-      });
+      return await this.db.pumpIndex.create({ data: this.columns(data), select: readingSelect });
     } catch (error) {
-      // The unique key on (nozzle, shift, day): one reading each, no more.
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new BusinessError("READING_ALREADY_RECORDED",
-          "This nozzle already has a reading for that shift on that day");
-      }
-      throw error;
+      this.clash(error);
+    }
+  }
+
+  /**
+   * Several readings at once, all or none: a shift's nozzles are read together
+   * at the pump, and half a closed shift is worse than none of it.
+   */
+  async createBatch(rows: NewReading[]) {
+    try {
+      const written = await this.db.$transaction(
+        rows.map((row) => this.db.pumpIndex.create({ data: this.columns(row), select: readingSelect })),
+      );
+      return written;
+    } catch (error) {
+      this.clash(error);
     }
   }
 

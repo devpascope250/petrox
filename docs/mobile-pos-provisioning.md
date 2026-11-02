@@ -547,6 +547,111 @@ initiated, so a confirm cannot move a sale onto equipment the attendant does
 hold. The shift those checks agree on is the one the sale — and the fuel sale
 mirrored for the web — is recorded under.
 
+## Pump meter readings (`/mobile/pump-indexes`)
+
+What each nozzle's counter stood at when a shift closed, taken at the pump by
+the attendant who worked it. **JSON, not form data** — there are no files.
+
+Both routes are `POST`, including the one that only reads: a PIN belongs in a
+body, not in a query string that lands in an access log. Both are limited to 20
+a minute per device, as the sale confirm is, because both check a PIN.
+
+### `POST /mobile/pump-indexes/current` — what this attendant may read
+
+Body: `{ "phone": "0780000002", "pin": "1234" }`.
+
+Answers with the shifts the time table has them working **now**, and under each
+one the pumps and nozzles the rota gives them that day:
+
+```json
+{
+  "attendant": { "id": "…" },
+  "clock": "15:45",
+  "graceMinutes": 120,
+  "shifts": [
+    {
+      "shiftSiteId": "…",
+      "shift": { "name": "Morning", "startAt": "06:00", "endAt": "14:00" },
+      "workingDay": "2026-11-02",
+      "closing": true,
+      "pumps": [
+        {
+          "id": "…", "name": "PUMP1",
+          "nozzles": [
+            {
+              "id": "…", "name": "Nozzle 1", "nozzleCode": "NZ057383",
+              "item": { "id": "…", "name": "AGO" },
+              "startIndex": 12910.5,
+              "isFirst": false,
+              "sellingPrice": 1764,
+              "reading": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `startIndex` is **carried** from that nozzle's last reading and is never sent
+  back. A nozzle with no reading yet opens at **0** (`isFirst: true`): the
+  opening figure is not typed at the pump, so no chain can start on a typo.
+  Correcting an opening is a web job.
+- `reading` is filled in when that nozzle already has one for this shift and
+  day — with its figures, whose name is on it and whether it is approved. There
+  is only ever one per nozzle per shift per day.
+- `closing: true` means the shift's own hours are over and only the grace is
+  holding it open, so the POS can lead with "close the shift".
+- Several shifts can come back at once: minutes after a handover the shift just
+  ended is still inside its grace while the next has begun. The POS says which
+  one it is closing.
+
+### `POST /mobile/pump-indexes` — record them
+
+```json
+{
+  "phone": "0780000002",
+  "pin": "1234",
+  "shiftSiteId": "…",
+  "readings": [
+    { "nozzleId": "…", "endIndex": "12910.50" },
+    { "nozzleId": "…", "endIndex": "8640.00" }
+  ]
+}
+```
+
+One call for the whole shift, written **all or none**: a pump's nozzles are read
+together, and a dropped connection must not leave half a shift recorded. At most
+20 readings.
+
+The attendant is taken from the phone and PIN, **never from the body**: this
+figure is what the station's cash is reconciled against, so it has to be their
+own act and not whatever a device claims. Nothing but the closing figures is
+taken on trust — the shift, the working day, the opening index and the selling
+price are all worked out on the server.
+
+A nozzle that already carries a reading for the shift is **reported, not
+refused** (`alreadyRecorded`), since the attendant may be finishing a submit
+that half succeeded; the rest are written. Only when every nozzle sent is
+already recorded does the call fail, with `409 READING_ALREADY_RECORDED`.
+
+Readings arrive **pending**. Approving one — which freezes it for good — stays
+on the web, because a POS has no way to correct what it sent.
+
+| Status | Code | Meaning |
+|---|---|---|
+| 422 | `INVALID_ATTENDANT` | Wrong phone number or PIN. |
+| 422 | `ATTENDANT_NOT_ON_SHIFT` | The time table puts them on no shift now, within its hours or the grace that follows; or the `shiftSiteId` sent is not one of those. |
+| 422 | `ATTENDANT_NOT_ON_NOZZLE` | A nozzle sent is not theirs on that shift's rota. `data.nozzleIds` says which. |
+| 422 | `INDEX_GOES_BACKWARDS` | A closing figure below what the nozzle opens at. |
+| 422 | `PRICE_NOT_SET` | The product has no price in force to record against. |
+| 409 | `READING_ALREADY_RECORDED` | Every nozzle sent already has a reading for that shift. |
+
+`MOBILE_PUMP_INDEX_GRACE_MINUTES` (default 120) is how long after a shift's
+hours its counters may still be recorded. It loosens **nothing** else:
+confirming a sale stays strictly inside the shift's own hours.
+
 `PATCH /mobile/transactions/:code/print-status` records whether the receipt of a confirmed sale
 was printed: `printStatus` (`true`/`false`, as form data or JSON), `true` when left out. It returns
 the sale; sending the same value again is harmless. A sale that is not confirmed gets
