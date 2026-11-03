@@ -15,6 +15,20 @@ export class AuthRepository {
       include: { role: { include: { permissions: { include: { permission: true } } } }, sites: {where: {status: "active"}}, client: true }
     });
   }
+  /** The signature a user signs documents with, and nothing else. */
+  findSignature(userId: string) {
+    return this.db.user.findUnique({ where: { id: userId }, select: { signatureUrl: true } });
+  }
+
+  /** Sets or clears it. `null` is "no signature on record". */
+  saveSignature(userId: string, signatureUrl: string | null) {
+    return this.db.user.update({
+      where: { id: userId },
+      data: { signatureUrl },
+      select: { signatureUrl: true },
+    });
+  }
+
   createRefreshToken(userId: string, tokenHash: string, expiresAt: Date) {
     return this.db.refreshToken.create({ data: { userId, tokenHash, expiresAt } });
   }

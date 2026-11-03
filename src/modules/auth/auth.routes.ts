@@ -12,6 +12,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   app.post("/logout", controller.logout);
   app.get("/me", { preHandler: [app.authenticate] }, controller.me);
   app.get("/me/permissions", { preHandler: [app.authenticate] }, controller.myPermissions);
+  // Your own signature, as form data in a `signature` field. A loading order
+  // cannot be authorized without one, and nobody may set anybody else's.
+  app.post("/me/signature", { preHandler: [app.authenticate] }, controller.saveSignature);
+  app.delete("/me/signature", { preHandler: [app.authenticate] }, controller.removeSignature);
   app.post("/change-password", { ...limited, preHandler: [app.authenticate] }, controller.changePassword);
   app.post("/password-reset/request", controller.requestReset);
   app.post("/password-reset/confirm", limited, controller.resetPassword);

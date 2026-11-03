@@ -83,6 +83,16 @@ export class AuthController {
   me = async (request: FastifyRequest) =>
     success(await this.service.me(request.contextUser!.userId));
 
+  /**
+   * Your own signature: the image stamped on documents you authorize. Only
+   * ever your own — see the service.
+   */
+  saveSignature = async (request: FastifyRequest) =>
+    success(await this.service.saveSignature(request.contextUser!.userId, request));
+
+  removeSignature = async (request: FastifyRequest) =>
+    success(await this.service.removeSignature(request.contextUser!.userId));
+
   /** The signed-in user's own permissions, by name, grouped by module. */
   myPermissions = async (request: FastifyRequest) =>
     success(await this.service.myPermissions(request.contextUser!.userId));

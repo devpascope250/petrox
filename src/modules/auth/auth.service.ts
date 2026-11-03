@@ -1,11 +1,21 @@
+import { rm } from "node:fs/promises";
+import path from "node:path";
 import bcrypt from "bcryptjs";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AppConfig } from "../../config/env.js";
 import { createOpaqueToken, hashToken, verifyPin } from "../../utils/crypto.js";
-import { AppError, unauthorized } from "../../utils/errors.js";
+import { AppError, BusinessError, unauthorized } from "../../utils/errors.js";
+import { staticUrl } from "../../utils/static-url.js";
+import { readMobileForm } from "../mobile/transactions/transaction-form.js";
 import { AuthRepository } from "./auth.repository.js";
 import { emailService} from "../../utils/emailService.js";
 import type { ChangePasswordInput } from "./auth.schema.js";
+
+/** Removes an uploaded file by its `/uploads/…` path; anything else is left alone. */
+async function removeUpload(uploaded: string | null) {
+  if (!uploaded?.startsWith("/uploads/")) return;
+  await rm(path.join(process.cwd(), "uploads", path.basename(uploaded)), { force: true });
+}
 type AuthUser = NonNullable<Awaited<ReturnType<AuthRepository["findUserByEmail"]>>>;
 
 export class AuthService {
@@ -16,7 +26,54 @@ export class AuthService {
   private publicUser(user: AuthUser) {
     // `position`, `clientId` and `client` let the frontend pick the client
     // portal over the admin layout, and name the account, without a second call.
-    return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role?.name, position: user.position, sites: user.sites, clientId: user.clientId, client: user.client };
+    return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role?.name, position: user.position, sites: user.sites, clientId: user.clientId, client: user.client,
+      // Whether they can sign: a loading order cannot be authorized without
+      // one, so the screen that asks has to know before it asks.
+      signatureUrl: staticUrl(this.config.STATIC_URL ?? this.config.APP_URL, user.signatureUrl) };
+  }
+
+  /**
+   * The signature this user signs documents with: their own, and only their
+   * own.
+   *
+   * Nobody may set anybody else's. A signature stamped on an approval is the
+   * claim that *that person* approved it, and an administrator who could
+   * upload one on their behalf would make the trail worth nothing.
+   *
+   * Replacing it never reaches a document already signed: an approval copies
+   * the image when it is given.
+   */
+  async saveSignature(userId: string, request: FastifyRequest) {
+    if (!request.isMultipart()) {
+      throw new BusinessError("MULTIPART_REQUIRED", "Send the signature as form data, in a `signature` field");
+    }
+    const form = await readMobileForm(request, [{ field: /^signature$/, kind: "image" }], 1);
+    const uploaded = form.files.signature;
+    if (!uploaded) {
+      await form.discard();
+      throw new BusinessError("SIGNATURE_REQUIRED", "Choose an image of your signature");
+    }
+    try {
+      const current = await this.repo.findSignature(userId);
+      const saved = await this.repo.saveSignature(userId, uploaded);
+      // Only once the new one is stored: a failure must not leave the user
+      // with neither.
+      await removeUpload(current?.signatureUrl ?? null);
+      return { signatureUrl: staticUrl(this.config.STATIC_URL ?? this.config.APP_URL, saved.signatureUrl) };
+    } catch (error) {
+      await form.discard();
+      throw error;
+    }
+  }
+
+  /** Takes it off. Documents already signed keep the image they copied. */
+  async removeSignature(userId: string) {
+    const current = await this.repo.findSignature(userId);
+    if (current?.signatureUrl) {
+      await this.repo.saveSignature(userId, null);
+      await removeUpload(current.signatureUrl);
+    }
+    return { signatureUrl: null };
   }
 
   /** The signed-in account, for restoring a session on page load. */
