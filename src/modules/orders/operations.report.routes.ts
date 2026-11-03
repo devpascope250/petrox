@@ -4,7 +4,9 @@ import { parseInput } from "../../shared/validation/index.js";
 import { OperationsReportService } from "../../reports/operations/operations-report.service.js";
 import { depotStockMovementReportSchema, procurementOrderReportSchema } from "../../reports/operations/operations-report.schema.js";
 import { TransporterToleranceService } from "../../reports/operations/transporter-tolerance.service.js";
-import { transporterToleranceReportSchema } from "../../reports/operations/transporter-tolerance.schema.js";
+import {
+  shareToleranceSchema, transporterSharesQuerySchema, transporterToleranceReportSchema,
+} from "../../reports/operations/transporter-tolerance.schema.js";
 
 const routes: FastifyPluginAsync = async (app) => {
   const service = new OperationsReportService(app.prisma);
@@ -29,6 +31,22 @@ const routes: FastifyPluginAsync = async (app) => {
     preHandler: [app.authenticate, app.authorize("transporter.tolerance.read", "transporter.tolerance.manage")],
   }, async (request) =>
     success(await tolerance.report(parseInput(transporterToleranceReportSchema, request.query))));
+
+  /**
+   * Sends a transporter their statement for a period, to the address on their
+   * own record — and keeps what was sent. Gated on `manage`: reading what a
+   * transporter owes and telling them so are different acts.
+   */
+  app.post("/transporter-tolerance/share", {
+    preHandler: [app.authenticate, app.authorize("transporter.tolerance.manage")],
+  }, async (request) =>
+    success(await tolerance.share(parseInput(shareToleranceSchema, request.body), request.contextUser!.userId)));
+
+  /** What has been sent, and to whom. */
+  app.get("/transporter-tolerance/shares", {
+    preHandler: [app.authenticate, app.authorize("transporter.tolerance.read", "transporter.tolerance.manage")],
+  }, async (request) =>
+    success(await tolerance.shares(parseInput(transporterSharesQuerySchema, request.query).transporterId)));
 };
 
 export default routes;

@@ -85,3 +85,33 @@ describe("the allowance a product carries", () => {
     await expect(allowedToleranceRate(db as never, "item")).resolves.toBeNull();
   });
 });
+
+describe("what the transporter is answerable for", () => {
+  it("charges the short beyond the allowance, and nothing within it", () => {
+    // 2,000 cleared, 0.3% allows 6; 1,600 delivered is 400 short, so 394 is
+    // theirs — the user's own worked example.
+    const tolerance = toleranceFor({ t1Quantity: 2_000, receivedQuantity: 1_600, allowedRate: "0.3" });
+    expect(tolerance.allowedQuantity!.toString()).toBe("6");
+    expect(tolerance.lossQty.toString()).toBe("400");
+    expect(tolerance.chargeableQty!.toString()).toBe("394");
+  });
+
+  it("charges nothing for a trip inside its allowance", () => {
+    expect(trip(39_760).chargeableQty!.toString()).toBe("0");
+    // Exactly the allowance is still inside it.
+    expect(trip(39_600).chargeableQty!.toString()).toBe("0");
+  });
+
+  it("charges nothing for a gain, however far over", () => {
+    // A load that arrives over is not something the transporter owes, even
+    // when it is outside the allowance and so worth asking about.
+    const over = trip(40_500);
+    expect(over.withinTolerance).toBe(false);
+    expect(over.chargeableQty!.toString()).toBe("0");
+  });
+
+  it("charges nothing when the product carries no rate", () => {
+    // Nothing can be charged against an allowance nobody has set.
+    expect(trip(39_400, null).chargeableQty).toBeNull();
+  });
+});

@@ -1,7 +1,27 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginatedData, paginationArgs } from "../../shared/pagination/index.js";
 import { toleranceFor } from "../../modules/central-stock/tolerance-rules.js";
-import type { TransporterToleranceReportSchema } from "./transporter-tolerance.schema.js";
+import { BusinessError, NotFoundError } from "../../utils/errors.js";
+import { emailService } from "../../utils/emailService.js";
+import type { ShareToleranceSchema, TransporterToleranceReportSchema } from "./transporter-tolerance.schema.js";
+
+/** `3 Nov 2026`, as the statement dates a trip. */
+const when = (value: Date) =>
+  value.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+/**
+ * The calendar day of a moment, at midnight UTC.
+ *
+ * The period a statement covers is a pair of days, and the filter's end is the
+ * last millisecond of the second one. Stored straight into a DATE column that
+ * rounds `.999` up to the next second, "to 31 October" would be recorded as
+ * "to 1 November" — so the day is taken before it is written.
+ */
+const asDay = (value: Date) => new Date(`${value.toISOString().slice(0, 10)}T00:00:00.000Z`);
+
+/** A quantity as the statement prints one. */
+const quantity = (value: number) =>
+  value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const money = (value: Prisma.Decimal) => Number(value.toDecimalPlaces(2));
 
@@ -113,6 +133,8 @@ export class TransporterToleranceService {
       rate: money(tolerance.rate),
       allowedRate: tolerance.allowedRate === null ? null : money(tolerance.allowedRate),
       allowedQuantity: tolerance.allowedQuantity === null ? null : money(tolerance.allowedQuantity),
+      /** The short beyond the allowance: what the transporter is answerable for. */
+      chargeableQty: tolerance.chargeableQty === null ? null : money(tolerance.chargeableQty),
       /** `null` when the product carried no allowance: unjudged, not passed. */
       withinTolerance: tolerance.withinTolerance,
     };
@@ -148,6 +170,8 @@ export class TransporterToleranceService {
       transporter: { id: string; name: string };
       trips: number; carried: number; received: number;
       lossQty: number; gainQty: number; difference: number;
+      /** What is theirs: the shorts beyond the allowance, added up. */
+      chargeableQty: number;
       overTolerance: number; unjudged: number;
       /** The net difference as a share of everything they carried. */
       rate: number;
@@ -157,7 +181,7 @@ export class TransporterToleranceService {
       const line = byTransporter.get(trip.transporter.id) ?? {
         transporter: trip.transporter,
         trips: 0, carried: 0, received: 0, lossQty: 0, gainQty: 0, difference: 0,
-        overTolerance: 0, unjudged: 0, rate: 0,
+        chargeableQty: 0, overTolerance: 0, unjudged: 0, rate: 0,
       };
       line.trips += 1;
       line.carried += trip.t1.quantityAt20C;
@@ -165,6 +189,7 @@ export class TransporterToleranceService {
       line.lossQty += trip.lossQty;
       line.gainQty += trip.gainQty;
       line.difference += trip.difference;
+      line.chargeableQty += trip.chargeableQty ?? 0;
       if (trip.withinTolerance === false) line.overTolerance += 1;
       if (trip.withinTolerance === null) line.unjudged += 1;
       byTransporter.set(trip.transporter.id, line);
@@ -175,6 +200,7 @@ export class TransporterToleranceService {
       line.lossQty = Number(line.lossQty.toFixed(2));
       line.gainQty = Number(line.gainQty.toFixed(2));
       line.difference = Number(line.difference.toFixed(2));
+      line.chargeableQty = Number(line.chargeableQty.toFixed(2));
       line.rate = line.carried === 0 ? 0 : Number(((line.difference / line.carried) * 100).toFixed(2));
     }
 
@@ -185,9 +211,11 @@ export class TransporterToleranceService {
       lossQty: sum.lossQty + trip.lossQty,
       gainQty: sum.gainQty + trip.gainQty,
       difference: sum.difference + trip.difference,
+      chargeableQty: sum.chargeableQty + (trip.chargeableQty ?? 0),
       overTolerance: sum.overTolerance + (trip.withinTolerance === false ? 1 : 0),
       unjudged: sum.unjudged + (trip.withinTolerance === null ? 1 : 0),
-    }), { trips: 0, carried: 0, received: 0, lossQty: 0, gainQty: 0, difference: 0, overTolerance: 0, unjudged: 0 });
+    }), { trips: 0, carried: 0, received: 0, lossQty: 0, gainQty: 0, difference: 0,
+      chargeableQty: 0, overTolerance: 0, unjudged: 0 });
 
     const shown = query.overTolerance === undefined
       ? page.map((trip) => this.present(trip))
@@ -201,10 +229,126 @@ export class TransporterToleranceService {
         lossQty: Number(totals.lossQty.toFixed(2)),
         gainQty: Number(totals.gainQty.toFixed(2)),
         difference: Number(totals.difference.toFixed(2)),
+        chargeableQty: Number(totals.chargeableQty.toFixed(2)),
         rate: totals.carried === 0 ? 0 : Number(((totals.difference / totals.carried) * 100).toFixed(2)),
       },
-      byTransporter: [...byTransporter.values()].sort((a, b) => b.lossQty - a.lossQty),
+      // Worst first: the transporter owing the most litres leads the report.
+      byTransporter: [...byTransporter.values()].sort((a, b) => b.chargeableQty - a.chargeableQty || b.lossQty - a.lossQty),
       ...paginatedData(shown, query.overTolerance === undefined ? total : judged.length, query),
     };
   }
+
+  /**
+   * Sends a transporter what their loads came to over a period, and keeps a
+   * record of having done so.
+   *
+   * The statement goes to the address **on the transporter**, never to one
+   * named in the request: an address typed into a send box is how a statement
+   * reaches the wrong firm. The totals are copied onto the record as they
+   * stood when it went, so a receipt corrected afterwards cannot quietly
+   * change what the transporter was told.
+   */
+  async share(input: ShareToleranceSchema, sentBy: string) {
+    const transporter = await this.db.transporter.findUnique({
+      where: { id: input.transporterId },
+      select: { id: true, name: true, email: true, status: true },
+    });
+    if (!transporter) throw new NotFoundError("Transporter");
+    if (!transporter.email) {
+      throw new BusinessError("TRANSPORTER_HAS_NO_EMAIL",
+        `${transporter.name} has no email address on record, so there is nowhere to send it.`
+        + " Add one under Transporters first.");
+    }
+
+    // The same report, narrowed to this transporter and period: one reading of
+    // the figures, so the statement cannot differ from the page it was sent from.
+    const report = await this.report({
+      transporterId: input.transporterId,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      page: 1,
+      pageSize: 500,
+    } as TransporterToleranceReportSchema);
+
+    if (report.totals.trips === 0) {
+      throw new BusinessError("NOTHING_TO_SHARE",
+        `${transporter.name} has no trips received between those days, so there is nothing to send.`);
+    }
+
+    const period = `${when(input.startDate)} – ${when(input.endDate)}`;
+    await emailService.sendToleranceStatementEmail(transporter.email, {
+      transporterName: transporter.name,
+      period,
+      totals: {
+        trips: report.totals.trips,
+        carried: quantity(report.totals.carried),
+        received: quantity(report.totals.received),
+        lossQty: quantity(report.totals.lossQty),
+        gainQty: quantity(report.totals.gainQty),
+        chargeableQty: quantity(report.totals.chargeableQty),
+      },
+      trips: report.items.map((trip) => ({
+        receivedAt: when(trip.receivedAt),
+        vehicle: trip.vehicle.platNumber,
+        item: trip.item.name,
+        t1: quantity(trip.t1.quantityAt20C),
+        received: quantity(trip.receivedAt20C),
+        difference: trip.gainQty > 0 ? `+${quantity(trip.gainQty)}` : quantity(trip.lossQty),
+        allowed: trip.allowedQuantity === null ? "—" : quantity(trip.allowedQuantity),
+        chargeable: trip.chargeableQty === null ? "—" : quantity(trip.chargeableQty),
+        short: trip.lossQty > 0,
+      })),
+      message: input.message ?? null,
+    });
+
+    // Written only once the mail has gone: a record of a statement nobody
+    // received would be worse than no record at all.
+    const record = await this.db.toleranceReportShare.create({
+      data: {
+        transporterId: transporter.id,
+        sentTo: transporter.email,
+        startDate: asDay(input.startDate),
+        endDate: asDay(input.endDate),
+        trips: report.totals.trips,
+        carriedQty: report.totals.carried,
+        lossQty: report.totals.lossQty,
+        gainQty: report.totals.gainQty,
+        chargeableQty: report.totals.chargeableQty,
+        sentBy,
+      },
+      select: shareSelect,
+    });
+    return presentShare(record);
+  }
+
+  /** What has been sent to a transporter, newest first. */
+  async shares(transporterId?: string) {
+    const rows = await this.db.toleranceReportShare.findMany({
+      where: transporterId ? { transporterId } : undefined,
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      select: shareSelect,
+    });
+    return rows.map(presentShare);
+  }
+}
+
+const shareSelect = {
+  id: true, sentTo: true, startDate: true, endDate: true, trips: true,
+  carriedQty: true, lossQty: true, gainQty: true, chargeableQty: true, createdAt: true,
+  transporter: { select: { id: true, name: true } },
+  user: { select: { id: true, firstName: true, lastName: true } },
+} satisfies Prisma.ToleranceReportShareSelect;
+
+/** A share as the screens read one: the days as days, the figures as numbers. */
+function presentShare(row: Prisma.ToleranceReportShareGetPayload<{ select: typeof shareSelect }>) {
+  return {
+    ...row,
+    startDate: row.startDate.toISOString().slice(0, 10),
+    endDate: row.endDate.toISOString().slice(0, 10),
+    carriedQty: Number(row.carriedQty),
+    lossQty: Number(row.lossQty),
+    gainQty: Number(row.gainQty),
+    chargeableQty: Number(row.chargeableQty),
+  };
 }

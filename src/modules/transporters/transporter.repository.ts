@@ -12,6 +12,7 @@ export class TransporterRepository {
         name: true,
         address: true,
         phone: true,
+        email: true,
         status: true,
         tinNumber: true,
         createdAt: true

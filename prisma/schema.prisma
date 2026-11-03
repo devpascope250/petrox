@@ -138,6 +138,7 @@ model User {
   confirmedByPumpIndexes PumpIndex[]        @relation("pumpIndexConfirmed")
   attendedPumpIndexes    PumpIndex[]        @relation("pumpIndexAttendant")
   pumpPlans              PumpAttendantPlan[] @relation("pumpPlanAttendant")
+  toleranceShares        ToleranceReportShare[]
   pumpPlansCreated       PumpAttendantPlan[] @relation("pumpPlanCreatedBy")
 
   @@index([roleId])
@@ -389,6 +390,9 @@ model Transporter {
   id        String     @id @default(uuid())
   name      String
   phone     String
+  /// Where a tolerance statement is sent. Optional: the transporters already
+  /// on record were entered without one, and it is only needed to share.
+  email     String?
   address   String
   tinNumber String
   status    StatusType @default(active)
@@ -396,6 +400,7 @@ model Transporter {
   updatedAt DateTime   @updatedAt
   vehicles  Vehicle[]
   drivers   Driver[]
+  toleranceShares ToleranceReportShare[]
 
   @@index([id])
 }
@@ -1673,6 +1678,36 @@ model TblShiftSite {
 /// Which pump and nozzles an attendant handles in a site shift. Not which
 /// days he works: the time table (`TblTimeTable`) rosters people by date, and
 /// that is what a sale checks.
+/// A tolerance statement sent to a transporter.
+///
+/// Kept because both halves of the argument come up: "we never received it"
+/// and "that is not what you sent us". The totals are **copied as they stood
+/// when it was sent**, so a receipt corrected afterwards cannot quietly change
+/// what the transporter was told.
+model ToleranceReportShare {
+  id            String      @id @default(uuid())
+  transporterId String
+  transporter   Transporter @relation(fields: [transporterId], references: [id])
+  /// The address it actually went to, not the transporter's address today.
+  sentTo        String
+  /// The period covered, by the day the loads were received.
+  startDate     DateTime    @db.Date
+  endDate       DateTime    @db.Date
+  /// What the statement said, at the moment it was sent.
+  trips         Int         @default(0)
+  carriedQty    Decimal     @default(0.0) @db.Decimal(18, 2)
+  lossQty       Decimal     @default(0.0) @db.Decimal(18, 2)
+  gainQty       Decimal     @default(0.0) @db.Decimal(18, 2)
+  /// Short of what the allowance covered: the part that is the transporter's.
+  chargeableQty Decimal     @default(0.0) @db.Decimal(18, 2)
+  sentBy        String
+  user          User        @relation(fields: [sentBy], references: [id])
+  createdAt     DateTime    @default(now())
+
+  @@index([transporterId, createdAt])
+  @@index([sentBy])
+}
+
 /// The standing arrangement: which pump an attendant works, and its nozzles,
 /// on a **weekday** of a shift — "Jean is on PUMP1, nozzles 1 and 5, Mondays,
 /// Shift 1".

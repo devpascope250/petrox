@@ -41,6 +41,17 @@ export interface Tolerance {
   /** That percentage in litres of this trip, for a report that shows both. */
   allowedQuantity: Prisma.Decimal | null;
   /**
+   * What the transporter is answerable for: the short **beyond** the
+   * allowance. 2,000 cleared at 0.3% allows 6; deliver 1,600 and the 400
+   * short is 394 past what was allowed, and that 394 is theirs.
+   *
+   * Zero when the trip is inside its allowance, and zero for a gain — a load
+   * that arrives over is not something the transporter owes. `null` when the
+   * product carries no rate, since nothing can be charged against an
+   * allowance nobody has set.
+   */
+  chargeableQty: Prisma.Decimal | null;
+  /**
    * Whether the difference is inside the allowance. A product with no rate
    * set is not "within" anything — it is unjudged, and the report says so.
    */
@@ -75,10 +86,14 @@ export function toleranceFor(input: {
   // would be a quiet infinity rather than an honest zero.
   const rate = t1.isZero() ? ZERO : money(difference.abs().dividedBy(t1).times(100));
   const allowedQuantity = allowedRate === null ? null : money(t1.times(allowedRate).dividedBy(100));
+  const lossQty = difference.greaterThan(0) ? difference : ZERO;
   return {
     difference,
-    lossQty: difference.greaterThan(0) ? difference : ZERO,
+    lossQty,
     gainQty: difference.lessThan(0) ? difference.abs() : ZERO,
+    chargeableQty: allowedQuantity === null
+      ? null
+      : Prisma.Decimal.max(money(lossQty.minus(allowedQuantity)), ZERO),
     rate,
     allowedRate,
     allowedQuantity,

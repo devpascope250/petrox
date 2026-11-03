@@ -29,3 +29,26 @@ export const transporterToleranceReportSchema = paginationQuerySchema.extend({
 });
 
 export type TransporterToleranceReportSchema = z.infer<typeof transporterToleranceReportSchema>;
+
+/**
+ * Sharing a statement with a transporter: who, and over which days.
+ *
+ * It goes to the address on the transporter, not to one named here — an
+ * address typed into a send box is how a statement reaches the wrong firm.
+ */
+export const shareToleranceSchema = z.object({
+  transporterId: uuidSchema,
+  startDate: fromDate,
+  endDate: toDate,
+  /** A line of your own at the foot of the statement. */
+  message: z.string().trim().max(500, "Keep the message under 500 characters").optional(),
+}).refine(({ startDate, endDate }) => startDate <= endDate, {
+  message: "startDate must be before or equal to endDate", path: ["endDate"],
+});
+
+export const transporterSharesQuerySchema = z.object({
+  transporterId: uuidSchema.optional(),
+});
+
+export type ShareToleranceSchema = z.infer<typeof shareToleranceSchema>;
+export type TransporterSharesQuery = z.infer<typeof transporterSharesQuerySchema>;

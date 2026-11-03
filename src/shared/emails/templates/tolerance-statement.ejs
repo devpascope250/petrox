@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= heading %></title>
+  </head>
+  <body style="margin: 0; padding: 0; font-family: &quot;Segoe UI&quot;, Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6fb">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f4f6fb">
+      <tr>
+        <td align="center" style="padding: 40px 20px">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+            style="max-width: 720px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); overflow: hidden">
+            <%- include('partials/brand-header') %>
+
+            <tr>
+              <td style="padding: 28px 40px; background-color: #034ea2; color: #ffffff">
+                <h1 style="margin: 0; font-size: 20px; font-weight: 600"><%= heading %></h1>
+                <p style="margin: 8px 0 0 0; font-size: 14px; color: rgba(255, 255, 255, 0.85)">
+                  <%= transporterName %> · <%= period %>
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 28px 40px 8px 40px; color: #1f2937; font-size: 14px; line-height: 1.6">
+                <p style="margin: 0 0 16px 0">Dear <%= transporterName %>,</p>
+                <p style="margin: 0 0 16px 0">
+                  Below is what your loads came to between the border and our depot for
+                  <strong><%= period %></strong>. Each line compares the quantity your T1 cleared with
+                  the quantity we received, <strong>both at 20&nbsp;°C</strong>, so temperature is out
+                  of the comparison.
+                </p>
+              </td>
+            </tr>
+
+            <!-- The totals first: what this comes to, before the detail behind it. -->
+            <tr>
+              <td style="padding: 0 40px">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                  style="border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px">
+                  <tr>
+                    <td style="padding: 12px 16px; color: #6b7280">Trips</td>
+                    <td style="padding: 12px 16px; text-align: right; font-weight: 600"><%= totals.trips %></td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px 16px; color: #6b7280; border-top: 1px solid #f3f4f6">Carried (T1, at 20&nbsp;°C)</td>
+                    <td style="padding: 12px 16px; text-align: right; font-weight: 600; border-top: 1px solid #f3f4f6"><%= totals.carried %></td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px 16px; color: #6b7280; border-top: 1px solid #f3f4f6">Received (at 20&nbsp;°C)</td>
+                    <td style="padding: 12px 16px; text-align: right; font-weight: 600; border-top: 1px solid #f3f4f6"><%= totals.received %></td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px 16px; color: #6b7280; border-top: 1px solid #f3f4f6">Short</td>
+                    <td style="padding: 12px 16px; text-align: right; font-weight: 600; border-top: 1px solid #f3f4f6"><%= totals.lossQty %></td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px 16px; color: #6b7280; border-top: 1px solid #f3f4f6">Over</td>
+                    <td style="padding: 12px 16px; text-align: right; font-weight: 600; border-top: 1px solid #f3f4f6"><%= totals.gainQty %></td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 14px 16px; color: #991b1b; border-top: 2px solid #e5e7eb; font-weight: 600">
+                      Beyond the allowance
+                    </td>
+                    <td style="padding: 14px 16px; text-align: right; font-weight: 700; color: #991b1b; border-top: 2px solid #e5e7eb">
+                      <%= totals.chargeableQty %>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Every trip, not only the ones over: the figures above can then
+                 be checked rather than taken on trust. -->
+            <tr>
+              <td style="padding: 24px 40px 8px 40px">
+                <h2 style="margin: 0 0 12px 0; font-size: 15px; color: #111827">Every trip in the period</h2>
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                  style="border-collapse: collapse; font-size: 12px">
+                  <tr style="background-color: #f9fafb; color: #6b7280; text-align: left">
+                    <th style="padding: 8px; border-bottom: 1px solid #e5e7eb">Received</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #e5e7eb">Vehicle</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #e5e7eb">Product</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right">T1</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right">Received</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right">Difference</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right">Allowed</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right">Chargeable</th>
+                  </tr>
+                  <% trips.forEach(function (trip) { %>
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #f3f4f6; white-space: nowrap"><%= trip.receivedAt %></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #f3f4f6; white-space: nowrap"><%= trip.vehicle %></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #f3f4f6"><%= trip.item %></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #f3f4f6; text-align: right"><%= trip.t1 %></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #f3f4f6; text-align: right"><%= trip.received %></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #f3f4f6; text-align: right; <%= trip.short ? 'color:#991b1b' : '' %>"><%= trip.difference %></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #f3f4f6; text-align: right; color: #6b7280"><%= trip.allowed %></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #f3f4f6; text-align: right; font-weight: 600"><%= trip.chargeable %></td>
+                  </tr>
+                  <% }); %>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 16px 40px 28px 40px; color: #6b7280; font-size: 12px; line-height: 1.6">
+                <p style="margin: 0 0 8px 0">
+                  "Allowed" is the tolerance the product carries, as a share of what the T1 cleared, on
+                  the day the load was received. "Chargeable" is the part of a shortfall beyond it.
+                  A load arriving over the T1 is shown, but is never charged.
+                </p>
+                <% if (message) { %>
+                <p style="margin: 12px 0 0 0; color: #1f2937"><%= message %></p>
+                <% } %>
+                <p style="margin: 12px 0 0 0">
+                  If any line looks wrong to you, reply to this email and we will go through it together.
+                </p>
+              </td>
+            </tr>
+
+            <%- include('partials/company-footer') %>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

@@ -307,6 +307,48 @@ class EmailService {
     });
   }
 
+  /**
+   * The tolerance statement a transporter is sent: what their loads came to
+   * between the border and our depot over a period.
+   *
+   * Every trip is listed, not only the ones beyond the allowance — a figure
+   * somebody is asked to pay should be checkable against the trips that
+   * counted in their favour too.
+   */
+  async sendToleranceStatementEmail(
+    to: string,
+    statement: {
+      transporterName: string;
+      period: string;
+      totals: {
+        trips: number; carried: string; received: string;
+        lossQty: string; gainQty: string; chargeableQty: string;
+      };
+      trips: Array<{
+        receivedAt: string; vehicle: string; item: string;
+        t1: string; received: string; difference: string; allowed: string;
+        chargeable: string; short: boolean;
+      }>;
+      message?: string | null;
+    },
+  ): Promise<void> {
+    const company = await this.companyName();
+    const html = await this.renderTemplate('tolerance-statement', {
+      ...statement,
+      heading: 'Transport tolerance statement',
+      message: statement.message ?? null,
+    });
+
+    await this.sendEmail({
+      from: this.from,
+      // As with every shared document, the development redirect applies: see
+      // `DEV_EMAIL`. A statement must never reach a transporter from a test run.
+      to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : to,
+      subject: `${company} · tolerance statement · ${statement.period}`,
+      html,
+    });
+  }
+
   /** Tells whoever asked for a backup that it is ready, or why it failed. */
   async sendBackupReportEmail(
     userEmail: string,
