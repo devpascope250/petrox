@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
+import { startExpirySweep } from "./expiry-sweep.js";
 import { created, success } from "../../shared/http/index.js";
 import { paginationQuerySchema, parseInput } from "../../shared/validation/index.js";
 import { DiscountRepository } from "./discount.repository.js";
@@ -6,6 +7,11 @@ import { createDiscountSchema, discountParamsSchema, updateDiscountSchema } from
 import { DiscountService } from "./discount.service.js";
 
 const routes: FastifyPluginAsync = async (app) => {
+  // Discounts and subsidies whose last day has passed are retired, so the
+  // screens stop calling a finished rate active. Registered here because the
+  // discounts module is the first of the two to load; it sweeps both.
+  if (app.config.NODE_ENV !== "test") startExpirySweep(app);
+
   const service = new DiscountService(new DiscountRepository(app.prisma));
 
   app.get("/", { preHandler: [app.authenticate, app.authorize("discounts.read")] }, async (request) =>
