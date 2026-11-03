@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient, StockTransaction } from "../../../prisma/generated/prisma/client.js";
+import { toleranceColumns, toleranceForReceipt } from "./tolerance-rules.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { presentFees, reportFeeSelect, sumFeeTotals } from "../fees/fee.repository.js";
 import { releaseParkingForNomination } from "../vehicle-locations/vehicle-location.repository.js";
@@ -268,6 +269,14 @@ export class CentralStockRepository {
       // would understate the landed cost until someone noticed.
       const landing = await chargedFees(tx, data.fees ?? [], data.createdBy);
 
+      // The difference against what the T1 cleared, at 20 °C on both sides,
+      // and the allowance the product carried that day.
+      const tolerance = await toleranceForReceipt(tx, {
+        t1ValidationId: data.t1ValidationId,
+        itemId: data.itemId,
+        receivedQuantity: data.quantityAt20C,
+      });
+
       return await tx.centralStock.create({
       data: {
         ambQuantity: data.ambQuantity, 
@@ -284,9 +293,10 @@ export class CentralStockRepository {
           } },
         ...(landing.length ? { chainStockFees: { create: landing } } : {}),
         supportingDocUrl: data.supportingDocUrl,
-        gainQty: data.gainQty,
-        lossQty: data.lossQty,
-        toleranceRate: data.toleranceRate
+        // What the trip lost or gained, worked out here rather than taken from
+        // the form: it is the figure a transporter is held to, so it has to
+        // follow from the two quantities and not from whoever typed them.
+        ...toleranceColumns(tolerance),
       },
       include: { chainStockFees: reportFeeSelect },
     })});

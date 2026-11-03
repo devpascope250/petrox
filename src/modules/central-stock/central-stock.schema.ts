@@ -59,9 +59,11 @@ export const createCentralStockSchema = z.object({
   t1ValidationId: uuidSchema,
   status:  z.enum(CentralStockStatus).default("inStock").optional(),
   createdBy: uuidSchema,
-  toleranceRate: z.coerce.number().optional(),
-  lossQty: z.coerce.number().optional(),
-  gainQty: z.coerce.number().optional(),
+  // `toleranceRate`, `lossQty` and `gainQty` are **no longer taken from the
+  // form**. They are what the trip lost or gained against the T1 validation,
+  // worked out from the two quantities at 20 °C when the receipt is written —
+  // the figure a transporter is answerable for cannot be the one typed by
+  // whoever received the load. Anything sent under those names is ignored.
   /** What it cost to land this receipt. Left out when there is nothing to charge. */
   fees: feesField
 

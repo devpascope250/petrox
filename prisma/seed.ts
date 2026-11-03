@@ -125,6 +125,10 @@ export const MODULE_TREE: ModuleNode[] = [
     { code: "SUPPLY_CHAIN_REPORT", name: "Supply Chain Report", icon: "ChartColumn", children: [
       { code: "ORDER_REPORT", name: "Order Report", icon: "ChartColumn", prefix: "order.report" },
       { code: "CENTRAL_STOCK_REPORT", name: "Central Stock Report", icon: "ChartLine", prefix: "central.stock.report" },
+      // What each transporter's trips lost or gained between the border and
+      // the depot. Its own module: who may judge a transporter's performance
+      // is not the same question as who may read stock.
+      { code: "TRANSPORTER_TOLERANCE", name: "Transporter Tolerance", icon: "Scale", prefix: "transporter.tolerance" },
     ] },
   ] },
   { id: "1bda9386-4d3a-4069-abf8-b1c6aadffda2", code: "PSS_OPERATION_FORECOURT", name: "PSS Operation Forecourt", icon: "Fuel", children: [

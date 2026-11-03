@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient } from "../../prisma/generated/prisma/client.js";
+import { toleranceFor } from "../modules/central-stock/tolerance-rules.js";
 import { paginatedData, paginationArgs } from "../shared/pagination/index.js";
 import { presentFees, reportFeeSelect, sumFeeTotals } from "../modules/fees/fee.repository.js";
 import {
@@ -63,17 +64,29 @@ export class ReportRepository {
    * Compares what a receipt was expected to deliver against what it actually
    * delivered, and grades the gap against the tolerance rate allowed for it.
    */
+  /**
+   * Grades one receipt against what was expected of it.
+   *
+   * The arithmetic is `toleranceFor`, the same rule the receipt itself is
+   * written with and the transporter tolerance report reads — one computation,
+   * so a trip cannot be graded two ways. Only the shape is this report's own:
+   * it counts a variance as `actual - expected`, so a gain is positive, while
+   * the receipt stores the loss and the gain in columns of their own.
+   */
   private assessTolerance(
     expected: number,
     actual: number,
     rate: number | null,
     basis: ToleranceBasis = "t1Validated",
   ) {
-    const variance = round(actual - expected);
+    const tolerance = toleranceFor({ t1Quantity: expected, receivedQuantity: actual, allowedRate: rate });
+    const variance = round(-Number(tolerance.difference));
     const outcome: ToleranceOutcome =
       variance > 0 ? "gain" : variance < 0 ? "loss" : "balanced";
+    // A trip that cleared nothing is graded by nobody: there is no share of
+    // zero to be within.
     const allowedVariance =
-      rate === null || expected <= 0 ? null : round((expected * rate) / 100);
+      rate === null || expected <= 0 ? null : Number(tolerance.allowedQuantity);
     const status: ToleranceStatus =
       allowedVariance === null
         ? "notAssessed"
