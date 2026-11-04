@@ -129,17 +129,21 @@ model User {
   itemPrices                 ItemPrice[]
   generalTransactions        GeneralTransaction[]
 
-  backupsRequested       Backup[]           @relation("BackupCreator")
-  backupsDownloaded      Backup[]           @relation("BackupDownloader")
-  couponRedemptions      CouponRedemption[] @relation("CouponRedeemer")
+  backupsRequested       Backup[]                   @relation("BackupCreator")
+  backupsDownloaded      Backup[]                   @relation("BackupDownloader")
+  couponRedemptions      CouponRedemption[]         @relation("CouponRedeemer")
   vehicleLocations       VehicleLocation[]
   subsidies              Subsidy[]
-  createdBypumpIndexes   PumpIndex[]        @relation("pumpIndexCreatedBy")
-  confirmedByPumpIndexes PumpIndex[]        @relation("pumpIndexConfirmed")
-  attendedPumpIndexes    PumpIndex[]        @relation("pumpIndexAttendant")
-  pumpPlans              PumpAttendantPlan[] @relation("pumpPlanAttendant")
+  createdBypumpIndexes   PumpIndex[]                @relation("pumpIndexCreatedBy")
+  confirmedByPumpIndexes PumpIndex[]                @relation("pumpIndexConfirmed")
+  attendedPumpIndexes    PumpIndex[]                @relation("pumpIndexAttendant")
+  pumpPlans              PumpAttendantPlan[]        @relation("pumpPlanAttendant")
   toleranceShares        ToleranceReportShare[]
-  pumpPlansCreated       PumpAttendantPlan[] @relation("pumpPlanCreatedBy")
+  clearancesRaised       ClearanceRequest[]         @relation("clearanceRaisedBy")
+  clearancesPaid         ClearanceRequest[]         @relation("clearancePaidBy")
+  clearanceTaxes         TaxClearance[]
+  clearanceAuthorizer    ClearanceAuthorizerMember?
+  pumpPlansCreated       PumpAttendantPlan[]        @relation("pumpPlanCreatedBy")
 
   @@index([roleId])
   @@index([siteId])
@@ -232,6 +236,7 @@ model Item {
   generalTransactions GeneralTransaction[]
   subsidies           Subsidy[]
   pumpIndexes         PumpIndex[]
+  clearanceRequests   ClearanceRequest[]
 
   @@index([id])
   @@index([parentId])
@@ -387,19 +392,19 @@ enum DeportType {
 }
 
 model Transporter {
-  id        String     @id @default(uuid())
-  name      String
-  phone     String
+  id              String                 @id @default(uuid())
+  name            String
+  phone           String
   /// Where a tolerance statement is sent. Optional: the transporters already
   /// on record were entered without one, and it is only needed to share.
-  email     String?
-  address   String
-  tinNumber String
-  status    StatusType @default(active)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  vehicles  Vehicle[]
-  drivers   Driver[]
+  email           String?
+  address         String
+  tinNumber       String
+  status          StatusType             @default(active)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  vehicles        Vehicle[]
+  drivers         Driver[]
   toleranceShares ToleranceReportShare[]
 
   @@index([id])
@@ -846,6 +851,10 @@ model StockTransaction {
 
 model StockClearance {
   id                 String              @id @default(uuid())
+  /// The act of clearing this row belongs to, holding its taxes, approvals and
+  /// payment. Empty on rows raised before clearances were approved at all.
+  requestId          String?
+  request            ClearanceRequest?   @relation(fields: [requestId], references: [id])
   centralStockId     String
   centralStock       CentralStock        @relation(fields: [centralStockId], references: [id])
   quantity           Decimal             @db.Decimal(18, 2)
@@ -865,16 +874,24 @@ model StockClearance {
 
   @@index([id])
   @@index([centralStockId])
+  @@index([requestId])
+}
+
+enum ClearanceStatus {
+  awaiting
+  approved
+  rejected
 }
 
 model ClearingAgent {
-  id              String           @id @default(uuid())
-  names           String
-  fees            Decimal          @db.Decimal(18, 2)
-  status          StatusType       @default(active)
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  stockClearances StockClearance[]
+  id                String             @id @default(uuid())
+  names             String
+  fees              Decimal            @db.Decimal(18, 2)
+  status            StatusType         @default(active)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  stockClearances   StockClearance[]
+  clearanceRequests ClearanceRequest[]
 }
 
 enum StockStateStatus {
@@ -988,9 +1005,9 @@ model TblSite {
   generalTransactions GeneralTransaction[]
   homeUsers           User[]                @relation("UserHomeSite")
 
-  couponRedemptions CouponRedemption[]
-  subsidies         Subsidy[]
-  pumpIndexes       PumpIndex[]
+  couponRedemptions  CouponRedemption[]
+  subsidies          Subsidy[]
+  pumpIndexes        PumpIndex[]
   pumpAttendantPlans PumpAttendantPlan[]
 
   @@index([id])
@@ -1240,18 +1257,18 @@ model TblDisplay {
 }
 
 model TblNozzle {
-  id                   String                @id @default(uuid())
+  id                   String                    @id @default(uuid())
   name                 String
-  nozzleCode           String                @unique
+  nozzleCode           String                    @unique
   pumpId               String
-  pump                 TblPump               @relation(fields: [pumpId], references: [id])
+  pump                 TblPump                   @relation(fields: [pumpId], references: [id])
   displayId            String
-  display              TblDisplay            @relation(fields: [displayId], references: [id])
+  display              TblDisplay                @relation(fields: [displayId], references: [id])
   cuveId               String
-  cuve                 TblCuve               @relation(fields: [cuveId], references: [id])
-  status               StatusType            @default(active)
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
+  cuve                 TblCuve                   @relation(fields: [cuveId], references: [id])
+  status               StatusType                @default(active)
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
   pumpAttendantNozzles PumpAttendantNozzle[]
   pumpPlanNozzles      PumpAttendantPlanNozzle[]
   fuelSales            FuelSale[]
@@ -1807,20 +1824,20 @@ model PumpAttendantNozzle {
 }
 
 model TblTimeTable {
-  id          String       @id @default(uuid())
-  days        Int
-  dateOn      DateTime     @db.Date
-  siteShiftId String
-  shiftSite   TblShiftSite @relation(fields: [siteShiftId], references: [id])
-  userId      String
-  user        User         @relation("TimeTableUsers", fields: [userId], references: [id])
-  siteId      String
-  site        TblSite      @relation(fields: [siteId], references: [id])
-  status      Int          @default(0)
-  extraShift  Int          @default(0)
-  createdAt   DateTime     @default(now())
-  isChief     Boolean      @default(false)
-  isSuport    Boolean      @default(false)
+  id                String             @id @default(uuid())
+  days              Int
+  dateOn            DateTime           @db.Date
+  siteShiftId       String
+  shiftSite         TblShiftSite       @relation(fields: [siteShiftId], references: [id])
+  userId            String
+  user              User               @relation("TimeTableUsers", fields: [userId], references: [id])
+  siteId            String
+  site              TblSite            @relation(fields: [siteId], references: [id])
+  status            Int                @default(0)
+  extraShift        Int                @default(0)
+  createdAt         DateTime           @default(now())
+  isChief           Boolean            @default(false)
+  isSuport          Boolean            @default(false)
   /// The pumps this rostered day puts them on, with the nozzles of each.
   tblPumpAttendants TblPumpAttendant[]
 
@@ -2219,5 +2236,134 @@ model PumpIndex {
   @@index([confirmedBy])
 }
 
+/// The taxes a clearance can be charged, by code.
+///
+/// A catalogue and nothing more: what each one comes to is typed on the
+/// clearance itself, because the same tax is a different figure on every load.
+model TaxDescription {
+  id            String         @id @default(uuid())
+  code          String         @unique
+  description   String?
+  status        StatusType     @default(active)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  taxClearances TaxClearance[]
+}
 
+/// One act of clearing stock through customs.
+///
+/// A FIFO clearance draws on as many receipts as it needs, so it writes a
+/// `StockClearance` row for each of them — but the taxes, the approvals and
+/// the payment belong to the **act**, not to each receipt it happened to
+/// touch. They live here, and those rows hang off it.
+///
+/// Raising it holds the litres, so nobody else can claim them, but moves no
+/// stock: it stays **uncleared** until every active authorizer has approved
+/// and the payment has been confirmed. That is when the rows below turn
+/// `cleared`.
+model ClearanceRequest {
+  id               String                @id @default(uuid())
+  itemId           String
+  item             Item                  @relation(fields: [itemId], references: [id])
+  /// The whole act, across every receipt it draws on.
+  quantity         Decimal               @db.Decimal(18, 2)
+  /// What the clearing agent charges.
+  fees             Decimal?              @db.Decimal(18, 2)
+  /// The taxes added up. Written from the taxes below, never typed.
+  amount           Decimal               @default(0.0) @db.Decimal(18, 2)
+  agentId          String?
+  agent            ClearingAgent?        @relation(fields: [agentId], references: [id])
+  dmsDocUrl        String?
+  assessmentDocUrl String?
+  supportingDocUrl String?
+  /// Awaiting while anyone is still to decide, rejected the moment one says
+  /// no, approved only once every active authorizer has approved.
+  clearanceStatus  ClearanceStatus       @default(awaiting)
+  /// The proof of payment, and who confirmed it. Only once approved.
+  paymentDocUrl    String?
+  paidAt           DateTime?
+  paidBy           String?
+  payer            User?                 @relation(name: "clearancePaidBy", fields: [paidBy], references: [id])
+  createdBy        String
+  user             User                  @relation(name: "clearanceRaisedBy", fields: [createdBy], references: [id])
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  taxes            TaxClearance[]
+  approvals        ClearanceAuthorizer[]
+  clearances       StockClearance[]
 
+  @@index([itemId])
+  @@index([agentId])
+  @@index([clearanceStatus])
+  @@index([createdBy])
+  @@index([paidBy])
+}
+
+/// A tax charged on one clearance.
+///
+/// The code is **copied** from the catalogue when it is charged: renaming or
+/// retiring a tax later must not rewrite what a clearance was charged under.
+model TaxClearance {
+  id         String           @id @default(uuid())
+  requestId  String
+  request    ClearanceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  taxId      String
+  tax        TaxDescription   @relation(fields: [taxId], references: [id])
+  code       String
+  amount     Decimal          @default(0.0) @db.Decimal(18, 2)
+  recordedBy String
+  user       User             @relation(fields: [recordedBy], references: [id])
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  /// One charge per tax on a clearance; charging it again is an edit.
+  @@unique([requestId, taxId])
+  @@index([requestId])
+  @@index([taxId])
+  @@index([recordedBy])
+}
+
+/// Who may authorize a stock clearance.
+///
+/// Its own list, not the role-based `Authorizers` that loading orders use:
+/// a clearance is approved by named people, because each of them is emailed
+/// the moment one is raised.
+model ClearanceAuthorizerMember {
+  id           String                @id @default(uuid())
+  authorizerId String                @unique
+  authoriser   User                  @relation(fields: [authorizerId], references: [id])
+  status       StatusType            @default(active)
+  level        Int?
+  position     String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  approvals    ClearanceAuthorizer[]
+}
+
+/// How one authorizer went on one clearance.
+///
+/// The decision is changed in place, so somebody who rejected can come back
+/// and approve without leaving two answers behind.
+model ClearanceAuthorizer {
+  id           String                    @id @default(uuid())
+  requestId    String
+  request      ClearanceRequest          @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  authorizerId String
+  authorizer   ClearanceAuthorizerMember @relation(fields: [authorizerId], references: [id])
+  status       ClearanceAcceptStatus     @default(awaiting)
+  /// Why it was rejected. Required when rejecting, and kept if it later turns
+  /// into an approval, so the question that was raised is not lost.
+  reason       String?
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+
+  @@unique([requestId, authorizerId])
+  @@index([requestId])
+  @@index([authorizerId])
+}
+
+enum ClearanceAcceptStatus {
+  awaiting
+  approved
+  rejected
+}

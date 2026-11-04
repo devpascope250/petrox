@@ -308,6 +308,53 @@ class EmailService {
   }
 
   /**
+   * Tells a clearance authorizer that a clearance is waiting for them.
+   *
+   * Every tax it is assessed on is listed, with the total: somebody asked to
+   * approve a figure has to be able to see what it is made of, and the mail is
+   * often the only place they will look before clicking.
+   */
+  async sendClearanceApprovalEmail(
+    to: string,
+    recipientName: string,
+    clearance: {
+      reference: string;
+      item: string;
+      quantity: string;
+      agent: string;
+      raisedBy: string;
+      fees: string | null;
+      taxes: Array<{ code: string; amount: string }>;
+      taxTotal: string;
+      grandTotal: string;
+    },
+    options: {
+      subject: string;
+      intro: string;
+      actionPath: string;
+      position?: string | null;
+    },
+  ): Promise<void> {
+    const html = await this.renderTemplate('clearance-approval', {
+      ...clearance,
+      recipientName,
+      heading: 'A stock clearance needs your approval',
+      intro: options.intro,
+      position: options.position ?? null,
+      actionLink: `${this.config.FRONTEND_URL}${options.actionPath}`,
+      actionLabel: 'Review and approve',
+    });
+
+    await this.sendEmail({
+      from: this.from,
+      // The development redirect applies as everywhere else: see `DEV_EMAIL`.
+      to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : to,
+      subject: options.subject,
+      html,
+    });
+  }
+
+  /**
    * The tolerance statement a transporter is sent: what their loads came to
    * between the border and our depot over a period.
    *

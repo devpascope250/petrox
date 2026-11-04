@@ -22,7 +22,9 @@ export async function parseClearanceMultipart(request: FastifyRequest) {
         ? "dmsDocUrl"
         : part.fieldname === "assessmentDoc" || part.fieldname === "assessmentDocUrl"
           ? "assessmentDocUrl"
-          : null;
+          : part.fieldname === "paymentDoc" || part.fieldname === "paymentDocUrl"
+            ? "paymentDocUrl"
+            : null;
     if (!documentField) {
       part.file.resume();
       continue;

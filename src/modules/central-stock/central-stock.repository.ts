@@ -77,6 +77,12 @@ export class CentralStockRepository {
             agent: { select: { id: true, names: true, fees: true, status: true } },
             user: { select: { id: true, firstName: true, lastName: true } },
             centralStockOrders: { select: { quantity: true, orderType: true } },
+            // A row is `uncleared` while its clearance waits for approval and
+            // payment, so the act it belongs to is what says why: without it
+            // the page can only show "uncleared" and not that somebody is
+            // still to approve. Empty on rows raised before approvals existed.
+            request: { select: { id: true, clearanceStatus: true, paymentDocUrl: true,
+              paidAt: true, amount: true } },
           },
         },
       },
@@ -138,6 +144,7 @@ export class CentralStockRepository {
           id: string; quantity: number; fees: number | null;
           amount: number | null;
           status: typeof centralStocks[number]["stockClearances"][number]["status"];
+          request: typeof centralStocks[number]["stockClearances"][number]["request"];
           supportingDocUrl: string | null; dmsDocUrl: string | null; assessmentDocUrl: string | null;
           createdAt: Date; updatedAt: Date;
           agent: typeof centralStocks[number]["stockClearances"][number]["agent"];
@@ -201,7 +208,8 @@ export class CentralStockRepository {
           id: clearance.id, quantity: Number(clearance.quantity),
           fees: clearance.fees === null ? null : Number(clearance.fees),
           amount: clearance.amount === null ? null : Number(clearance.amount),
-          status: clearance.status, supportingDocUrl: clearance.supportingDocUrl, dmsDocUrl: clearance.dmsDocUrl,
+          status: clearance.status, request: clearance.request,
+          supportingDocUrl: clearance.supportingDocUrl, dmsDocUrl: clearance.dmsDocUrl,
           assessmentDocUrl: clearance.assessmentDocUrl,
           createdAt: clearance.createdAt, updatedAt: clearance.updatedAt, agent: clearance.agent,
           clearedBy: clearance.user,

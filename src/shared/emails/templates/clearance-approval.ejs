@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= heading %></title>
+  </head>
+  <body style="margin: 0; padding: 0; font-family: &quot;Segoe UI&quot;, Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6fb">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f4f6fb">
+      <tr>
+        <td align="center" style="padding: 40px 20px">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+            style="max-width: 640px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); overflow: hidden">
+            <%- include('partials/brand-header') %>
+
+            <tr>
+              <td style="padding: 28px 40px; background-color: #034ea2; color: #ffffff">
+                <h1 style="margin: 0; font-size: 20px; font-weight: 600"><%= heading %></h1>
+                <p style="margin: 8px 0 0 0; font-size: 14px; color: rgba(255, 255, 255, 0.85)">
+                  Clearance <%= reference %> · <%= quantity %> L of <%= item %>
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 28px 40px">
+                <p style="margin: 0 0 16px 0; color: #344054; font-size: 15px; line-height: 24px">
+                  Hello <%= recipientName %><% if (position) { %> (<%= position %>)<% } %>,
+                </p>
+                <p style="margin: 0 0 20px 0; color: #475467; font-size: 14px; line-height: 23px">
+                  <%= intro %>
+                </p>
+
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                  style="margin-bottom: 22px; border: 1px solid #eaecf0; border-radius: 10px; background-color: #f9fafb">
+                  <tr>
+                    <td style="padding: 14px 18px; border-bottom: 1px solid #eaecf0">
+                      <p style="margin: 0 0 3px 0; color: #98a2b3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px">Raised by</p>
+                      <p style="margin: 0; color: #101828; font-size: 14px; font-weight: 600"><%= raisedBy %></p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 14px 18px">
+                      <p style="margin: 0 0 3px 0; color: #98a2b3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px">Clearing agent</p>
+                      <p style="margin: 0; color: #101828; font-size: 14px; font-weight: 600"><%= agent %></p>
+                    </td>
+                  </tr>
+                </table>
+
+                <p style="margin: 0 0 10px 0; color: #98a2b3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px">
+                  Taxes assessed
+                </p>
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                  style="margin-bottom: 22px; border: 1px solid #eaecf0; border-radius: 10px; border-collapse: separate; border-spacing: 0; overflow: hidden">
+                  <% if (taxes.length === 0) { %>
+                    <tr>
+                      <td style="padding: 14px 18px; color: #667085; font-size: 13px">
+                        No tax was recorded on this clearance.
+                      </td>
+                    </tr>
+                  <% } else { %>
+                    <% taxes.forEach(function (tax) { %>
+                      <tr>
+                        <td style="padding: 11px 18px; border-bottom: 1px solid #eaecf0; color: #344054; font-size: 14px"><%= tax.code %></td>
+                        <td align="right" style="padding: 11px 18px; border-bottom: 1px solid #eaecf0; color: #101828; font-size: 14px; font-weight: 600"><%= tax.amount %></td>
+                      </tr>
+                    <% }); %>
+                    <tr>
+                      <td style="padding: 11px 18px; background-color: #f9fafb; color: #475467; font-size: 13px">Taxes total</td>
+                      <td align="right" style="padding: 11px 18px; background-color: #f9fafb; color: #101828; font-size: 14px; font-weight: 700"><%= taxTotal %></td>
+                    </tr>
+                  <% } %>
+                  <% if (fees) { %>
+                    <tr>
+                      <td style="padding: 11px 18px; border-top: 1px solid #eaecf0; color: #475467; font-size: 13px">Clearing agent fees</td>
+                      <td align="right" style="padding: 11px 18px; border-top: 1px solid #eaecf0; color: #101828; font-size: 14px; font-weight: 600"><%= fees %></td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 11px 18px; background-color: #eff6ff; color: #1d4ed8; font-size: 13px; font-weight: 600">Taxes and fees</td>
+                      <td align="right" style="padding: 11px 18px; background-color: #eff6ff; color: #1d4ed8; font-size: 14px; font-weight: 700"><%= grandTotal %></td>
+                    </tr>
+                  <% } %>
+                </table>
+
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                  <tr>
+                    <td align="center">
+                      <a href="<%= actionLink %>"
+                        style="display: inline-block; padding: 13px 32px; background-color: #034ea2; color: #ffffff; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600">
+                        <%= actionLabel %>
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin: 16px 0 0 0; color: #667085; font-size: 12px; line-height: 20px; text-align: center">
+                  The button opens this clearance on the site. If you are not signed in you will be asked to,
+                  and brought straight back to it.
+                </p>
+              </td>
+            </tr>
+
+            <%- include('partials/company-footer') %>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

@@ -28,7 +28,10 @@ import {
 } from "./central-stock.schema.js";
 const routes: FastifyPluginAsync = async (app) => {
   const service = new CentralStockService(new CentralStockRepository(app.prisma), app.config);
-  const clearanceService = new StockClearanceService(new StockClearanceRepository(app.prisma), app.config);
+  // The client raises a clearance here rather than on `/stock-clearances`, so
+  // this is the path that has to email the authorizers too: hence the db.
+  const clearanceService = new StockClearanceService(
+    new StockClearanceRepository(app.prisma), app.config, app.prisma);
   app.get(
     "/",
     {

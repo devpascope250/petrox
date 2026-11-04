@@ -29,6 +29,8 @@ import T1ValidationRoutes from "./modules/t1 validation/t1-validation.routes.js"
 import CentralStockRoutes from "./modules/central-stock/central-stock.routes.js";
 import StockClearanceRoutes from "./modules/stock clearance/clearance.routes.js";
 import ClearanceAgentRoutes from "./modules/stock clearance/agents/agent.routes.js";
+import ClearanceTaxRoutes from "./modules/stock clearance/taxes/tax.routes.js";
+import ClearanceAuthorizerRoutes from "./modules/stock clearance/authorizers/clearance-authorizer.routes.js";
 import PssRoutes from "./modules/sites/sites.routes.js";
 import CuvesRoutes from "./modules/Cuve/cuve.routes.js";
 import FuelSalesRoutes from "./modules/fuel-sales/fuel-sale.routes.js";
@@ -134,6 +136,8 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(CentralStockRoutes, { prefix: "/api/v1/central-stock" });
   await app.register(StockClearanceRoutes, { prefix: "/api/v1/stock-clearances" });
   await app.register(ClearanceAgentRoutes, { prefix: "/api/v1/clearing-agents" });
+  await app.register(ClearanceTaxRoutes, { prefix: "/api/v1/clearance-taxes" });
+  await app.register(ClearanceAuthorizerRoutes, { prefix: "/api/v1/clearance-authorizers" });
   await app.register(PssRoutes, { prefix: "/api/v1/sites" });
   await app.register(CuvesRoutes, { prefix: "/api/v1/cuves" });
   await app.register(FuelSalesRoutes, { prefix: "/api/v1/fuel-sales" });

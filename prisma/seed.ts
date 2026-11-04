@@ -90,7 +90,12 @@ export const MODULE_TREE: ModuleNode[] = [
     { id: "349089d1-bc1e-49f8-b337-3b0e5470bddd", code: "SUPPLY_CHAIN_SETTINGS", name: "Supply Chain Settings", icon: "SlidersHorizontal", children: [
       { id: "f4fa5e12-e5d9-4bc1-9102-664d9e2c3066", code: "SUPPLIERS", name: "Suppliers", icon: "Building2", prefix: "suppliers" },
       { id: "b2edf75e-6219-4947-8cd6-54485efa609e", code: "SUPPLIERS_TYPE", name: "Suppliers Type", icon: "Tags", prefix: "suppliers.type" },
-      { code: "CLEARANCE_AGENT", name: "Clearance Agent", icon: "UserCheck", prefix: "clearance.agent" },
+      // One menu with three tabs: the agents, the tax codes and who approves a
+      // clearance. The tabs are gated apart — `clearance.agent.*` for the
+      // agents, `clearance.taxes.*` for the codes, `authorizers.*` for the
+      // approvers — so keeping the catalogue is not the same job as approving.
+      { code: "CLEARANCE_AGENT", name: "Clearance", icon: "UserCheck", prefix: "clearance.agent" },
+      { code: "CLEARANCE_TAXES", name: "Clearance Taxes", icon: "Percent", prefix: "clearance.taxes" },
       { id: "32483c51-caeb-4eda-a9d8-a0891e9c624b", code: "TRANSPORTERS", name: "Transporters", icon: "Container", prefix: "transporters" },
       { id: "3db24ea1-8c54-4947-b607-d88ccffa5c36", code: "VEHICLES", name: "Vehicles", icon: "Truck", prefix: "vehicles" },
       { id: "f33369c4-bf68-4eee-9a96-0094540c41f8", code: "DRIVERS", name: "Drivers", icon: "IdCard", prefix: "drivers" },
