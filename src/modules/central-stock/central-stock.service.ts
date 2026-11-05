@@ -26,6 +26,14 @@ export class CentralStockService {
           supportingDocUrl: this.documentUrl(clearance.supportingDocUrl),
           dmsDocUrl: this.documentUrl(clearance.dmsDocUrl),
           assessmentDocUrl: this.documentUrl(clearance.assessmentDocUrl),
+          // The proof of payment lives on the parent request, and is the
+          // document a cleared row rests on — resolved like the rest.
+          request: clearance.request
+            ? {
+                ...clearance.request,
+                paymentDocUrl: this.documentUrl(clearance.request.paymentDocUrl),
+              }
+            : clearance.request,
         })),
         transactions: stock.transactions.map((transaction) => ({
           ...transaction,
