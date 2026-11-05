@@ -64,9 +64,19 @@ const routes: FastifyPluginAsync = async (app) => {
       parseInput(clearanceDecisionSchema, request.body),
     )));
 
-  /** The payment document, which is what finally clears the stock. */
+  /**
+   * The payment document, which is what finally clears the stock.
+   *
+   * Its own permission, `clearance.payment.*`: whoever raises a clearance is
+   * rarely whoever pays it, and attaching the proof of payment is the act that
+   * moves the litres. `stock.clearance.manage` still carries it, so the people
+   * who already own the whole module keep working.
+   */
   app.post("/requests/:id/payment", {
-    preHandler: [app.authenticate, app.authorize("stock.clearance.edit", "stock.clearance.manage")],
+    preHandler: [
+      app.authenticate,
+      app.authorize("clearance.payment.create", "clearance.payment.manage", "stock.clearance.manage"),
+    ],
   }, async (request) => {
     const id = parseInput(idParamsSchema, request.params).id;
     const fields = await parseClearanceMultipart(request);

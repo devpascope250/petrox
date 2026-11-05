@@ -153,6 +153,11 @@ export const MODULE_TREE: ModuleNode[] = [
     { id: "5ad8d068-de07-42f9-bbf9-73142395eead", code: "PSS_STOCK_MANAGEMENT", name: "PSS Stock Management", icon: "ClipboardCheck", children: [
       { id: "24488b2b-ff26-4bac-ae0e-9d39e246bc02", code: "STOCKOUT_ORDERS", name: "Stockout Orders", icon: "ShoppingCart", prefix: "stockout.orders" },
       { code: "STOCK_CLEARANCE", name: "Stock Clearance", icon: "FileCheck", prefix: "stock.clearance" },
+      // Paying is its own privilege, held apart from raising a clearance:
+      // `clearance.payment.create` is who may attach the proof of payment that
+      // turns held litres into cleared stock, once the authorizers have
+      // approved. No sidebar entry — it acts on the Stock Clearance page.
+      { code: "CLEARANCE_PAYMENT", name: "Clearance Payment", icon: "BadgeDollarSign", prefix: "clearance.payment" },
       { code: "AUTHORIZERS", name: "Authorizers", icon: "Stamp", prefix: "authorizers" },
     ] },
   ] },
