@@ -31,7 +31,9 @@ export class SupplerRepository {
       data: {
         name: data.name,
         address: data.address,
-        phone: data.address,
+        // `data.address` was stored here, so every supplier created through
+        // this API had its address as its phone number.
+        phone: data.phone,
         tinNumber: data.tinNumber,
         supplierTypeId: data.supplierTypeId
       }

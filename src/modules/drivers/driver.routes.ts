@@ -4,14 +4,22 @@ import { assignDriverVehicleParams, idParamsSchema, paginationQuerySchema, parse
 import { DriverService } from "./driver.service.js";
 import { DriverRepository } from "./driver.repository.js";
 import { createDriverSchema } from "./deriver.schema.js";
+import { sheetImportSchema } from "../../shared/import/sheet-import.js";
+import { DriverImporter } from "./driver.import.js";
 const routes: FastifyPluginAsync = async (app) => {
-  const service = new DriverService(new DriverRepository(app.prisma), app.config);
+  const repository = new DriverRepository(app.prisma);
+  const service = new DriverService(repository, app.config);
+  const importer = new DriverImporter(app.prisma, repository);
   app.get("/", { preHandler: [app.authenticate, app.authorize("drivers.read", "drivers.manage")] }, async (request) =>
     success(await service.list(parseInput(paginationQuerySchema, request.query))));
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("drivers.read", "drivers.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));
   app.post("/", { preHandler: [app.authenticate, app.authorize("drivers.create", "drivers.manage")] }, async (request, reply) =>
     created(reply, await service.create(parseInput(createDriverSchema, request.body))));
+
+  /** Many drivers at once, from the downloaded template. */
+  app.post("/import", { preHandler: [app.authenticate, app.authorize("drivers.create", "drivers.manage")] }, async (request) =>
+    success(await importer.run(parseInput(sheetImportSchema, request.body))));
 
     app.put("/:id", { preHandler: [app.authenticate, app.authorize("drivers.edit", "drivers.manage")] }, async (request, reply) =>
     created(reply, await service.update(parseInput(idParamsSchema, request.params).id, parseInput(createDriverSchema, request.body))));

@@ -4,14 +4,26 @@ import { idParamsSchema, paginationQuerySchema, parseInput } from "../../shared/
 import { SupplierService } from "./supplier.service.js";
 import { SupplerRepository } from "./supplier.repository.js";
 import { createSupplierSchema, createSupplierTypeSchema } from "./supplier.schema.js";
+import { sheetImportSchema } from "../../shared/import/sheet-import.js";
+import { SupplierImporter } from "./supplier.import.js";
 const routes: FastifyPluginAsync = async (app) => {
-  const service = new SupplierService(new SupplerRepository(app.prisma), app.config);
+  const repository = new SupplerRepository(app.prisma);
+  const service = new SupplierService(repository, app.config);
+  const importer = new SupplierImporter(app.prisma, repository);
   app.get("/", { preHandler: [app.authenticate, app.authorize("suppliers.read", "suppliers.manage")] }, async (request) =>
     success(await service.list(parseInput(paginationQuerySchema, request.query))));
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("suppliers.read", "suppliers.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));
   app.post("/", { preHandler: [app.authenticate, app.authorize("suppliers.create", "suppliers.manage")] }, async (request, reply) =>
     created(reply, await service.create(parseInput(createSupplierSchema, request.body))));
+
+  /**
+   * Many suppliers at once, from the downloaded template. Creating is creating,
+   * however many at a time, so it is the same permission as the form — and the
+   * answer says which rows were skipped and why, rather than failing the lot.
+   */
+  app.post("/import", { preHandler: [app.authenticate, app.authorize("suppliers.create", "suppliers.manage")] }, async (request) =>
+    success(await importer.run(parseInput(sheetImportSchema, request.body))));
 
     app.put("/:id", { preHandler: [app.authenticate, app.authorize("suppliers.edit", "suppliers.manage")] }, async (request, reply) =>
     created(reply, await service.update(parseInput(idParamsSchema, request.params).id, parseInput(createSupplierSchema, request.body))));
