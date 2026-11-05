@@ -1,3 +1,4 @@
+import type { Prisma } from "../../../prisma/generated/prisma/client.js";
 import { isSiteBound, type AuthUser } from "../../shared/auth/context-user.js";
 import { forbidden } from "../../utils/errors.js";
 import { BUSINESS_UTC_OFFSET, DashboardRepository, type DailySales } from "./dashboard.repository.js";
@@ -140,6 +141,55 @@ export class DashboardService {
         .sort((a, b) => b.amount - a.amount),
       monthly: [...monthly.entries()].sort(([a], [b]) => a.localeCompare(b))
         .map(([monthKey, totals]) => ({ month: monthKey, ...tidy(totals) })),
+    };
+  }
+
+  /**
+   * The supply chain over the same period the dashboard uses: ordering,
+   * arrival, what the trip cost in loss or gain, and what is still waiting to
+   * be cleared.
+   *
+   * Company-wide, unlike the sales figures above — a depot's orders and a
+   * transporter's trips belong to no single site, so this is not scoped by
+   * one. The route decides who may ask.
+   */
+  async supplyChain(query: DashboardQuery, now = new Date()) {
+    const today = businessToday(now);
+    const yesterday = addDays(today, -1);
+    const startDate = query.startDate ?? `${yesterday.slice(0, 4)}-01-01`;
+    // Business days, so the boundaries are Rwandan midnights, not UTC ones.
+    const at = (day: string) => new Date(`${day}T00:00:00.000${BUSINESS_UTC_OFFSET}`);
+    const figures = await this.repo.supplyChain(at(startDate), at(addDays(yesterday, 1)));
+
+    const number = (value: Prisma.Decimal | number | null | undefined) => round2(Number(value ?? 0));
+    const loss = number(figures.receipts._sum.lossQty);
+    const gain = number(figures.receipts._sum.gainQty);
+
+    return {
+      period: {
+        startDate, endDate: yesterday, yesterday, today,
+        generatedAt: now.toISOString(), excludesToday: true, utcOffset: BUSINESS_UTC_OFFSET,
+      },
+      orders: { count: figures.orders._count, quantity: number(figures.orders._sum.quantity) },
+      cargo: {
+        count: figures.cargo._count,
+        litres: number(figures.cargo._sum.quantityInLitre),
+        kg: number(figures.cargo._sum.quantityInKg),
+      },
+      offloaded: {
+        receipts: figures.receipts._count,
+        quantityAt20C: number(figures.receipts._sum.quantityAt20C),
+        ambQuantity: number(figures.receipts._sum.ambQuantity),
+      },
+      trips: figures.trips,
+      tolerance: { loss, gain, net: round2(gain - loss) },
+      /** What is waiting on somebody, as of now rather than over the period. */
+      clearance: {
+        awaiting: figures.awaiting._count,
+        taxes: number(figures.awaiting._sum.amount),
+        unclearedQuantity: number(figures.held._sum.quantity),
+      },
+      network: figures.network,
     };
   }
 

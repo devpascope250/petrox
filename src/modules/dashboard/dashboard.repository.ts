@@ -69,6 +69,53 @@ export class DashboardRepository {
     });
   }
 
+  /**
+   * The supply chain over a period, in one round of aggregates: what was
+   * ordered, what arrived, what it cost in loss or gain, and what is still
+   * waiting to be cleared.
+   *
+   * Each figure is counted on the date that step happened — an order on its
+   * order date, a cargo on the date it was offloaded, a receipt on the day it
+   * was written — rather than all of them on `createdAt`, so a cargo entered
+   * late lands in the period it belongs to.
+   */
+  async supplyChain(start: Date, endExclusive: Date) {
+    const period = { gte: start, lt: endExclusive };
+    const [orders, cargo, receipts, trips, awaiting, held, network] = await Promise.all([
+      this.db.order.aggregate({ where: { orderDate: period }, _count: true, _sum: { quantity: true } }),
+      // A cancelled cargo never arrived, so it is not volume offloaded.
+      this.db.cargo.aggregate({
+        where: { receivedDate: period, status: { not: "cancelled" } },
+        _count: true,
+        _sum: { quantityInLitre: true, quantityInKg: true },
+      }),
+      this.db.centralStock.aggregate({
+        where: { createdAt: period },
+        _count: true,
+        _sum: { quantityAt20C: true, ambQuantity: true, lossQty: true, gainQty: true },
+      }),
+      this.db.nomination.count({ where: { createdAt: period } }),
+      // Not period-bound: a clearance waiting for approval is waiting now.
+      this.db.clearanceRequest.aggregate({
+        where: { clearanceStatus: "awaiting", paymentDocUrl: null },
+        _count: true,
+        _sum: { amount: true },
+      }),
+      this.db.stockClearance.aggregate({ where: { status: "uncleared" }, _sum: { quantity: true } }),
+      Promise.all([
+        this.db.supplier.count({ where: { status: "active" } }),
+        this.db.transporter.count({ where: { status: "active" } }),
+        this.db.driver.count({ where: { status: "active" } }),
+        this.db.vehicle.count({ where: { status: "active" } }),
+        // `Deport.status` is free text rather than the usual enum, so every
+        // depot is counted rather than guessing at which words mean active.
+        this.db.deport.count(),
+      ]),
+    ]);
+    const [suppliers, transporters, drivers, vehicles, deports] = network;
+    return { orders, cargo, receipts, trips, awaiting, held, network: { suppliers, transporters, drivers, vehicles, deports } };
+  }
+
   items(ids: string[]) {
     return this.db.item.findMany({
       where: { id: { in: ids } },

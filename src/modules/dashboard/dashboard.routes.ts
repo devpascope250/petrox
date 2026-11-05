@@ -15,6 +15,24 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.get("/summary", { preHandler: [app.authenticate] }, async (request) =>
     success(await service.summary(parseInput(dashboardQuerySchema, request.query), request.contextUser!)));
+
+  /*
+   * `GET /dashboard/supply-chain` — ordering through to clearance, company
+   * wide. Open to whoever may already see any part of it: these are the same
+   * figures their own screens show, only added up.
+   */
+  app.get("/supply-chain", {
+    preHandler: [
+      app.authenticate,
+      app.authorize(
+        "orders.read", "orders.manage",
+        "cargo.read", "cargo.manage",
+        "central.stock.read", "central.stock.manage",
+        "order.report.read", "central.stock.report.read",
+      ),
+    ],
+  }, async (request) =>
+    success(await service.supplyChain(parseInput(dashboardQuerySchema, request.query))));
 };
 
 export default routes;
