@@ -36,8 +36,35 @@ const requestSelect = {
   },
 } as const;
 
+/** Who approves, as the list is today — the same people `settle` counts. */
+const memberSelect = {
+  id: true, position: true, level: true, status: true, createdAt: true,
+  authoriser: { select: { id: true, firstName: true, lastName: true, email: true } },
+} as const;
+
 export class StockClearanceRepository {
   constructor(private db: PrismaClient) {}
+
+  /**
+   * The active authorizers, in the order the Authorizers tab shows them.
+   *
+   * Sent with every clearance, because an approval row only exists once
+   * somebody has decided: without the roster a clearance waiting on two of
+   * three people can say "1 of 1 approved" and name nobody who is holding it
+   * up. Whoever is about to pay needs to see that before they pay, and so does
+   * whoever raised it.
+   *
+   * The current roster rather than a snapshot, deliberately: `settle` approves
+   * a clearance when every *currently* active authorizer has approved, so this
+   * is the list that decides its fate.
+   */
+  private activeAuthorizers() {
+    return this.db.clearanceAuthorizerMember.findMany({
+      where: { status: "active" },
+      orderBy: [{ level: "asc" }, { createdAt: "asc" }],
+      select: memberSelect,
+    });
+  }
 
   async list() {
     return await this.db.stockClearance.
@@ -79,8 +106,12 @@ export class StockClearanceRepository {
   }
 
   /** Every act of clearing, newest first, with its taxes, decisions and rows. */
-  requests() {
-    return this.db.clearanceRequest.findMany({ orderBy: { createdAt: "desc" }, select: requestSelect });
+  async requests() {
+    const [requests, authorizers] = await Promise.all([
+      this.db.clearanceRequest.findMany({ orderBy: { createdAt: "desc" }, select: requestSelect }),
+      this.activeAuthorizers(),
+    ]);
+    return requests.map((request) => ({ ...request, authorizers }));
   }
 
   /**
@@ -97,7 +128,11 @@ export class StockClearanceRepository {
       });
       if (!member) throw forbidden("You are not a clearance authorizer");
     }
-    return this.db.clearanceRequest.findUnique({ where: { id }, select: requestSelect });
+    const [request, authorizers] = await Promise.all([
+      this.db.clearanceRequest.findUnique({ where: { id }, select: requestSelect }),
+      this.activeAuthorizers(),
+    ]);
+    return request && { ...request, authorizers };
   }
 
   /**
@@ -124,7 +159,8 @@ export class StockClearanceRepository {
       orderBy: { createdAt: "asc" },
       select: requestSelect,
     });
-    return { authorizer: member, requests };
+    const authorizers = await this.activeAuthorizers();
+    return { authorizer: member, requests: requests.map((request) => ({ ...request, authorizers })) };
   }
 
   async create(data: CreateStockClearanceSchema) {

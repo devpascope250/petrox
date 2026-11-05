@@ -10,7 +10,19 @@ import { clearanceDecisionSchema } from "./authorizers/clearance-authorizer.sche
 const routes: FastifyPluginAsync = async (app) => {
   const service = new StockClearanceService(
     new StockClearanceRepository(app.prisma), app.config, app.prisma);
-  const read = [app.authenticate, app.authorize("stock.clearance.read", "stock.clearance.manage")];
+  /**
+   * Who may read a clearance.
+   *
+   * Whoever may pay one is on the list: they have to see the taxes, and above
+   * all who has approved and who has not, before they attach a payment
+   * document — paying is the step that cannot be undone. Reading is all it
+   * grants; deciding is still only for the authorizers.
+   */
+  const READ_CODES = [
+    "stock.clearance.read", "stock.clearance.manage",
+    "clearance.payment.read", "clearance.payment.create", "clearance.payment.manage",
+  ] as const;
+  const read = [app.authenticate, app.authorize(...READ_CODES)];
 
   app.get("/", { preHandler: read }, async (request) =>
     success(await service.list()));
@@ -38,8 +50,7 @@ const routes: FastifyPluginAsync = async (app) => {
    */
   app.get("/requests/:id", { preHandler: [app.authenticate] }, async (request) => {
     const user = request.contextUser!;
-    const mayRead = ["stock.clearance.read", "stock.clearance.manage"]
-      .some((permission) => user.permissions?.includes(permission));
+    const mayRead = READ_CODES.some((permission) => user.permissions?.includes(permission));
     return success(await service.findRequest(
       parseInput(idParamsSchema, request.params).id,
       mayRead ? undefined : user.userId,
