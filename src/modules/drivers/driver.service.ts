@@ -1,13 +1,12 @@
 import type { AppConfig } from "../../config/env.js";
 import { paginatedData } from "../../shared/pagination/index.js";
-import type { PaginationQuery } from "../../shared/validation/index.js";
-import { CreateDriverSchema } from "./deriver.schema.js";
+import { CreateDriverSchema, type DriverListQuery } from "./deriver.schema.js";
 import { DriverRepository } from "./driver.repository.js";
 export class DriverService {
   constructor(private repo: DriverRepository, private config: AppConfig) {
   }
 
-  async list(query: PaginationQuery) {
+  async list(query: DriverListQuery) {
     const [items, total] = await this.repo.list(query);
     return paginatedData(items, total, query);
   }

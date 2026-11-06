@@ -1,8 +1,7 @@
-import type { PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
-import type { PaginationQuery } from "../../shared/validation/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { CreateDriverSchema } from "./deriver.schema.js";
+import { CreateDriverSchema, type DriverListQuery } from "./deriver.schema.js";
 export class DriverRepository {
   constructor(private db: PrismaClient) {}
 
@@ -11,11 +10,21 @@ export class DriverRepository {
    * how much is already nominated on it but not yet delivered — the same rule
    * nominations enforce — so a form can show the space left before submitting.
    */
-  async list(query: PaginationQuery) {
+  async list(query: DriverListQuery) {
+    const where = this.matching(query.search, query.status);
     const [drivers, total] = await this.db.$transaction([
       this.db.driver.findMany({
+      where,
       ...paginationArgs(query),
-      orderBy: { createdAt: "desc" },
+      /*
+       * The id breaks the tie, and has to.
+       *
+       * `createdAt` alone is not a total order: a bulk import writes many
+       * drivers in the same millisecond, and MySQL is then free to order those
+       * rows differently between queries — so the same driver could appear on
+       * two pages while another appeared on none.
+       */
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       select: {
         id: true,
        names: true,
@@ -50,7 +59,9 @@ export class DriverRepository {
        }
       },
       }),
-      this.db.driver.count()
+      // The same `where`: a total counted over everything would page a
+      // search result into pages that are mostly empty.
+      this.db.driver.count({ where })
     ]);
     const items = drivers.map((driver) => ({
       ...driver,
@@ -68,6 +79,32 @@ export class DriverRepository {
       }),
     }));
     return [items, total] as const;
+  }
+
+  /**
+   * What a typed search matches: the driver, the documents he is known by, and
+   * the company he drives for — the same things the page shows in its columns,
+   * so a search for what is on screen finds it.
+   *
+   * MySQL compares these columns case-insensitively by its own collation, so
+   * no `mode` is needed (and Prisma's MySQL connector does not take one).
+   */
+  private matching(search?: string, status?: "active" | "inactive"): Prisma.DriverWhereInput {
+    const term = search?.trim();
+    return {
+      ...(status ? { status } : {}),
+      ...(term
+        ? {
+            OR: [
+              { names: { contains: term } },
+              { phone: { contains: term } },
+              { lisence: { contains: term } },
+              { passport: { contains: term } },
+              { transport: { is: { name: { contains: term } } } },
+            ],
+          }
+        : {}),
+    };
   }
 
   create(data: CreateDriverSchema) {
