@@ -38,7 +38,7 @@ export class UsersService {
       throw forbidden("Your user account is not assigned to a client");
     }
 
-    const [sites, clients] = await this.repo.formOptions(
+    const [sites, clients, offices] = await this.repo.formOptions(
       isClientAdmin ? actor.clientId! : undefined
     );
 
@@ -54,7 +54,15 @@ export class UsersService {
           { value: "others", label: "Other site staff", requires: null }
         ];
 
-    return { positions, sites: isClientAdmin ? [] : sites, clients };
+    // Offices are the company's own staff structure, so a client
+    // administrator — which only ever creates that client's users — is offered
+    // none, the same way it is offered no sites.
+    return {
+      positions,
+      sites: isClientAdmin ? [] : sites,
+      clients,
+      offices: isClientAdmin ? [] : offices
+    };
   }
 
   async create(input: CreateUserInput, actor: AuthUser) {
@@ -68,6 +76,8 @@ export class UsersService {
     } else if (actor.position !== "superAdmin") {
       throw forbidden("Only super administrators and client administrators can create users");
     }
+
+    await this.assertOffice(input.officeId);
 
     // The PIN entered on the form; without one, a generated PIN is shown once.
     const temporaryPin = input.pin ? undefined : generateTemporaryPin();
@@ -116,6 +126,8 @@ export class UsersService {
       }
     }
 
+    await this.assertOffice(profile.officeId);
+
     return this.repo.update(id, {
       ...profile,
       ...(password ? { passwordHash: await bcrypt.hash(password, 12) } : {}),
@@ -141,6 +153,23 @@ export class UsersService {
     if (id === actor.userId) throw forbidden("You cannot delete your own account");
     this.assertCanManage(await this.find(id), actor);
     return this.repo.delete(id);
+  }
+
+  /**
+   * The office exists and is still open. Checked here rather than left to the
+   * foreign key, so an id that is wrong — or an office that has been closed —
+   * comes back as a 404 naming the office instead of a database error.
+   *
+   * `null` is a deliberate "no office"; `undefined` means the request did not
+   * mention one, and neither is checked.
+   */
+  private async assertOffice(officeId: string | null | undefined) {
+    if (!officeId) return;
+    const office = await this.repo.findOffice(officeId);
+    if (!office) throw new NotFoundError("Office");
+    if (office.status !== "active" || office.department.status !== "active") {
+      throw new BusinessError("OFFICE_INACTIVE", "That office is closed. Choose an active one.");
+    }
   }
 
   /** A client administrator may only reach users inside its own client. */

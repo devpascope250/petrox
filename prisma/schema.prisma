@@ -99,6 +99,14 @@ model User {
   signatureUrl               String?
   /// The site they work at now. `UserSites` keeps every site they were assigned, with this one active.
   site                       TblSite?                 @relation("UserHomeSite", fields: [siteId], references: [id], onDelete: SetNull)
+  /// The office they sit in, which is also how their department is known.
+  ///
+  /// Optional: everyone already on record predates it, and nothing in the
+  /// system needs it to work. It is deliberately **not** on `Role` — two
+  /// accountants in two offices share one role, and moving someone must not
+  /// change what they may do.
+  officeId                   String?
+  office                     CompanyOffice?           @relation(fields: [officeId], references: [id], onDelete: SetNull)
   position                   UserPositions            @default(siteManager)
   refreshTokens              RefreshToken[]
   passwordResetTokens        PasswordResetToken[]
@@ -147,6 +155,7 @@ model User {
 
   @@index([roleId])
   @@index([siteId])
+  @@index([officeId])
 }
 
 enum UserPositions {
@@ -291,6 +300,9 @@ model Supplier {
   address        String?
   phone          String?
   tinNumber      String?
+  contactPerson  String?
+  email          String?
+  documentUrl    String?
   supplierTypeId String
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -2366,4 +2378,43 @@ enum ClearanceAcceptStatus {
   awaiting
   approved
   rejected
+}
+
+
+/// A division of the company — Finance, Operations, Procurement.
+///
+/// The offices under it are where people actually sit; a department on its own
+/// holds nobody.
+model CompanyDepartment {
+  id             String         @id @default(uuid())
+  departmentName String
+  /// Short code people type and import by, so it is unique: a second "FIN"
+  /// means the next import silently files staff under the wrong department.
+  departmentCode String         @unique
+  description    String
+  status         StatusType     @default(active)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  offices        CompanyOffice[]
+}
+
+/// An office within a department, and where a user sits.
+///
+/// The department is reachable through here, which is why a user carries only
+/// `officeId` and no `departmentId`: two paths to the same fact are two paths
+/// that can disagree.
+model CompanyOffice {
+  id           String            @id @default(uuid())
+  officeName   String
+  /// Unique company-wide rather than per department, for the same reason as
+  /// `departmentCode`. An office moving department keeps its code.
+  officeCode   String            @unique
+  departmentId String
+  department   CompanyDepartment @relation(fields: [departmentId], references: [id])
+  status       StatusType        @default(active)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  users        User[]
+
+  @@index([departmentId])
 }

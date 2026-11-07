@@ -13,6 +13,9 @@ import type { SupplerRepository } from "./supplier.repository.js";
  * that does not exist stops that row rather than quietly creating a supplier
  * with the wrong type. A type is only created on its own page: inventing one
  * from a misspelling is how a list of types ends up with "Fuel" three times.
+ *
+ * There is no column for the supplier's paperwork: a document is a file, and a
+ * spreadsheet cell cannot carry one. It is attached per supplier on the form.
  */
 export class SupplierImporter {
   constructor(private db: PrismaClient, private repo: SupplerRepository) {}
@@ -35,6 +38,8 @@ export class SupplierImporter {
         phone: text(row.phone),
         address: text(row.address) ?? null,
         tinNumber: text(row.tin) ?? null,
+        contactPerson: text(row.contact) ?? null,
+        email: text(row.email) ?? null,
         supplierTypeId,
       });
       // A supplier is not unique in the database, so the same sheet imported

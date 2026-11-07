@@ -29,7 +29,13 @@ const userProfileSchema = z.object({
   phone: phoneSchema.optional(),
   /** Their PIN (4–8 digits). Left out, one is generated and returned once as `temporaryPin`. */
   pin: pinSchema.optional(),
-  roleId: uuidSchema.nullable().optional()
+  roleId: uuidSchema.nullable().optional(),
+  /**
+   * The office they sit in. Optional for every position — it says where in the
+   * company someone works, not what they may do, so no position requires it
+   * and leaving it out is not an error.
+   */
+  officeId: uuidSchema.nullable().optional()
 });
 
 const clientAdminUserSchema = userProfileSchema.extend({
@@ -101,7 +107,9 @@ export const updateUserSchema = z.object({
   lastName: nonEmptyNameSchema.optional(),
   phone: phoneSchema.nullable().optional(),
   position: z.enum(UserPositions).optional(),
-  roleId: uuidSchema.nullable().optional()
+  roleId: uuidSchema.nullable().optional(),
+  /** `null` takes them out of an office without putting them in another. */
+  officeId: uuidSchema.nullable().optional()
 }).refine((data) => Object.keys(data).length > 0, "At least one field is required");
 
 export const assignUserSiteSchema = z.object({

@@ -17,6 +17,8 @@ import userRoutes from "./modules/users/users.routes.js";
 import SupplierRoutes from "./modules/supplier/supplier.routes.js";
 import OrdersRoutes from "./modules/orders/orders.routes.js";
 import DeportsRoutes from "./modules/deports/deport.routes.js";
+import DepartmentRoutes from "./modules/company-structure/department.routes.js";
+import OfficeRoutes from "./modules/company-structure/office.routes.js";
 import TransporterRoutes from "./modules/transporters/transporter.routes.js";
 import VehiclesRoutes from "./modules/vehicles/vehicles.routes.js";
 import DriversRoutes from "./modules/drivers/driver.routes.js";
@@ -124,6 +126,8 @@ export async function buildApp(config: AppConfig, options: FastifyServerOptions 
   await app.register(SupplierRoutes, { prefix: "/api/v1/suppliers" });
   await app.register(OrdersRoutes, { prefix: "/api/v1/orders" });
   await app.register(DeportsRoutes, { prefix: "/api/v1/deports" });
+  await app.register(DepartmentRoutes, { prefix: "/api/v1/company-departments" });
+  await app.register(OfficeRoutes, { prefix: "/api/v1/company-offices" });
   await app.register(TransporterRoutes, { prefix: "/api/v1/transporters" });
   await app.register(VehiclesRoutes, { prefix: "/api/v1/vehicles" });
   await app.register(DriversRoutes, { prefix: "/api/v1/drivers" });

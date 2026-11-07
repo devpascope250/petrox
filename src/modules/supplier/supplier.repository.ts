@@ -16,6 +16,9 @@ export class SupplerRepository {
       phone: true,
       status: true,
       tinNumber: true,
+      contactPerson: true,
+      email: true,
+      documentUrl: true,
       supplierType: {
         select: {
           id: true,
@@ -35,6 +38,9 @@ export class SupplerRepository {
         // this API had its address as its phone number.
         phone: data.phone,
         tinNumber: data.tinNumber,
+        contactPerson: data.contactPerson,
+        email: data.email,
+        documentUrl: data.documentUrl,
         supplierTypeId: data.supplierTypeId
       }
     });
@@ -45,7 +51,20 @@ export class SupplerRepository {
     return await this.db.supplier.update(
       {
         where: {id: id},
-        data: data
+        // Field by field rather than the parsed body wholesale, so that
+        // `documentUrl` — which is absent unless a new file was uploaded —
+        // leaves the paperwork already on file alone. Prisma skips an
+        // `undefined`; it would have written a `null`.
+        data: {
+          name: data.name,
+          address: data.address,
+          phone: data.phone,
+          tinNumber: data.tinNumber,
+          contactPerson: data.contactPerson,
+          email: data.email,
+          documentUrl: data.documentUrl,
+          supplierTypeId: data.supplierTypeId
+        }
       }
     )
     }

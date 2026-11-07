@@ -14,6 +14,18 @@ const publicUserSelect = {
   position: true,
   clientId: true,
   siteId: true,
+  officeId: true,
+  /// The office, with its department nested: "which department is this person
+  /// in" is answered through the office, which is the only place it is stored.
+  office: {
+    select: {
+      id: true,
+      officeName: true,
+      officeCode: true,
+      status: true,
+      department: { select: { id: true, departmentName: true, departmentCode: true } }
+    }
+  },
   client: true,
   sites: { select: { siteId: true, status: true, site: true } },
   isActive: true,
@@ -58,6 +70,7 @@ export class UsersRepository {
           position: input.position,
           clientId,
           siteId,
+          officeId: input.officeId,
           ...(siteId ? { sites: { create: { siteId } } } : {})
         },
         select: publicUserSelect
@@ -87,6 +100,15 @@ export class UsersRepository {
     return this.db.tblSite.findUnique({ where: { id }, select: { id: true } });
   }
 
+  findOffice(id: string) {
+    return this.db.companyOffice.findUnique({
+      where: { id },
+      // The department's status counts too: a closed department's offices are
+      // closed with it, whatever their own row still says.
+      select: { id: true, status: true, department: { select: { status: true } } }
+    });
+  }
+
   assignSite(userId: string, siteId: string) {
     return this.db.$transaction(async (tx) => {
       await tx.userSites.updateMany({
@@ -113,8 +135,9 @@ export class UsersRepository {
   }
 
   /**
-   * The active sites and clients a create-user form needs for its dependent
-   * selects. `clientId` narrows the clients to one, for a client administrator.
+   * The active sites, clients and offices a create-user form needs for its
+   * dependent selects. `clientId` narrows the clients to one, for a client
+   * administrator.
    */
   formOptions(clientId?: string) {
     return this.db.$transaction([
@@ -127,6 +150,21 @@ export class UsersRepository {
         where: { status: true, ...(clientId && { id: clientId }) },
         orderBy: { clientCode: "asc" },
         select: { id: true, clientCode: true, name: true }
+      }),
+      // Every active office, with its department, so the form can group them.
+      // An inactive office stays on whoever is already in it but must not be
+      // choosable for anyone else.
+      this.db.companyOffice.findMany({
+        // A closed office, or one whose whole department is closed, stays on
+        // the people already in it but must not be choosable for anyone else.
+        where: { status: "active", department: { status: "active" } },
+        orderBy: [{ department: { departmentName: "asc" } }, { officeName: "asc" }],
+        select: {
+          id: true,
+          officeName: true,
+          officeCode: true,
+          department: { select: { id: true, departmentName: true } }
+        }
       })
     ]);
   }

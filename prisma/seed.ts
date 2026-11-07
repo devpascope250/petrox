@@ -64,6 +64,11 @@ export const MODULE_TREE: ModuleNode[] = [
       { id: "099b14e7-d52d-4f8b-b5be-64bbae585ffe", code: "USERS", name: "Users", icon: "Users", prefix: "users" },
       { code: "BACKUPS", name: "Backups", icon: "DatabaseBackup", prefix: "backups" },
       { code: "COMPANY_SETTINGS", name: "Company Settings", icon: "Building", prefix: "company.settings" },
+      // The company's own structure. Where a user sits, not what they may do:
+      // the office is on the user, never on the role, so keeping this
+      // catalogue is a different grant from assigning anyone to it.
+      { code: "COMPANY_DEPARTMENTS", name: "Departments", icon: "Network", prefix: "company.departments" },
+      { code: "COMPANY_OFFICES", name: "Offices", icon: "Building2", prefix: "company.offices" },
       { id: "a5ef8f60-cf84-4b2e-9b66-370f01be08a8", code: "ITEMS", name: "Items", icon: "Boxes", prefix: "items" },
       { code: "ITEM_PRICE", name: "Item Price", icon: "Tags", prefix: "item.price" },
       { code: "ITEM_UNITS", name: "Item Units", icon: "Layers", prefix: "item.units" },

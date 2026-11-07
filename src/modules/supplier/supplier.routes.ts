@@ -6,6 +6,7 @@ import { SupplerRepository } from "./supplier.repository.js";
 import { createSupplierSchema, createSupplierTypeSchema } from "./supplier.schema.js";
 import { sheetImportSchema } from "../../shared/import/sheet-import.js";
 import { SupplierImporter } from "./supplier.import.js";
+import { readSupplierBody } from "./supplier-upload.js";
 const routes: FastifyPluginAsync = async (app) => {
   const repository = new SupplerRepository(app.prisma);
   const service = new SupplierService(repository, app.config);
@@ -14,8 +15,12 @@ const routes: FastifyPluginAsync = async (app) => {
     success(await service.list(parseInput(paginationQuerySchema, request.query))));
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("suppliers.read", "suppliers.manage")] }, async (request) =>
     success(await service.find(parseInput(idParamsSchema, request.params).id)));
+  /**
+   * JSON, or multipart when the supplier's paperwork travels with it — the
+   * stored path is taken from the uploaded file, never from a text field.
+   */
   app.post("/", { preHandler: [app.authenticate, app.authorize("suppliers.create", "suppliers.manage")] }, async (request, reply) =>
-    created(reply, await service.create(parseInput(createSupplierSchema, request.body))));
+    created(reply, await service.create(parseInput(createSupplierSchema, await readSupplierBody(request)))));
 
   /**
    * Many suppliers at once, from the downloaded template. Creating is creating,
@@ -25,8 +30,9 @@ const routes: FastifyPluginAsync = async (app) => {
   app.post("/import", { preHandler: [app.authenticate, app.authorize("suppliers.create", "suppliers.manage")] }, async (request) =>
     success(await importer.run(parseInput(sheetImportSchema, request.body))));
 
+    /** Same two shapes as creating. No file sent keeps the document on file. */
     app.put("/:id", { preHandler: [app.authenticate, app.authorize("suppliers.edit", "suppliers.manage")] }, async (request, reply) =>
-    created(reply, await service.update(parseInput(idParamsSchema, request.params).id, parseInput(createSupplierSchema, request.body))));
+    created(reply, await service.update(parseInput(idParamsSchema, request.params).id, parseInput(createSupplierSchema, await readSupplierBody(request)))));
 
      app.put("/status/:id", { preHandler: [app.authenticate, app.authorize("suppliers.edit", "suppliers.manage")] }, async (request, reply) =>
     created(reply, await service.updateSupplierStatus(parseInput(idParamsSchema, request.params).id)));
