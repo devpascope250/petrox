@@ -28,7 +28,7 @@ const config = {
   PIN_HMAC_SECRET: SECRET,
   LOGIN_OTP_TTL_MINUTES: 10,
   LOGIN_OTP_MAX_ATTEMPTS: 3,
-  LOGIN_OTP_REQUIRED: true,
+  ALLOW_LOGIN_OTP: true,
 } as AppConfig;
 
 const PASSWORD = "Str0ngPass!";

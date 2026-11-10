@@ -57,9 +57,9 @@ export class AuthController {
    *
    * It answers with a **challenge** — `otpRequired`, the challenge id and
    * where the code went — and no cookies are set. The session is issued by
-   * `/auth/login/verify`. When the emergency switch is off
-   * (`LOGIN_OTP_REQUIRED=false`) it answers with the session, as it used to,
-   * so a client tells the two apart by `otpRequired` rather than by guessing.
+   * `/auth/login/verify`. With `ALLOW_LOGIN_OTP=false` it answers with the
+   * session instead, as it did before this step existed — so a client tells
+   * the two apart by `otpRequired` rather than by guessing.
    */
   login = async (request: FastifyRequest, reply: FastifyReply) => {
     const input = parseInput(loginSchema, request.body);

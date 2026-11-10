@@ -136,7 +136,7 @@ export class AuthService {
     const user = await this.repo.findUserByEmail(email);
     this.ensureActive(user);
     if (!(await bcrypt.compare(password, user.passwordHash))) throw unauthorized("Invalid credentials");
-    if (!this.config.LOGIN_OTP_REQUIRED) return this.issue(user);
+    if (!this.config.ALLOW_LOGIN_OTP) return this.issue(user);
     return this.startOtpChallenge(user);
   }
 
