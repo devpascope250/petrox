@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { created, success } from "../../shared/http/index.js";
-import { cuidParamsSchema, idParamsSchema, parseInput } from "../../shared/validation/index.js";
+import { recordIdParamsSchema, idParamsSchema, parseInput } from "../../shared/validation/index.js";
 import { CargoInvoiceRepository } from "./cargo-invoice.repository.js";
 import { createCargoInvoiceSchema, updateCargoInvoiceSchema } from "./cargo-invoice.schema.js";
 import { CargoInvoiceService } from "./cargo-invoice.service.js";
@@ -11,11 +11,12 @@ const routes: FastifyPluginAsync = async (app) => {
 
   /**
    * Every invoice on one **cargo**. The id in the path is the cargo's, and a
-   * cargo id is a cuid — this used to parse it as a uuid, which refused every
-   * real shipment with `Must be a valid UUID`.
+   * cargo id may be **either** a cuid or a uuid — see `recordIdSchema`. This
+   * parsed a uuid first, which refused every database-made shipment, then a
+   * cuid, which refused every seeded one.
    */
   app.get("/:id", { preHandler: [app.authenticate, app.authorize("cargo.read", "cargo.manage")] },
-    async (request) => success(await service.list(parseInput(cuidParamsSchema, request.params).id)));
+    async (request) => success(await service.list(parseInput(recordIdParamsSchema, request.params).id)));
 
   app.post("/", { preHandler: [app.authenticate, app.authorize("cargo.create", "cargo.manage")] },
     async (request, reply) => {

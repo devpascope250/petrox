@@ -3,6 +3,34 @@ import { CargoStatus, ExtraT1ValidationStatus, PlanStatus, StockStatus } from ".
 
 export const uuidSchema = z.uuid("Must be a valid UUID");
 export const cuidSchema = z.cuid2("Must be a valid CUID");
+
+/**
+ * An id that may be **either shape**, for the records that hold both.
+ *
+ * `Cargo` (and the other `@default(cuid())` tables) take a cuid when the
+ * database generates the id — and a uuid when the caller supplies one, which
+ * the demo seed does: it derives every id from its own key so a re-seed is
+ * idempotent. So a real database holds both, and a validator that insists on
+ * one refuses half the rows. This has already been got wrong in both
+ * directions: the cargo-invoice list parsed a uuid and rejected every
+ * database-made cargo, and the cargo routes then parsed a cuid and rejected
+ * every seeded one.
+ *
+ * Both checks are zod's own, so the shapes stay in step with `uuidSchema` and
+ * `cuidSchema` rather than being re-written as a regex here — with one guard
+ * on top: `z.cuid2()` only checks the alphabet (`/^[0-9a-z]+$/`), so it accepts
+ * `"123"` as an id. Every generator in use produces at least 24 characters
+ * (cuid v1 is 25, cuid2 defaults to 24), so a short string is a typo or a
+ * probe, not an id.
+ */
+const SHORTEST_CUID = 16;
+
+export const recordIdSchema = z.string().trim().refine(
+  (value) =>
+    uuidSchema.safeParse(value).success ||
+    (value.length >= SHORTEST_CUID && cuidSchema.safeParse(value).success),
+  "Must be a valid id",
+);
 export const emailSchema = z.string()
   .trim()
   .pipe(z.email("Must be a valid email address"))
@@ -59,6 +87,8 @@ export const phoneSchema = z
 export const idParamsSchema = z.object({ id: uuidSchema });
 export const id2ParamsSchema = z.object({ id2: uuidSchema });
 export const cuidParamsSchema = z.object({ id: cuidSchema });
+/** For a record whose id may be a uuid or a cuid — see `recordIdSchema`. */
+export const recordIdParamsSchema = z.object({ id: recordIdSchema });
 export const cargoStatusPamasSchema = z.object({status: z.enum(CargoStatus)})
 export const t1ExtraStatusPamasSchema = z.object({status: z.enum(ExtraT1ValidationStatus)})
 export const cargoReceivedDatePamasSchema = z.object({date: z.coerce.date()})

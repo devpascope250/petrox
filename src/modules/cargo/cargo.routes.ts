@@ -3,7 +3,7 @@ import { created, success } from "../../shared/http/index.js";
 import {
   cargoReceivedDatePamasSchema,
   cargoStatusPamasSchema,
-  cuidParamsSchema,
+  recordIdParamsSchema,
   idParamsSchema,
   parseInput,
 } from "../../shared/validation/index.js";
@@ -39,7 +39,7 @@ const routes: FastifyPluginAsync = async (app) => {
     },
     async (request) =>
       success(
-        await service.find(parseInput(cuidParamsSchema, request.params).id),
+        await service.find(parseInput(recordIdParamsSchema, request.params).id),
       ),
   );
 
@@ -137,7 +137,7 @@ const routes: FastifyPluginAsync = async (app) => {
       }
 
       const cargo = await service.update(
-        parseInput(cuidParamsSchema, request.params).id,
+        parseInput(recordIdParamsSchema, request.params).id,
         input,
       );
 
@@ -154,7 +154,7 @@ const routes: FastifyPluginAsync = async (app) => {
     "/:id/movement",
     { preHandler: [app.authenticate, app.authorize("cargo.read", "cargo.manage")] },
     async (request) =>
-      success(await service.movement(parseInput(cuidParamsSchema, request.params).id)),
+      success(await service.movement(parseInput(recordIdParamsSchema, request.params).id)),
   );
 
   /**
@@ -177,7 +177,7 @@ const routes: FastifyPluginAsync = async (app) => {
         body = { ...fields, ...(files.supportingDocUrl ? { supportingDocUrl: files.supportingDocUrl } : {}) };
       }
       return created(reply, await service.returnCargo(
-        parseInput(cuidParamsSchema, request.params).id,
+        parseInput(recordIdParamsSchema, request.params).id,
         parseInput(returnCargoSchema, body),
         request.contextUser!.userId,
       ));
@@ -205,7 +205,7 @@ const routes: FastifyPluginAsync = async (app) => {
       if (input.pfi && files.pfiSupportingDocUrl) input.pfi.supportingDocUrl = files.pfiSupportingDocUrl;
 
       return created(reply, await service.createReplacement(
-        parseInput(cuidParamsSchema, request.params).id,
+        parseInput(recordIdParamsSchema, request.params).id,
         input,
       ));
     },
@@ -223,7 +223,7 @@ const routes: FastifyPluginAsync = async (app) => {
       created(
         reply,
         await service.updateStatus(
-          parseInput(cuidParamsSchema, request.params).id,
+          parseInput(recordIdParamsSchema, request.params).id,
           parseInput(cargoStatusPamasSchema, request.params).status,
           parseInput(cargoReceivedDatePamasSchema, request.params).date
         ),

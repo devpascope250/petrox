@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  cuidSchema,
+  recordIdSchema,
   nonEmptyNameSchema,
   uuidSchema,
 } from "../../shared/validation/index.js";
@@ -10,7 +10,7 @@ import {
  * nomination that later loads from it. Cargo ids are cuids.
  */
 export const createPfiSchema = z.object({
-  cargoId: cuidSchema,
+  cargoId: recordIdSchema,
   currencyId: uuidSchema,
   currancyCode: nonEmptyNameSchema,
   amount: z.coerce.number(),

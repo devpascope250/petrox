@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { cargoMovement } from "../src/modules/cargo/cargo-movement.js";
 import { StockRepository } from "../src/modules/stock/stock.repository.js";
+import { recordIdSchema } from "../src/shared/validation/index.js";
 
 /**
  * Taking a shipment back is only honest while its fuel has not moved, and the
@@ -135,5 +136,26 @@ describe("a withdrawn batch is on record but is not stock", () => {
     expect(report!.summary.quantitiesByStatus).toMatchObject({
       received: 100_000, returned: 60_000, cancelled: 30_000,
     });
+  });
+});
+
+describe("a cargo id may be a uuid or a cuid", () => {
+  /**
+   * `Cargo.id` is `@default(cuid())`, so the database makes cuids — but the
+   * demo seed supplies its own ids, derived from a key so a re-seed is
+   * idempotent, and those are uuids. A real database therefore holds both.
+   *
+   * This has been got wrong in both directions: the cargo-invoice list parsed
+   * a uuid and refused every database-made shipment, then the cargo routes
+   * parsed a cuid and refused every seeded one with "Must be a valid CUID".
+   */
+  it("takes both shapes and nothing else", () => {
+    const uuid = "6734659f-ee83-4997-a1e5-c5295266f149";
+    const cuid = "cm3xq8v4t0000abcd1234efgh";
+    expect(recordIdSchema.safeParse(uuid).success).toBe(true);
+    expect(recordIdSchema.safeParse(cuid).success).toBe(true);
+    for (const rubbish of ["", "   ", "not-an-id", "123", "6734659f-ee83-4997-a1e5"]) {
+      expect(recordIdSchema.safeParse(rubbish).success).toBe(false);
+    }
   });
 });

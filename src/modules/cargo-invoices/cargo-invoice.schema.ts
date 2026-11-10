@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { cuidSchema, nonEmptyNameSchema } from "../../shared/validation/index.js";
+import { recordIdSchema, nonEmptyNameSchema } from "../../shared/validation/index.js";
 
 export const createCargoInvoiceSchema = z.object({
   quantity: z.coerce.number().positive(),
   unitPrice: z.coerce.number().nonnegative(),
   amount: z.coerce.number().nonnegative(),
   currencyCode: nonEmptyNameSchema,
-  cargoId: cuidSchema,
+  cargoId: recordIdSchema,
   supportingDocUrl: z.string().startsWith("/uploads/").optional().nullable(),
   invoiceCode: nonEmptyNameSchema,
   invoiceReference: nonEmptyNameSchema,

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { cuidParamsSchema, nonEmptyNameSchema, uuidSchema} from "../../shared/validation/index.js";
+import { nonEmptyNameSchema, recordIdSchema, uuidSchema} from "../../shared/validation/index.js";
 import { StockStatus } from "../../../prisma/generated/prisma/enums.js";
 
 export const stockReportQuerySchema = z.object({
@@ -18,7 +18,8 @@ export type StockReportQuerySchema = z.infer<typeof stockReportQuerySchema>;
 
 export const createStockSchema = z.object({
     deportId: uuidSchema,
-    cargoId: z.cuid2(),
+    // Either shape: a seeded cargo carries a uuid — see `recordIdSchema`.
+    cargoId: recordIdSchema,
     quantity: z.coerce.number(),
     receivedDate: z.coerce.date("Please provide Received date."),
     status: z.enum(StockStatus).optional().default("awaiting"),
