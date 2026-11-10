@@ -6,7 +6,15 @@ import { AuthService } from "./auth.service.js";
 const authRoutes: FastifyPluginAsync = async (app) => {
   const controller = new AuthController(new AuthService(new AuthRepository(app.prisma), app, app.config), app.config);
   const limited = { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } };
+  /*
+   * Two steps: `/login` checks the password and emails a code, and
+   * `/login/verify` is what issues the session. Both are rate limited — the
+   * first against password guessing, the second against guessing the code
+   * across challenges, on top of the per-challenge attempt limit.
+   */
   app.post("/login", limited, controller.login);
+  app.post("/login/verify", limited, controller.verifyLoginOtp);
+  app.post("/login/resend", { config: { rateLimit: { max: 3, timeWindow: "5 minutes" } } }, controller.resendLoginOtp);
   app.post("/pin-login", limited, controller.pinLogin);
   app.post("/refresh", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, controller.refresh);
   app.post("/logout", controller.logout);

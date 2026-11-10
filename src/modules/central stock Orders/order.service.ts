@@ -16,7 +16,7 @@ import {
   shareLoadingOrder,
   type ShareLoadingOrderSchema,
 } from "./loading-order-share.js";
-import { CentralStockOrderReportQuerySchema, CreateCentralStockOrderSchema, CreateLoadingOrderSchema, LoadingOrderStatusSchema, ReceptionOrdersQuerySchema, ReceiveLoadingOrderSchema } from "./order.schema.js"
+import { CentralStockOrderReportQuerySchema, CreateCentralStockOrderSchema, CreateLoadingOrderSchema, LoadingOrderListQuery, LoadingOrderStatusSchema, ReceptionOrdersQuerySchema, ReceiveLoadingOrderSchema } from "./order.schema.js"
 import type { EditOrderQuantitySchema, RequestOrderEditSchema } from "./order.schema.js";
 
 export class CentralStockOrderService {
@@ -54,9 +54,21 @@ export class CentralStockOrderService {
     if (!isSiteBound(actor)) return {};
     return { siteId: this.requireSite(actor), orderType: "internal" as const, status: "pending" as const, approvedBy: undefined };
   }
-  /** A site manager sees only the loads carrying orders for his site. */
-  listLoadingOrders(actor: AuthUser) {
-    return this.repo.listLoadingOrders(this.siteScope(actor));
+  /**
+   * One page of loading orders, with the per-stage counts the tabs need.
+   *
+   * The counts travel with the page so a badge cannot disagree with the rows
+   * it sits above, and so the screen needs no second round trip. A site
+   * manager sees only the loads carrying orders for his site — here, and in
+   * every count.
+   */
+  async listLoadingOrders(query: LoadingOrderListQuery, actor: AuthUser) {
+    const scope = this.siteScope(actor);
+    const [[items, total], counts] = await Promise.all([
+      this.repo.listLoadingOrders(query, scope),
+      this.repo.loadingOrderStageCounts(query, scope),
+    ]);
+    return { ...paginatedData(items, total, query), counts };
   }
   /**
    * Raises a loading order and tells the authorisers whose turn it is.
@@ -65,8 +77,8 @@ export class CentralStockOrderService {
    * order that exists with nobody told is a nuisance, one that failed to exist
    * because a mail server was down is worse.
    */
-  async createLoadingOrders(input: CreateLoadingOrderSchema) {
-    const orders = await this.repo.createLoadingOrders(input);
+  async createLoadingOrders(input: CreateLoadingOrderSchema, createdBy: string) {
+    const orders = await this.repo.createLoadingOrders(input, createdBy);
     for (const order of Array.isArray(orders) ? orders : [orders]) {
       const id = (order as { id?: string }).id;
       if (!id) continue;

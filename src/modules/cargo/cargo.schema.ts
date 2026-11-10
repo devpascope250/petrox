@@ -59,6 +59,30 @@ export const createCargoSchema = z.object({
   }, cargoPfiSchema.optional()),
 });
 
+/**
+ * A shipment going back to the supplier.
+ *
+ * `kind` says whether that is the end of it (`returned`) or a new shipment is
+ * coming in its place (`replaced`) — the replacement is raised afterwards,
+ * against the return, so the two are never half-linked.
+ *
+ * The whole shipment goes back or none of it: there is no quantity here.
+ */
+export const returnCargoSchema = z.object({
+  kind: z.enum(["returned", "replaced"]),
+  /** Required. "Why did 200,000 litres go back" is the point of the record. */
+  reason: z.string().trim().min(1, "Say why the shipment went back").max(1000),
+  /** What the supplier owes back, when that has been agreed. */
+  refundAmount: z.coerce.number().nonnegative().optional(),
+  currencyCode: z.string().trim().max(10).optional(),
+  supportingDocUrl: z.string().optional().nullable(),
+}).refine(
+  (value) => value.refundAmount === undefined || Boolean(value.currencyCode),
+  { message: "Say which currency the refund is in", path: ["currencyCode"] },
+);
+
+export type ReturnCargoSchema = z.infer<typeof returnCargoSchema>;
+
 export const fileSchema = z.file().optional().nullable();
 export type FileSchema = z.infer<typeof fileSchema>;
 export type CreateCargoSchema = z.infer<typeof createCargoSchema>;

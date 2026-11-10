@@ -226,6 +226,7 @@ export class NominationRepository {
       select: {
         id: true,
         quantity: true,
+        status: true,
         item: { select: { name: true } },
         nominationVessels: {
           ...(exclude ? { where: { nominationId: { not: exclude } } } : {}),
@@ -238,6 +239,17 @@ export class NominationRepository {
     for (const vessel of vessels) {
       const stock = byId.get(vessel.stockId);
       if (!stock) throw new NotFoundError("Stock not found");
+      /*
+       * A batch whose cargo was sent back to the supplier, or cancelled, is not
+       * there to load. The capacity check alone would have allowed it: it
+       * compares the quantity on record, which a withdrawn batch keeps.
+       */
+      if (stock.status === "returned" || stock.status === "cancelled") {
+        throw new BusinessError(
+          "STOCK_WITHDRAWN",
+          `This ${stock.item.name} batch ${stock.status === "returned" ? "has been sent back to the supplier" : "was cancelled"}, so it cannot be nominated.`,
+        );
+      }
       const nominated = stock.nominationVessels.reduce(
         (total, row) => total + Number(row.ambQuantity),
         0,

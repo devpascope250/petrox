@@ -21,6 +21,7 @@
         "fees:placement": "tsx scripts/landing-fee-placement.ts",
         "discounts:check": "tsx scripts/discount-check.ts",
         "rota:dates": "tsx --env-file=.env scripts/pump-rota-dates.ts",
+        "stock:link-movements": "tsx --env-file=.env scripts/link-stock-movements.ts",
         "tolerance:recompute": "tsx --env-file=.env scripts/tolerance-recompute.ts",
         "postinstall": "prisma generate"
     },

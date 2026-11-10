@@ -44,6 +44,36 @@ export class AuthRepository {
       this.db.refreshToken.create({ data: { userId, tokenHash, expiresAt } })
     ]);
   }
+  /**
+   * A login waiting on its emailed code.
+   *
+   * Any code still open for this user is spent first: asking again replaces
+   * the code rather than adding a second one that would also work.
+   */
+  async createLoginOtp(userId: string, codeHash: string, expiresAt: Date) {
+    const [, challenge] = await this.db.$transaction([
+      this.db.loginOtp.updateMany({
+        where: { userId, usedAt: null }, data: { usedAt: new Date() },
+      }),
+      this.db.loginOtp.create({ data: { userId, codeHash, expiresAt } }),
+    ]);
+    return challenge;
+  }
+
+  findLoginOtp(id: string) {
+    return this.db.loginOtp.findUnique({ where: { id } });
+  }
+
+  /** A wrong code counted against the challenge, which dies at the limit. */
+  countLoginOtpAttempt(id: string) {
+    return this.db.loginOtp.update({ where: { id }, data: { attempts: { increment: 1 } } });
+  }
+
+  /** Spent, so the same code cannot sign anyone in twice. */
+  consumeLoginOtp(id: string) {
+    return this.db.loginOtp.update({ where: { id }, data: { usedAt: new Date() } });
+  }
+
   createPasswordResetToken(userId: string, tokenHash: string, expiresAt: Date) {
     return this.db.passwordResetToken.create({ data: { userId, tokenHash, expiresAt } });
   }

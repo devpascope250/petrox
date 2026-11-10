@@ -1,7 +1,8 @@
 import { CentralOrderStatus, Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { CentralStockOrderReportQuerySchema, CreateCentralStockOrderSchema, CreateLoadingOrderSchema, LoadingOrderStatusSchema, ReceptionOrdersQuerySchema, ReceiveLoadingOrderSchema } from "./order.schema.js";
+import { drawForRequisitionLines } from "../requisitions/requisition-load.js";
+import { CentralStockOrderReportQuerySchema, CreateCentralStockOrderSchema, CreateLoadingOrderSchema, LoadingOrderListQuery, LoadingOrderStage, LoadingOrderStatusSchema, ReceptionOrdersQuerySchema, ReceiveLoadingOrderSchema } from "./order.schema.js";
 
 /** Who asked for an order — shown so a site manager can spot their own requests. */
 const requesterSelect = { select: { id: true, firstName: true, lastName: true } } as const;
@@ -41,6 +42,42 @@ function scopedLines(scope?: SiteScope): Prisma.LoadedOrderWhereInput | undefine
 function scopedReceptions(scope?: SiteScope): Prisma.OrderReceptionWhereInput | undefined {
   return scope ? { cuve: { siteId: scope.siteId } } : undefined;
 }
+
+/**
+ * A load's stage as a filter, in the same order the client derives it.
+ *
+ * `status` is the authoritative "fully received" flag — a reception sets it the
+ * moment nothing is left to take in — so the rungs are columns rather than a
+ * sum, and the filter stays one indexed query. A load serving several sites can
+ * read "received" to a site manager whose own part is complete while the load
+ * itself is still pending; that is the same approximation the reception list
+ * has always made, and the badge on the row still shows the site's own share.
+ */
+function stageWhere(stage: LoadingOrderStage, scope?: SiteScope): Prisma.LoadingOrderWhereInput {
+  switch (stage) {
+    case "cancelled":
+      return { status: "cancelled" };
+    case "awaitingApproval":
+      return { status: { not: "cancelled" }, authorizationStatus: "pending" };
+    case "received":
+      return { authorizationStatus: "approved", status: "received" };
+    case "partiallyReceived":
+      return {
+        authorizationStatus: "approved", status: "pending",
+        orderReceptions: { some: scopedReceptions(scope) ?? {} },
+      };
+    case "toReceive":
+      return {
+        authorizationStatus: "approved", status: "pending",
+        orderReceptions: { none: scopedReceptions(scope) ?? {} },
+      };
+  }
+}
+
+/** Every stage, so the tabs can be counted in one pass. */
+const LOADING_ORDER_STAGES = [
+  "awaitingApproval", "toReceive", "partiallyReceived", "received", "cancelled",
+] as const satisfies readonly LoadingOrderStage[];
 
 export class CentralStockOrderRepository {
   constructor(readonly db: PrismaClient) {}
@@ -218,35 +255,96 @@ export class CentralStockOrderRepository {
           authorizers: { include: { user: true } } } } } } } });
   }
 
+  /** Everything the loading-order list is narrowed by, in one place. */
+  private loadingOrderWhere(query: LoadingOrderListQuery, scope?: SiteScope): Prisma.LoadingOrderWhereInput {
+    const term = query.search?.trim();
+    /*
+     * `AND`, not one object: the site scope and a search both narrow
+     * `loadedOrders`, and two `loadedOrders` keys in the same object would
+     * leave only the last one standing.
+     */
+    const and: Prisma.LoadingOrderWhereInput[] = [];
+    if (scope) and.push({ loadedOrders: { some: scopedLines(scope) } });
+    if (query.startDate || query.endDate) {
+      and.push({ createdAt: {
+        ...(query.startDate && { gte: query.startDate }),
+        ...(query.endDate && { lte: query.endDate }),
+      } });
+    }
+    if (term) {
+      and.push({ OR: [
+        { dVehicle: { vechile: { platNumber: { contains: term } } } },
+        { dVehicle: { driver: { names: { contains: term } } } },
+        { loadedOrders: { some: { order: { centralStock: { item: { name: { contains: term } } } } } } },
+        { loadedOrders: { some: { order: { site: { name: { contains: term } } } } } },
+        { loadedOrders: { some: { order: { user: { firstName: { contains: term } } } } } },
+        { loadedOrders: { some: { order: { user: { lastName: { contains: term } } } } } },
+      ] });
+    }
+    if (query.stage) and.push(stageWhere(query.stage, scope));
+    return and.length > 0 ? { AND: and } : {};
+  }
+
   /**
-   * Every loading order, or — for a site manager — only the loads carrying
-   * orders for his site, narrowed to those orders and the site's receptions.
+   * How many loads sit at each stage in the window, for the tab badges.
+   *
+   * The stage is what the tabs count, so it is not also a filter here — and
+   * never the page's own rows: a page of fifteen cannot say how many loads are
+   * waiting to be signed.
    */
-  async listLoadingOrders(scope?: SiteScope) {
-    const loads = await this.db.loadingOrder.findMany({
-      where: scope ? { loadedOrders: { some: scopedLines(scope) } } : undefined,
-      orderBy: { createdAt: "desc" },
-      include: {
-        loadedOrders: {
-          where: scopedLines(scope),
-          include: { order: {
-            include: { centralStock: { include: { item: true } }, site: true, user: requesterSelect },
-          } },
-        },
-        dVehicle: { include: { driver: true, vechile: true } },
-        authorizers: { include: { user: { select: { id: true, firstName: true, lastName: true } } } },
-        orderReceptions: {
-          where: scopedReceptions(scope),
-          orderBy: { createdAt: "asc" },
-          select: {
-            id: true, expectedQty: true, receivedQty: true, comment: true, status: true, createdAt: true,
-            cuve: { select: { id: true, name: true, siteId: true } },
-            user: { select: { id: true, firstName: true, lastName: true } },
+  async loadingOrderStageCounts(query: LoadingOrderListQuery, scope?: SiteScope) {
+    const { stage: _ignored, ...rest } = query;
+    const base = this.loadingOrderWhere(rest, scope);
+    const counts = await this.db.$transaction([
+      this.db.loadingOrder.count({ where: base }),
+      ...LOADING_ORDER_STAGES.map((stage) => this.db.loadingOrder.count({
+        where: { AND: [base, stageWhere(stage, scope)] },
+      })),
+    ]);
+    const [all, ...byStage] = counts;
+    return {
+      all,
+      ...Object.fromEntries(LOADING_ORDER_STAGES.map((stage, at) => [stage, byStage[at]])),
+    } as Record<"all" | LoadingOrderStage, number>;
+  }
+
+  /**
+   * One page of loading orders in the window, newest first — or, for a site
+   * manager, only the loads carrying orders for his site, narrowed to those
+   * orders and his site's own receptions.
+   */
+  async listLoadingOrders(query: LoadingOrderListQuery, scope?: SiteScope) {
+    const where = this.loadingOrderWhere(query, scope);
+    const [rows, total] = await this.db.$transaction([
+      this.db.loadingOrder.findMany({
+        ...paginationArgs(query),
+        where,
+        // `createdAt` alone is not a total order, and loads raised in the same
+        // second would then repeat across pages.
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        include: {
+          loadedOrders: {
+            where: scopedLines(scope),
+            include: { order: {
+              include: { centralStock: { include: { item: true } }, site: true, user: requesterSelect },
+            } },
+          },
+          dVehicle: { include: { driver: true, vechile: true } },
+          authorizers: { include: { user: { select: { id: true, firstName: true, lastName: true } } } },
+          orderReceptions: {
+            where: scopedReceptions(scope),
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true, expectedQty: true, receivedQty: true, comment: true, status: true, createdAt: true,
+              cuve: { select: { id: true, name: true, siteId: true } },
+              user: { select: { id: true, firstName: true, lastName: true } },
+            },
           },
         },
-      },
-    });
-    return loads.map((load) => ({
+      }),
+      this.db.loadingOrder.count({ where }),
+    ]);
+    const loads = rows.map((load) => ({
       ...load,
       ...receptionProgress(load.loadedOrders, load.orderReceptions),
       orderReceptions: load.orderReceptions.map((reception) => ({
@@ -255,6 +353,7 @@ export class CentralStockOrderRepository {
         receivedQty: Number(reception.receivedQty),
       })),
     }));
+    return [loads, total] as const;
   }
 
   async listReceptionOrders(query: ReceptionOrdersQuerySchema, scope?: SiteScope) {
@@ -344,7 +443,10 @@ export class CentralStockOrderRepository {
           id: true, totalQuantity: true, status: true, authorizationStatus: true, driverVehicleId: true,
           loadedOrders: { where: scopedLines(scope), select: {
             quantity: true,
-            order: { select: { siteId: true, centralStock: { select: { itemId: true } } } },
+            order: { select: {
+              siteId: true, requisitionLineId: true,
+              centralStock: { select: { itemId: true } },
+            } },
           } },
           orderReceptions: { select: { receivedQty: true, cuve: { select: { siteId: true } } } },
         },
@@ -431,6 +533,64 @@ export class CentralStockOrderRepository {
         where: { id: loadingOrderId },
         data: { status: fullyReceived ? "received" : "pending" },
       });
+
+      /*
+       * The requisition lines this load carries follow what actually arrived.
+       *
+       * A reception is for the whole load into one tank, while a load may carry
+       * several lines, so what arrived is **shared across them in proportion to
+       * what each put on the truck**. There is no finer truth available: the
+       * fuel is mixed in the compartment, and a shortfall belongs to all of it.
+       * The last line takes the rounding, so the parts always sum to the whole.
+       */
+      // Truthiness, not `!== null`: a B2B draw has no line, and a caller that
+      // did not select the field at all would otherwise pass this filter and
+      // then try to update a line with no id.
+      const carriedLines = loadingOrder.loadedOrders.filter(
+        (line) => Boolean(line.order.requisitionLineId));
+      if (carriedLines.length > 0) {
+        const loadedTotal = carriedLines.reduce(
+          (sum, line) => sum.plus(line.quantity), new Prisma.Decimal(0));
+        let left = quantity;
+        for (const [index, line] of carriedLines.entries()) {
+          const share = index === carriedLines.length - 1
+            ? left
+            : quantity.times(line.quantity).dividedBy(loadedTotal).toDecimalPlaces(2);
+          left = left.minus(share);
+          await tx.requisitionLine.update({
+            where: { id: line.order.requisitionLineId! },
+            data: { receivedQuantity: { increment: share } },
+          });
+        }
+
+        // A requisition is delivered once every line has taken in what was
+        // granted. Checked per requisition, since one load can serve several.
+        const requisitionIds = [...new Set((await tx.requisitionLine.findMany({
+          where: { id: { in: carriedLines.map((line) => line.order.requisitionLineId!) } },
+          select: { requisitionId: true },
+        })).map((line) => line.requisitionId))];
+        for (const requisitionId of requisitionIds) {
+          const lines = await tx.requisitionLine.findMany({
+            where: { requisitionId },
+            select: { quantity: true, approvedQuantity: true, receivedQuantity: true },
+          });
+          const complete = lines.every((line) =>
+            new Prisma.Decimal(line.receivedQuantity)
+              .greaterThanOrEqualTo(line.approvedQuantity ?? line.quantity));
+          if (!complete) continue;
+          const requisition = await tx.requisition.findUniqueOrThrow({
+            where: { id: requisitionId }, select: { step: true },
+          });
+          if (requisition.step === "delivered") continue;
+          await tx.requisition.update({ where: { id: requisitionId }, data: { step: "delivered" } });
+          await tx.requisitionTimeline.create({
+            data: {
+              requisitionId, step: "delivered", changedBy: userId,
+              comment: "Received at the station", toQuantity: quantity,
+            },
+          });
+        }
+      }
       if (fullyReceived) {
         const outstanding = await tx.loadingOrder.count({
           where: { driverVehicleId: loadingOrder.driverVehicleId, status: "pending" },
@@ -452,7 +612,7 @@ export class CentralStockOrderRepository {
     }, { isolationLevel: "Serializable" });
   }
 
-  createLoadingOrders(input: CreateLoadingOrderSchema) {
+  createLoadingOrders(input: CreateLoadingOrderSchema, createdBy: string) {
     return this.db.$transaction(async (tx) => {
       const authoriserCount = await tx.authorizers.count({
         where: { type: "LOADING_ORDER", status: "active" },
@@ -473,14 +633,29 @@ export class CentralStockOrderRepository {
 
       const currentVehicleLoad = driverVehicle.loadingOrders.reduce(
         (sum, loadingOrder) => sum + Number(loadingOrder.totalQuantity), 0);
-      const requestedLoad = input.orders.reduce((sum, order) => sum + order.quantity, 0);
+      /*
+       * The station's lines are drawn from cleared stock first, which is where
+       * an internal transfer commits its litres. Each line can span two
+       * batches, so one line may produce more than one draw — and from here on
+       * they are ordinary draws, carried by the same `loadedOrders` as a B2B
+       * sale's. The whole thing is one serialisable transaction, so a line that
+       * cannot be served rolls the load back rather than leaving half a draw.
+       */
+      const requisitionDraws = input.requisitionLines.length > 0
+        ? await drawForRequisitionLines(tx, input.requisitionLines, createdBy)
+        : [];
+      const carried = [
+        ...input.orders,
+        ...requisitionDraws.map((draw) => ({ orderId: draw.id, quantity: draw.quantity })),
+      ];
+      const requestedLoad = carried.reduce((sum, order) => sum + order.quantity, 0);
       const tankCapacity = Number(driverVehicle.vechile.tankCapacity);
       if (currentVehicleLoad + requestedLoad > tankCapacity) {
         throw new BusinessError("400",
           `Vehicle capacity is ${tankCapacity}; ${currentVehicleLoad} is already assigned and ${requestedLoad} was requested`);
       }
 
-      const orderIds = input.orders.map((order) => order.orderId);
+      const orderIds = carried.map((order) => order.orderId);
       const orders = await tx.centralStockOrder.findMany({
         where: { id: { in: orderIds } },
         select: { id: true, quantity: true, siteId: true, status: true,
@@ -500,7 +675,7 @@ export class CentralStockOrderRepository {
         throw new BusinessError("400", "All orders in a loading order must contain the same item");
       }
       const byId = new Map(orders.map((order) => [order.id, order]));
-      for (const requested of input.orders) {
+      for (const requested of carried) {
         const order = byId.get(requested.orderId)!;
         const assigned = order.loadedOrders.reduce((sum, row) => sum + Number(row.quantity), 0);
         if (assigned + requested.quantity > Number(order.quantity)) {
@@ -514,7 +689,7 @@ export class CentralStockOrderRepository {
           driverVehicleId: input.driverVehicleId,
           totalQuantity: requestedLoad,
           authoriserCount,
-          loadedOrders: { create: input.orders.map((order) => ({
+          loadedOrders: { create: carried.map((order) => ({
             orderId: order.orderId,
             quantity: order.quantity,
           })) },
@@ -614,8 +789,12 @@ export class CentralStockOrderRepository {
           ...allocation, orderType: input.orderType, siteId: input.siteId,
           unitPrice: input.unitPrice, totalPrice: allocation.quantity * input.unitPrice,
           createdBy: input.createdBy, approvedBy: input.approvedBy, status: input.status } });
+        // `drawId` is what makes this movement findable later. Without it the
+        // only handle was `centralStockId` + `type`, which matches every other
+        // withdrawal from the same batch.
         await tx.stockTransaction.create({ data: { centralStockId: allocation.centralStockId,
-          quantity: allocation.quantity, type: "saleOut", createdBy: input.createdBy } });
+          quantity: allocation.quantity, type: "saleOut", drawId: order.id,
+          createdBy: input.createdBy } });
         // Where the trail starts, so the history reads from the request down.
         await tx.centralStockOrderEvent.create({ data: {
           orderId: order.id, action: "requested",
@@ -754,11 +933,29 @@ export class CentralStockOrderRepository {
           status: "pending",
         },
       });
-      // The stock movement recorded when it was raised has to follow the figure.
-      await tx.stockTransaction.updateMany({
-        where: { centralStockId: order.centralStockId, type: "saleOut" },
+      // The stock movement recorded when it was raised has to follow the
+      // figure — this order's movement, and no other.
+      //
+      // This used to match on `centralStockId` + `type`, which is every
+      // withdrawal ever made from that batch: editing one request rewrote
+      // every other request's movement on the same stock to this quantity.
+      // `drawId` names the one row.
+      const moved = await tx.stockTransaction.updateMany({
+        where: { drawId: id, type: "saleOut" },
         data: { quantity },
       });
+      if (moved.count === 0) {
+        // A request raised before `drawId` existed. Its movement cannot be
+        // told apart from its neighbours' on the same batch, and guessing is
+        // what caused the damage, so the edit is refused rather than applied
+        // to the wrong row. `pnpm stock:link-movements` attributes the
+        // historical movements it can identify unambiguously.
+        throw new BusinessError(
+          "400",
+          "This request predates the stock-movement link, so its quantity cannot be " +
+            "corrected safely. Reject it and raise a new one.",
+        );
+      }
       await tx.centralStockOrderEvent.create({
         data: { orderId: id, action: "edited", comment, fromQuantity: was, toQuantity: quantity, actedBy },
       });

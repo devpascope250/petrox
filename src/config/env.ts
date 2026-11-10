@@ -19,6 +19,21 @@ const schema = z.object({
   PIN_HMAC_SECRET: z.string().min(32),
   ACCESS_TOKEN_TTL: z.string().default("15m"),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  /**
+   * Signing in with a password is confirmed by a code emailed to the account's
+   * own address. How long that code lives, and how many wrong ones end the
+   * attempt — five tries at six digits is one chance in two hundred thousand.
+   */
+  LOGIN_OTP_TTL_MINUTES: z.coerce.number().int().positive().max(60).default(10),
+  LOGIN_OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().max(20).default(5),
+  /**
+   * The emergency switch, and nothing else: set it to `false` only when mail
+   * cannot be sent at all and people would otherwise be locked out. It is on
+   * by default and is meant to stay on.
+   */
+  // Not `z.coerce.boolean()`: that reads any non-empty string as true, so
+  // `LOGIN_OTP_REQUIRED=false` would have turned it on.
+  LOGIN_OTP_REQUIRED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
   /** POS devices: the longest a provisioning key may live, and how long a device's refresh token lasts. */
   MOBILE_PROVISIONING_KEY_MAX_MINUTES: z.coerce.number().int().positive().max(1440).default(30),
   MOBILE_DEVICE_REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(90),

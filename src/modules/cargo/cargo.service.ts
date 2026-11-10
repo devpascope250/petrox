@@ -4,7 +4,7 @@ import { CargoRepository } from "./cargo.repository.js";
 import { paginatedData } from "../../shared/pagination/index.js";
 import { documentUrl } from "../../utils/static-url.js";
 import type { CargoListQuery } from "./cargo.schema.js";
-import { CreateCargoSchema, FileSchema } from "./cargo.schema.js";
+import { CreateCargoSchema, FileSchema, ReturnCargoSchema } from "./cargo.schema.js";
 export class CargoService {
   constructor(private repo: CargoRepository, private config: AppConfig) {
   }
@@ -64,6 +64,26 @@ export class CargoService {
 
   async updateStatus (id: string, status: CargoStatus, receivedDate: Date) {
     return this.withDocumentUrls(await this.repo.changeStatus(id, status, receivedDate));
+  }
+
+  /**
+   * How far this shipment's litres have travelled, and whether it can still go
+   * back. Read before the decision, so the figure is on the screen rather than
+   * arriving as a refusal.
+   */
+  movement(id: string) {
+    return this.repo.movement(id);
+  }
+
+  /** Sends an approved shipment back to the supplier. */
+  async returnCargo(id: string, input: ReturnCargoSchema, userId: string) {
+    const record = await this.repo.returnCargo(id, input, userId);
+    return { ...record, supportingDocUrl: documentUrl(this.config, record.supportingDocUrl) };
+  }
+
+  /** The shipment raised in place of one that went back. */
+  async createReplacement(id: string, input: CreateCargoSchema) {
+    return this.withDocumentUrls(await this.repo.createReplacement(id, input));
   }
 
 }

@@ -102,6 +102,12 @@ export class StockRepository {
         remainingQuantity: number;
         stockCount: number;
         quantitiesByStatus: Record<string, number>;
+        /**
+         * Litres that are on record but are no longer stock: a batch whose
+         * cargo was cancelled, or sent back to the supplier. Reported beside
+         * the totals rather than inside them, so the figures still add up.
+         */
+        withdrawnQuantity: number;
       };
       stocks: Array<{
         id: string;
@@ -137,6 +143,7 @@ export class StockRepository {
             remainingQuantity: 0,
             stockCount: 0,
             quantitiesByStatus: {},
+            withdrawnQuantity: 0,
           },
           stocks: [],
         };
@@ -162,9 +169,20 @@ export class StockRepository {
       );
       const remainingQuantity = quantity - nominatedQuantity;
 
-      itemReport.summary.totalQuantity += quantity;
-      itemReport.summary.nominatedQuantity += nominatedQuantity;
-      itemReport.summary.remainingQuantity += remainingQuantity;
+      /*
+       * A withdrawn batch is still listed — it is part of the history of the
+       * depot — but it is not stock, so it stays out of the totals. It used to
+       * be added to `totalQuantity` like any other row, which meant a
+       * cancelled cargo went on inflating the depot's volume for ever.
+       */
+      const withdrawn = stock.status === "returned" || stock.status === "cancelled";
+      if (withdrawn) {
+        itemReport.summary.withdrawnQuantity += quantity;
+      } else {
+        itemReport.summary.totalQuantity += quantity;
+        itemReport.summary.nominatedQuantity += nominatedQuantity;
+        itemReport.summary.remainingQuantity += remainingQuantity;
+      }
       itemReport.summary.stockCount += 1;
       itemReport.summary.quantitiesByStatus[stock.status] =
         (itemReport.summary.quantitiesByStatus[stock.status] ?? 0) + quantity;

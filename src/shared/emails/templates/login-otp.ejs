@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Your sign-in code</title>
+  </head>
+  <body style="margin: 0; padding: 0; font-family: &quot;Segoe UI&quot;, Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6fb">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f4f6fb">
+      <tr>
+        <td align="center" style="padding: 40px 20px">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+            style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); overflow: hidden">
+            <%- include('partials/brand-header') %>
+
+            <tr>
+              <td style="padding: 32px 40px; background-color: #034EA2; color: #ffffff">
+                <h1 style="margin: 0; font-size: 22px; font-weight: 600">Your sign-in code</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 32px 40px; color: #333333; font-size: 15px; line-height: 1.6">
+                <p style="margin: 0 0 16px 0">Hello <%= userName %>,</p>
+                <p style="margin: 0 0 24px 0">
+                  Enter this code to finish signing in. It expires in
+                  <strong><%= expiryMinutes %> minutes</strong> and can be used once.
+                </p>
+
+                <p style="margin: 0 0 24px 0; padding: 18px; background-color: #f4f6fb; border-radius: 8px;
+                          text-align: center; font-family: monospace; font-size: 32px; font-weight: 700;
+                          letter-spacing: 10px; color: #034EA2">
+                  <%= code %>
+                </p>
+
+                <table role="presentation" cellspacing="0" cellpadding="6" border="0" width="100%"
+                  style="background-color: #f8f9fa; border-radius: 6px; font-size: 13px; margin-bottom: 24px">
+                  <tr><td style="color: #666666">Account</td><td><%= loginEmail %></td></tr>
+                  <tr><td style="color: #666666">Requested</td><td><%= requestDate %></td></tr>
+                </table>
+
+                <p style="margin: 0; font-size: 13px; color: #991b1b; padding: 12px; background-color: #fef2f2; border-radius: 6px">
+                  If you did not just try to sign in, somebody else knows your password.
+                  Change it as soon as you can, and tell your administrator.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 20px 40px; background-color: #f8f9fa; color: #999999; font-size: 12px; text-align: center">
+                &copy; <%= currentYear %> <%= companyName %> &middot; <%= companyAddress %>
+              </td>
+            </tr>
+            <%- include('partials/company-footer') %>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

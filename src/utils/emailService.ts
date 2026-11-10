@@ -396,6 +396,37 @@ class EmailService {
     });
   }
 
+  /**
+   * The code that finishes a sign-in, to the address on the account.
+   *
+   * Never to an address a request named: the whole point is that it reaches
+   * the person the account belongs to. The development redirect still applies
+   * — see `DEV_EMAIL` — so a test run cannot mail a real colleague's code to
+   * them unasked.
+   */
+  async sendLoginOtpEmail(
+    userEmail: string,
+    userName: string,
+    code: string,
+    expiryMinutes: number
+  ): Promise<void> {
+    const html = await this.renderTemplate('login-otp', {
+      userName,
+      code,
+      expiryMinutes: String(expiryMinutes),
+      loginEmail: userEmail,
+      requestDate: new Date().toLocaleString(),
+    });
+
+    await this.sendEmail({
+      from: this.from,
+      to: this.config.NODE_ENV === "development" ? this.config.DEV_EMAIL : userEmail,
+      // The code is deliberately not in the subject: a locked phone shows it.
+      subject: 'Your sign-in code',
+      html,
+    });
+  }
+
   /** Tells whoever asked for a backup that it is ready, or why it failed. */
   async sendBackupReportEmail(
     userEmail: string,

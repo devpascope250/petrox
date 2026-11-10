@@ -3,6 +3,15 @@ import { emailSchema, opaqueTokenSchema, passwordSchema, pinSchema } from "../..
 
 export const loginSchema = z.object({ email: emailSchema, password: passwordSchema });
 export const pinLoginSchema = z.object({ email: emailSchema, pin: pinSchema });
+/**
+ * The emailed code that finishes a login. Exactly six digits — anything else
+ * is refused before a database row is touched.
+ */
+export const verifyOtpSchema = z.object({
+  challengeId: z.uuid(),
+  code: z.string().trim().regex(/^\d{6}$/, "The code is six digits"),
+});
+export const resendOtpSchema = z.object({ challengeId: z.uuid() });
 export const resetRequestSchema = z.object({ email: emailSchema });
 export const resetPasswordSchema = z.object({ token: opaqueTokenSchema, password: passwordSchema });
 /** Changing your own password: the current one proves it is you. */

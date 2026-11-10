@@ -3,7 +3,7 @@ import { created, success } from "../../shared/http/index.js";
 import { idParamsSchema, parseInput } from "../../shared/validation/index.js";
 import { CentralStockOrderService } from "./order.service.js";
 import { CentralStockOrderRepository } from "./order.repository.js";
-import { CentralStockOrderParamaSchema, centralStockOrderReportQuerySchema, createCentralStockOrderSchema, createLoadingOrderSchema, loadingOrderStatusSchema, receiveLoadingOrderSchema, receptionOrdersQuerySchema } from "./order.schema.js";
+import { CentralStockOrderParamaSchema, centralStockOrderReportQuerySchema, createCentralStockOrderSchema, createLoadingOrderSchema, loadingOrderListQuerySchema, loadingOrderStatusSchema, receiveLoadingOrderSchema, receptionOrdersQuerySchema } from "./order.schema.js";
 import { shareLoadingOrderSchema } from "./loading-order-share.js";
 import { editOrderQuantitySchema, requestOrderEditSchema } from "./order.schema.js";
 import { AuthorizerRepository } from "./authorizer.repository.js";
@@ -14,10 +14,17 @@ const routes: FastifyPluginAsync = async (app) => {
   const authorizerService = new AuthorizerService(new AuthorizerRepository(app.prisma));
   app.get("/", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] }, async (request) =>
     success(await service.list(parseInput(centralStockOrderReportQuerySchema, request.query), request.contextUser!)));
+  /**
+   * One page of loads in a date window: `page`, `pageSize`, `startDate`,
+   * `endDate`, `search` and `stage`. The per-stage counts come back beside the
+   * page, over the whole window rather than the page.
+   */
   app.get("/loading-orders", { preHandler: [app.authenticate, app.authorize("stockout.orders.read", "stockout.orders.manage")] }, async (request) =>
-    success(await service.listLoadingOrders(request.contextUser!)));
+    success(await service.listLoadingOrders(
+      parseInput(loadingOrderListQuerySchema, request.query), request.contextUser!)));
   app.post("/loading-orders", { preHandler: [app.authenticate, app.authorize("stockout.orders.create", "stockout.orders.manage")] }, async (request, reply) =>
-    created(reply, await service.createLoadingOrders(parseInput(createLoadingOrderSchema, request.body))));
+    created(reply, await service.createLoadingOrders(
+      parseInput(createLoadingOrderSchema, request.body), request.contextUser!.userId)));
   /**
    * The loading order as a PDF. Signatures appear on it once every authoriser
    * has approved — a half-signed order is a working paper, not an instruction

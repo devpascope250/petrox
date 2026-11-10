@@ -110,6 +110,8 @@ model User {
   position                   UserPositions            @default(siteManager)
   refreshTokens              RefreshToken[]
   passwordResetTokens        PasswordResetToken[]
+  loginOtps                  LoginOtp[]
+  cargoReturns               CargoReturn[]            @relation("CargoReturnDecider")
   orders                     Order[]
   lineLines                  NominationTimeLine[]
   stockTransactions          StockTransaction[]
@@ -152,6 +154,9 @@ model User {
   clearanceTaxes         TaxClearance[]
   clearanceAuthorizer    ClearanceAuthorizerMember?
   pumpPlansCreated       PumpAttendantPlan[]        @relation("pumpPlanCreatedBy")
+  requisitionsRaised     Requisition[]              @relation("RequisitionRequestedBy")
+  requisitionsDecided    Requisition[]              @relation("RequisitionDecidedBy")
+  requisitionMoves       RequisitionTimeline[]      @relation("RequisitionTimelineActor")
 
   @@index([roleId])
   @@index([siteId])
@@ -207,6 +212,28 @@ model RefreshToken {
   @@index([userId])
 }
 
+/// A login waiting on its emailed code.
+///
+/// A password alone no longer signs anyone in: the password is checked, this
+/// row is written, and the code goes to the address on the account. Only the
+/// hash is kept — HMAC, with the same secret a PIN uses — so a dump of this
+/// table hands nobody a working code.
+model LoginOtp {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String
+  /// How many wrong codes have been offered. The challenge dies at the limit,
+  /// so a six-digit code cannot be guessed by trying every one of them.
+  attempts  Int       @default(0)
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  /// Set when the code was accepted; a used challenge is never accepted twice.
+  usedAt    DateTime?
+
+  @@index([userId])
+}
+
 model PasswordResetToken {
   id        String    @id @default(uuid())
   userId    String
@@ -246,6 +273,7 @@ model Item {
   subsidies           Subsidy[]
   pumpIndexes         PumpIndex[]
   clearanceRequests   ClearanceRequest[]
+  requisitionLines    RequisitionLine[]
 
   @@index([id])
   @@index([parentId])
@@ -632,6 +660,13 @@ model Cargo {
   stocks           Stock[]
   cargoInvoices    CargoInvoice[]
   pfis             Pfi[]
+  /// What went back, and why — see `CargoReturn`. A chain rather than a
+  /// rewrite: this shipment keeps the quantities, references and invoices it
+  /// always had, and the return says what became of it.
+  returns          CargoReturn[]
+  /// The return this shipment was raised to replace, when it is a replacement.
+  /// One source of truth for the pairing, read from either end through it.
+  replacementFor   CargoReturn?   @relation("CargoReturnReplacement")
 
   @@index([orderId])
   @@index([blRef])
@@ -671,6 +706,53 @@ enum CargoStatus {
   pending
   approved
   cancelled
+  /// Sent back to the supplier after it had been approved and counted in
+  /// stock. Appended, never inserted: MySQL stores an enum by index.
+  returned
+  /// Sent back and a new shipment raised in its place — see `replacedBy`.
+  replaced
+}
+
+/// A shipment going back to the supplier, as its own record.
+///
+/// Written once and never edited. The cargo and its stock row keep the figures
+/// they always had; this says how much went back, why, what the supplier owes
+/// for it, and — when it was replaced rather than simply refunded — which
+/// shipment came instead. So the position before the return and after it are
+/// both readable, and neither is a number that was quietly overwritten.
+model CargoReturn {
+  id       String          @id @default(uuid())
+  cargoId  String
+  cargo    Cargo           @relation(fields: [cargoId], references: [id])
+  kind     CargoReturnKind
+  /// What went back, copied from the cargo as it stood: a return is of the
+  /// whole shipment, and the cargo may be corrected by nothing afterwards, but
+  /// a snapshot costs nothing and a reference can always drift.
+  quantityInLitre  Decimal @db.Decimal(18, 2)
+  quantityInKg     Decimal @db.Decimal(18, 2)
+  /// Required. "Why did 200,000 litres go back" is the whole point of the row.
+  reason           String  @db.Text
+  supportingDocUrl String?
+  /// What the **supplier** owes back. Taxes already paid on a clearance and
+  /// fees already charged at receipt are not reversed here: that money really
+  /// left, and it stays on record as the cost of the aborted shipment.
+  refundAmount     Decimal? @db.Decimal(18, 2)
+  currencyCode     String?
+  /// The shipment raised in its place, for a replacement. Set when that cargo
+  /// is created, which is a second step — so it is empty in between.
+  replacementCargoId String? @unique
+  replacementCargo   Cargo?  @relation("CargoReturnReplacement", fields: [replacementCargoId], references: [id])
+  decidedBy String   @map("returnedBy")
+  user      User     @relation("CargoReturnDecider", fields: [decidedBy], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([cargoId])
+  @@index([createdAt])
+}
+
+enum CargoReturnKind {
+  returned
+  replaced
 }
 
 model Nomination {
@@ -852,6 +934,15 @@ model StockTransaction {
   note             String?
   supportingDocUrl String?
   type             StockTransactionType
+  /// What caused this movement: the draw against a clearance it was written
+  /// for. Without it a movement could only be found by `centralStockId` and
+  /// `type`, which matches every other withdrawal from the same batch — and an
+  /// edit that meant to correct one row rewrote them all.
+  ///
+  /// Nullable: the movements written before this column existed cannot all be
+  /// attributed, and a reconciliation has no draw behind it at all.
+  drawId           String?
+  draw             CentralStockOrder?   @relation(fields: [drawId], references: [id])
   createdBy        String
   user             User                 @relation(fields: [createdBy], references: [id])
   createdAt        DateTime             @default(now())
@@ -859,6 +950,7 @@ model StockTransaction {
 
   @@index([id])
   @@index([centralStockId])
+  @@index([drawId])
 }
 
 model StockClearance {
@@ -938,11 +1030,22 @@ model CentralStockOrder {
   status         CentralOrderStatus       @default(pending)
   createdAt      DateTime                 @default(now())
   updatedAt      DateTime                 @updatedAt
+  /// The requisition line this draw serves, when it serves one.
+  ///
+  /// Nullable for good: a B2B sale is drawn against a clearance with no
+  /// requisition behind it, and the draws raised before requisitions existed
+  /// belong to no line either.
+  requisitionLineId String?
+  requisitionLine   RequisitionLine? @relation(fields: [requisitionLineId], references: [id])
   loadedOrders   LoadedOrder[]
   events         CentralStockOrderEvent[]
+  /// The stock movements this draw caused, so one can be corrected without
+  /// touching another draw's.
+  movements      StockTransaction[]
 
   @@index([centralStockId])
   @@index([clearanceId])
+  @@index([requisitionLineId])
 }
 
 /// What happened to a stock request and who did it: asked to be changed,
@@ -1021,6 +1124,7 @@ model TblSite {
   subsidies          Subsidy[]
   pumpIndexes        PumpIndex[]
   pumpAttendantPlans PumpAttendantPlan[]
+  requisitions       Requisition[]
 
   @@index([id])
 }
@@ -2417,4 +2521,158 @@ model CompanyOffice {
   users        User[]
 
   @@index([departmentId])
+}
+
+/* -------------------------------------------------------------------------- */
+/* Requisitions                                                               */
+/* -------------------------------------------------------------------------- */
+
+/// A station asking head office for stock.
+///
+/// The **ask**, and nothing about supply: no clearance, no central stock batch,
+/// no price. A station manager asks for a quantity of a product; which cleared
+/// batch it eventually comes out of is decided when a load is built, and the
+/// stock is committed only then. So an accepted requisition is permission, not
+/// a reservation — two can be accepted for litres only one of them will get,
+/// which is why whoever builds a load must see what is accepted and not yet
+/// loaded.
+///
+/// `step` is the current rung, kept here as well as in `RequisitionTimeline`:
+/// the column is what a filtered list and a per-step count query, the timeline
+/// is what the stepper shows beneath each rung — who moved it, when, and what
+/// they said. One cannot answer both questions.
+model Requisition {
+  id            String                @id @default(uuid())
+  /// `REQ-2026-0001`, gap-free within the year. See `NumberSequence`.
+  requisitionNo String                @unique
+  siteId        String
+  site          TblSite               @relation(fields: [siteId], references: [id])
+  requestedBy   String
+  requester     User                  @relation("RequisitionRequestedBy", fields: [requestedBy], references: [id])
+  /// Why the station needs it. Read by whoever decides, so it is kept.
+  reason        String?               @db.Text
+  step          RequisitionStepName   @default(submitted)
+  /// Who accepted or refused it. One decision, not a ladder of them.
+  decidedBy     String?
+  decider       User?                 @relation("RequisitionDecidedBy", fields: [decidedBy], references: [id])
+  decidedAt     DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  lines         RequisitionLine[]
+  timeline      RequisitionTimeline[]
+
+  /// A station's own queue, by rung — the commonest list in the application.
+  @@index([siteId, step])
+  @@index([step, createdAt])
+  @@index([requestedBy])
+}
+
+/// One product on a requisition, and the unit everything downstream works in.
+///
+/// A requisition may ask for petrol and diesel at once; they are cleared from
+/// different batches and may travel on different loads, so the **line** is what
+/// is accepted, drawn against and delivered — never the requisition as a whole.
+///
+/// `loadedQuantity` and `receivedQuantity` are running totals written in the
+/// same transaction as the draw and the reception that moved them. Derived on
+/// read instead, a page of requisitions would need a join per row; a stored
+/// running figure is how a tank's balance is already kept.
+model RequisitionLine {
+  id               String              @id @default(uuid())
+  requisitionId    String
+  requisition      Requisition         @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  itemId           String
+  item             Item                @relation(fields: [itemId], references: [id])
+  /// What the station asked for.
+  quantity         Decimal             @db.Decimal(18, 2)
+  /// What was agreed, when that is less than was asked. Null until decided.
+  approvedQuantity Decimal?            @db.Decimal(18, 2)
+  loadedQuantity   Decimal             @default(0.0) @db.Decimal(18, 2)
+  receivedQuantity Decimal             @default(0.0) @db.Decimal(18, 2)
+  /// What has been drawn from cleared stock to serve this line.
+  draws            CentralStockOrder[]
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([requisitionId])
+  @@index([itemId])
+}
+
+/// Each rung a requisition reached, with who moved it and what they said.
+///
+/// Rows, never an overwritten column, so the history cannot be rewritten:
+/// a requisition sent back for a change keeps the reason it was sent back and
+/// the figures either side of the change.
+model RequisitionTimeline {
+  id            String              @id @default(uuid())
+  requisitionId String
+  requisition   Requisition         @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  step          RequisitionStepName
+  changedBy     String?
+  user          User?               @relation("RequisitionTimelineActor", fields: [changedBy], references: [id])
+  /// The note that came with the move — why it was refused, or what to change.
+  comment       String?             @db.Text
+  /// The figures either side of an edit, so the trail says what moved.
+  fromQuantity  Decimal?            @db.Decimal(18, 2)
+  toQuantity    Decimal?            @db.Decimal(18, 2)
+  createdAt     DateTime            @default(now())
+
+  @@index([requisitionId, createdAt])
+  @@index([changedBy])
+}
+
+/// The rungs themselves, seeded — the ladder a stepper draws.
+///
+/// Data rather than code, like `NominationTimeLineStatus`, so the wording and
+/// the order can change without a deployment. `level` orders the ladder;
+/// **level 0 means off the ladder** — refused, cancelled, or sent back — which
+/// a stepper shows as a stop rather than a rung.
+model RequisitionStep {
+  id          String              @id @default(uuid())
+  step        RequisitionStepName @unique
+  level       Int
+  description String
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([step])
+}
+
+/// The rungs. **Append only**: MySQL stores an enum by its index, so inserting
+/// a value in the middle renumbers every row already written. The ladder's
+/// order lives in `RequisitionStep.level`, not here.
+enum RequisitionStepName {
+  submitted
+  accepted
+  loading
+  delivered
+  /// Sent back to the station to change a quantity. Only then may they edit it,
+  /// and saving returns it to `submitted` for a decision.
+  changeRequested
+  rejected
+  cancelled
+}
+
+/// Gap-free document numbers, one counter per document kind and period.
+///
+/// `REQ-2026-0001` has to be sequential with no holes, which rules out a random
+/// code and rules out `max(number) + 1` — two requests reading the same maximum
+/// both write `0007`. A counter row is incremented inside the transaction that
+/// creates the document, so the row lock serialises the two and the second gets
+/// `0008`.
+///
+/// Generic on purpose: the next document that needs a number adds a `name`, not
+/// a table.
+model NumberSequence {
+  id        String   @id @default(uuid())
+  /// The document kind, e.g. `requisition`.
+  name      String
+  /// What the counter resets on — the year, as `2026`. One value for a counter
+  /// that never resets.
+  period    String
+  value     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, period])
 }

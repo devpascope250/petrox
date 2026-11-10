@@ -1,8 +1,8 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { created, success } from "../../shared/http/index.js";
 import { parseInput } from "../../shared/validation/index.js";
-import { AuthService } from "./auth.service.js";
-import { changePasswordSchema, loginSchema, pinLoginSchema, resetPasswordSchema, resetRequestSchema } from "./auth.schema.js";
+import { AuthService, isOtpChallenge, type OtpChallenge, type Session } from "./auth.service.js";
+import { changePasswordSchema, loginSchema, pinLoginSchema, resendOtpSchema, resetPasswordSchema, resetRequestSchema, verifyOtpSchema } from "./auth.schema.js";
 import type { AppConfig } from "../../config/env.js";
 import { unauthorized } from "../../utils/errors.js";
 
@@ -31,7 +31,7 @@ export class AuthController {
     return sessionCookieOptions(this.config);
   }
 
-  private setSessionCookies(reply: FastifyReply, session: Awaited<ReturnType<AuthService["login"]>>) {
+  private setSessionCookies(reply: FastifyReply, session: Session) {
     const options = this.cookieOptions();
     reply
       .setCookie(accessTokenCookie, session.accessToken, options)
@@ -41,7 +41,7 @@ export class AuthController {
       });
   }
 
-  private publicSession(session: Awaited<ReturnType<AuthService["login"]>>) {
+  private publicSession(session: Session) {
     const { accessToken: _accessToken, refreshToken: _refreshToken, ...publicSession } = session;
     return publicSession;
   }
@@ -52,12 +52,41 @@ export class AuthController {
     return token;
   }
 
+  /**
+   * The password, which no longer signs anyone in on its own.
+   *
+   * It answers with a **challenge** — `otpRequired`, the challenge id and
+   * where the code went — and no cookies are set. The session is issued by
+   * `/auth/login/verify`. When the emergency switch is off
+   * (`LOGIN_OTP_REQUIRED=false`) it answers with the session, as it used to,
+   * so a client tells the two apart by `otpRequired` rather than by guessing.
+   */
   login = async (request: FastifyRequest, reply: FastifyReply) => {
     const input = parseInput(loginSchema, request.body);
-    const session = await this.service.login(input.email, input.password);
+    const result = await this.service.login(input.email, input.password);
+    if (isOtpChallenge(result)) return success(this.challenge(result));
+    this.setSessionCookies(reply, result);
+    return success(this.publicSession(result));
+  };
+
+  /** The code from the email: this is what issues the session. */
+  verifyLoginOtp = async (request: FastifyRequest, reply: FastifyReply) => {
+    const input = parseInput(verifyOtpSchema, request.body);
+    const session = await this.service.verifyLoginOtp(input.challengeId, input.code);
     this.setSessionCookies(reply, session);
     return success(this.publicSession(session));
   };
+
+  /** Another code for the same login, when the first did not arrive. */
+  resendLoginOtp = async (request: FastifyRequest) =>
+    success(this.challenge(
+      await this.service.resendLoginOtp(parseInput(resendOtpSchema, request.body).challengeId)));
+
+  /** What a waiting login is told: never the code, and never the full address. */
+  private challenge(challenge: OtpChallenge) {
+    const { otpRequired, challengeId, email, expiresAt } = challenge;
+    return { otpRequired, challengeId, email, expiresAt };
+  }
 
   pinLogin = async (request: FastifyRequest, reply: FastifyReply) => {
     const input = parseInput(pinLoginSchema, request.body);

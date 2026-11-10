@@ -29,7 +29,7 @@
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import bcrypt from "bcryptjs";
-import { PrismaClient, type Prisma, type TimeLineStatus } from "./generated/prisma/client.js";
+import { PrismaClient, type Prisma, type RequisitionStepName, type TimeLineStatus } from "./generated/prisma/client.js";
 import { loadConfig } from "../src/config/env.js";
 import { hashPin } from "../src/utils/crypto.js";
 import { DEFAULT_CARD_PIN, hashCardPin } from "../src/modules/cards/card-pin.js";
@@ -48,6 +48,13 @@ export interface ModuleNode {
   icon: string;
   /** Permission code prefix for a page module (`cards` → `cards.read` …). Grouping modules have none. */
   prefix?: string;
+  /**
+   * Actions beyond the five standard ones, for a decision that is not an edit.
+   * `requisitions` has `approve`, because accepting a station's request is not
+   * the same authority as correcting one — and a role may well hold one
+   * without the other.
+   */
+  extraActions?: readonly string[];
   children?: ModuleNode[];
 }
 
@@ -156,6 +163,11 @@ export const MODULE_TREE: ModuleNode[] = [
       { code: "POS_TRANSACTIONS", name: "POS Transactions", icon: "ReceiptText", prefix: "pos.transactions" },
     ] },
     { id: "5ad8d068-de07-42f9-bbf9-73142395eead", code: "PSS_STOCK_MANAGEMENT", name: "PSS Stock Management", icon: "ClipboardCheck", children: [
+      // A station asking head office for stock. `approve` is held apart from
+      // `edit` on purpose: accepting a station's request is a different
+      // authority from correcting one, and the station itself holds `create`
+      // and nothing else.
+      { code: "REQUISITIONS", name: "Requisitions", icon: "ClipboardList", prefix: "requisitions", extraActions: ["approve"] },
       { id: "24488b2b-ff26-4bac-ae0e-9d39e246bc02", code: "STOCKOUT_ORDERS", name: "Stockout Orders", icon: "ShoppingCart", prefix: "stockout.orders" },
       { code: "STOCK_CLEARANCE", name: "Stock Clearance", icon: "FileCheck", prefix: "stock.clearance" },
       // Paying is its own privilege, held apart from raising a clearance:
@@ -213,7 +225,7 @@ export function flattenModules(nodes: ModuleNode[] = MODULE_TREE, parentCode: st
       parentCode,
       sorting: index,
       permissions: node.prefix
-        ? PERMISSION_ACTIONS.map((action) => {
+        ? [...PERMISSION_ACTIONS, ...(node.extraActions ?? [])].map((action) => {
           const code = `${node.prefix}.${action}`;
           return { code, name: permissionName(code), description: `${permissionName(code)} permission` };
         })
@@ -256,6 +268,10 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     // freezes them — stays with the administrator.
     "pump.index.read", "pump.index.create", "pump.index.edit",
     "stockout.orders.read", "stockout.orders.create", "loading.orders.read",
+    // Asks head office for stock, and corrects its own request when it is
+    // handed back. Deciding it is head office's: `requisitions.approve` is
+    // deliberately not here, and the API refuses a station that tries.
+    "requisitions.read", "requisitions.create",
     "items.read", "item.price.read", "item.units.read", "units.read", "company.account.read",
     // A subsidy changes what a litre costs at the pump, so a station manager
     // sees the rates in force — setting them stays with the administrator.
@@ -283,6 +299,27 @@ const TIMELINE_STATUSES: Array<{ status: TimeLineStatus; level: number; descript
   // parkings it stands in are recorded beside this stage, not instead of it.
   { status: "inTransit", level: 5, descriptions: "In transit, parked or moving between parkings" },
   { status: "stockReceived", level: 6, descriptions: "Stock received" },
+];
+
+/**
+ * The rungs a requisition climbs, and the wording a stepper shows.
+ *
+ * Seeded rather than written in code, like the nomination timeline, so the
+ * wording can change without a deployment. **Level 0 means off the ladder** —
+ * refused, cancelled, or handed back for a change — which a stepper draws as a
+ * stop rather than as a rung, and which is why the ladder's own length is the
+ * count of the positive levels.
+ */
+const REQUISITION_STEPS: Array<{ step: RequisitionStepName; level: number; description: string }> = [
+  { step: "submitted", level: 1, description: "Raised by the station, waiting for a decision" },
+  { step: "accepted", level: 2, description: "Agreed by head office, waiting to be loaded" },
+  { step: "loading", level: 3, description: "On a loading order" },
+  { step: "delivered", level: 4, description: "Received at the station" },
+  // Off the ladder. `changeRequested` is the only one a requisition comes back
+  // from: the station edits the quantity and it returns to `submitted`.
+  { step: "changeRequested", level: 0, description: "Sent back to the station to change a quantity" },
+  { step: "rejected", level: 0, description: "Refused by head office" },
+  { step: "cancelled", level: 0, description: "Withdrawn before it was decided" },
 ];
 
 /* ------------------------------------------------------------------------ */
@@ -391,6 +428,13 @@ async function seedReference(db: Db, pinSecret: string, keys: Secrets) {
       create: status,
     });
   }
+  for (const step of REQUISITION_STEPS) {
+    await db.requisitionStep.upsert({
+      where: { step: step.step },
+      update: { level: step.level, description: step.description },
+      create: step,
+    });
+  }
   const modules = await seedModules(db);
   const admin = await grant(db, ADMIN_ROLE, "all", true);
   const roles: Record<string, string> = { [ADMIN_ROLE]: admin.id };
@@ -402,7 +446,8 @@ async function seedReference(db: Db, pinSecret: string, keys: Secrets) {
   });
   const permissionCount = modules.reduce((sum, module) => sum + module.permissions.length, 0);
   console.log(`✔ reference: ${modules.length} modules, ${permissionCount} permissions, ` +
-    `${Object.keys(roles).length} roles, ${TIMELINE_STATUSES.length} timeline statuses, administrator ${keys.adminEmail}`);
+    `${Object.keys(roles).length} roles, ${TIMELINE_STATUSES.length} timeline statuses, ` +
+    `${REQUISITION_STEPS.length} requisition steps, administrator ${keys.adminEmail}`);
   return { roles, administrator };
 }
 
@@ -574,6 +619,146 @@ async function seedDemo(db: Db, pinSecret: string, keys: Secrets, roles: Record<
     }
   }
 
+  /* ---------------------------------------------------------------- */
+  /* The supply chain, so there is stock to requisition against.       */
+  /* ---------------------------------------------------------------- */
+
+  /*
+   * One complete import, end to end: a supplier's order, the cargo that
+   * arrived, the nomination that carried it inland, the T1 that released it,
+   * the central stock it became, and a cleared clearance on that stock.
+   *
+   * Without this the station has nothing to ask for: a requisition draws on
+   * **cleared** central stock, and the demo database had no depot, no stock and
+   * no clearance at all — so the requisition and loading screens were empty and
+   * untestable.
+   */
+  const supplierType = await db.supplierType.upsert({
+    where: { id: ID("supplier-type:foreign") }, update: {},
+    create: { id: ID("supplier-type:foreign"), type: "FOREIGN" },
+  });
+  const supplier = await db.supplier.upsert({
+    where: { id: ID("supplier:sp") }, update: {},
+    create: { id: ID("supplier:sp"), name: "SP TRADING", phone: "0788200001", address: "Dar es Salaam",
+      tinNumber: "900100001", contactPerson: "Asha Mwinyi", email: "sales@sptrading.petrox.local",
+      supplierTypeId: supplierType.id },
+  });
+  const transporter = await db.transporter.upsert({
+    where: { id: ID("transporter:kigali-haulage") }, update: {},
+    create: { id: ID("transporter:kigali-haulage"), name: "KIGALI HAULAGE", phone: "0788300001",
+      email: "ops@kigalihaulage.petrox.local", address: "Kigali", tinNumber: "900200001" },
+  });
+  const depot = await db.deport.upsert({
+    where: { id: ID("deport:kabuye") }, update: {},
+    create: { id: ID("deport:kabuye"), name: "KABUYE DEPOT", type: "local", location: "Kabuye, Kigali", status: "active" },
+  });
+
+  /* Two trucks with their drivers, so a loading order has something to go on. */
+  const fleet = [
+    { key: "1", plate: "RAB100A", truck: "TRK-100", trailer: "TRL-100", driver: "Jean Bosco", phone: "0788400001" },
+    { key: "2", plate: "RAB200B", truck: "TRK-200", trailer: "TRL-200", driver: "Eric Nsengimana", phone: "0788400002" },
+  ];
+  const driverVehicles: string[] = [];
+  for (const unit of fleet) {
+    const vehicle = await db.vehicle.upsert({
+      where: { id: ID(`vehicle:${unit.key}`) }, update: {},
+      create: { id: ID(`vehicle:${unit.key}`), platNumber: unit.plate, transporterId: transporter.id,
+        truckNumber: unit.truck, trailerNumber: unit.trailer, model: "Scania R500", tankCapacity: 40000 },
+    });
+    const driver = await db.driver.upsert({
+      where: { id: ID(`driver:${unit.key}`) }, update: {},
+      create: { id: ID(`driver:${unit.key}`), names: unit.driver, phone: unit.phone,
+        lisence: `DL-${unit.key}00${unit.key}`, passport: `PC${unit.key}00${unit.key}`, transporterId: transporter.id },
+    });
+    const pairing = await db.driverVehicles.upsert({
+      where: { id: ID(`driver-vehicle:${unit.key}`) }, update: {},
+      create: { id: ID(`driver-vehicle:${unit.key}`), driverId: driver.id, vehicleId: vehicle.id },
+    });
+    driverVehicles.push(pairing.id);
+  }
+
+  /* The order, the cargo it arrived on, and the depot stock it became. */
+  const plan = await db.orderPlan.upsert({
+    where: { id: ID("order-plan:q4") }, update: {},
+    create: { id: ID("order-plan:q4"), name: "Q4 import plan",
+      startDate: new Date("2026-10-01"), endDate: new Date("2026-12-31") },
+  });
+  const centralStock: Record<string, string> = {};
+  const imports = [
+    { key: "pms", product: "pms", litres: 120_000, vessel: "MT HORIZON", bl: "BL-PMS-0001", cleared: 90_000 },
+    { key: "ago", product: "ago", litres: 80_000, vessel: "MT SAVANNA", bl: "BL-AGO-0001", cleared: 60_000 },
+  ];
+  for (const [index, shipment] of imports.entries()) {
+    const order = await db.order.upsert({
+      where: { id: ID(`order:${shipment.key}`) }, update: {},
+      create: { id: ID(`order:${shipment.key}`), orderCode: `ORD-${shipment.key.toUpperCase()}-0001`,
+        supplierId: supplier.id, orderDate: new Date("2026-10-05"), itemId: item[shipment.product]!,
+        createdByUserId: adminId, orderPlanId: plan.id, quantity: shipment.litres },
+    });
+    const cargo = await db.cargo.upsert({
+      where: { id: ID(`cargo:${shipment.key}`) }, update: {},
+      create: { id: ID(`cargo:${shipment.key}`), orderId: order.id, deportId: depot.id,
+        vesselName: shipment.vessel, receivedDate: new Date("2026-10-20"),
+        expirationDate: new Date("2027-10-20"), quantityInKg: shipment.litres * 0.75,
+        quantityInLitre: shipment.litres, blRef: shipment.bl, status: "approved" },
+    });
+    const stock = await db.stock.upsert({
+      where: { id: ID(`stock:${shipment.key}`) }, update: {},
+      create: { id: ID(`stock:${shipment.key}`), deportId: depot.id, cargoId: cargo.id,
+        itemId: item[shipment.product]!, quantity: shipment.litres,
+        receivedDate: new Date("2026-10-20"), status: "received" },
+    });
+
+    /* The nomination that carried it inland, released by customs. */
+    const nomination = await db.nomination.upsert({
+      where: { id: ID(`nomination:${shipment.key}`) }, update: {},
+      create: { id: ID(`nomination:${shipment.key}`), driverVehicleId: driverVehicles[index]!,
+        ambQuantity: shipment.litres, destination: "KABUYE DEPOT",
+        expectedLoadingDate: new Date("2026-10-22") },
+    });
+    await db.nominationVessel.upsert({
+      where: { id: ID(`nomination-vessel:${shipment.key}`) }, update: {},
+      create: { id: ID(`nomination-vessel:${shipment.key}`), nominationId: nomination.id,
+        stockId: stock.id, ambQuantity: shipment.litres },
+    });
+    // The timeline up to `stockReceived`, so the nomination reads as finished.
+    for (const status of TIMELINE_STATUSES) {
+      const rung = await db.nominationTimeLineStatus.findUniqueOrThrow({ where: { status: status.status } });
+      await db.nominationTimeLine.upsert({
+        where: { id: ID(`timeline:${shipment.key}:${status.status}`) }, update: {},
+        create: { id: ID(`timeline:${shipment.key}:${status.status}`), nominationId: nomination.id,
+          timeLineStatusId: rung.id, changedBy: adminId, descriptions: status.descriptions },
+      });
+    }
+    const t1 = await db.t1Validation.upsert({
+      where: { nominationId: nomination.id }, update: {},
+      create: { id: ID(`t1:${shipment.key}`), nominationId: nomination.id,
+        exportingCountry: "Tanzania", quantityAt20C: shipment.litres },
+    });
+
+    /* The central stock, and a cleared clearance on part of it. */
+    const central = await db.centralStock.upsert({
+      where: { id: ID(`central-stock:${shipment.key}`) }, update: {},
+      create: { id: ID(`central-stock:${shipment.key}`), deportId: depot.id, itemId: item[shipment.product]!,
+        t1ValidationId: t1.id, ambQuantity: shipment.litres, quantityAt20C: shipment.litres,
+        receiptNumber: `RCP-${shipment.key.toUpperCase()}-0001`, status: "inStock" },
+    });
+    centralStock[shipment.key] = central.id;
+    // The litres a requisition may actually be served from. The rest stays
+    // uncleared, which is what the clearance screen is for.
+    await db.stockClearance.upsert({
+      where: { id: ID(`clearance:${shipment.key}`) }, update: {},
+      create: { id: ID(`clearance:${shipment.key}`), centralStockId: central.id,
+        quantity: shipment.cleared, status: "cleared", clearedBy: adminId },
+    });
+    // Received into the depot, so the batch's physical balance matches.
+    await db.stockTransaction.upsert({
+      where: { id: ID(`stock-transaction:${shipment.key}`) }, update: {},
+      create: { id: ID(`stock-transaction:${shipment.key}`), centralStockId: central.id,
+        quantity: shipment.litres, type: "received", createdBy: adminId },
+    });
+  }
+
   /* Staff. */
   const staff = [
     { email: "manager@petrox.local", firstName: "Site", lastName: "Manager", phone: "0780000001", pin: staffPin,
@@ -588,6 +773,9 @@ async function seedDemo(db: Db, pinSecret: string, keys: Secrets, roles: Record<
 
   console.log(`✔ test dataset: site ${site.name} — 2 products, 2 tanks, 2 pumps, 4 displays, ${nozzleNo} nozzles, 3 shifts, ` +
     `4 accounts, 2 card types, 8 cards (4 assigned), 2 clients, ${cars.length} cars, ${staff.length} users`);
+  console.log(`  supply chain: 1 supplier, 1 transporter, ${fleet.length} trucks with drivers, 1 depot, ` +
+    `${imports.length} imports received into central stock (PMS 120,000 L with 90,000 cleared; ` +
+    `AGO 80,000 L with 60,000 cleared)`);
   console.log(`  logins (password ${keys.demoPassword ? "from SEED_DEMO_PASSWORD" : "ChangeMe123!"}): ` +
     `${staff.map((person) => person.email).join(", ")}`);
   console.log(`  POS attendant: phone 0780000002, PIN ${keys.demoPin ? "from SEED_DEMO_PIN" : "1234"}; card PIN ${DEFAULT_CARD_PIN}`);

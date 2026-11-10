@@ -83,9 +83,13 @@ export class DashboardRepository {
     const period = { gte: start, lt: endExclusive };
     const [orders, cargo, receipts, trips, awaiting, held, network] = await Promise.all([
       this.db.order.aggregate({ where: { orderDate: period }, _count: true, _sum: { quantity: true } }),
-      // A cancelled cargo never arrived, so it is not volume offloaded.
+      /*
+       * A cancelled cargo never arrived, and a returned or replaced one went
+       * back to the supplier — none of them is volume this company offloaded.
+       * A replacement counts as itself, on its own arrival date.
+       */
       this.db.cargo.aggregate({
-        where: { receivedDate: period, status: { not: "cancelled" } },
+        where: { receivedDate: period, status: { notIn: ["cancelled", "returned", "replaced"] } },
         _count: true,
         _sum: { quantityInLitre: true, quantityInKg: true },
       }),

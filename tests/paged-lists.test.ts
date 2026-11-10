@@ -7,6 +7,8 @@ import { NominationRepository } from "../src/modules/nominations/nominations.rep
 import { nominationListQuerySchema } from "../src/modules/nominations/nominations.schema.js";
 import { PfiRepository } from "../src/modules/pfi/pfi.repository.js";
 import { T1ValidationRepository } from "../src/modules/t1 validation/t1-validation.repository.js";
+import { CentralStockOrderRepository } from "../src/modules/central stock Orders/order.repository.js";
+import { loadingOrderListQuerySchema } from "../src/modules/central stock Orders/order.schema.js";
 import { pagedDatesQuerySchema } from "../src/shared/validation/index.js";
 
 /**
@@ -26,7 +28,7 @@ function spyDb() {
     }),
   };
   const db: any = new Proxy(
-    { $transaction: vi.fn(async (queries: any[]) => [[{ id: "row", cargos: [], quantity: 0 }], 97]) },
+    { $transaction: vi.fn(async (queries: any[]) => [[{ id: "row", cargos: [], quantity: 0, loadedOrders: [], orderReceptions: [] }], 97]) },
     { get: (target, key) => (key in target ? (target as any)[key] : model) },
   );
   return { db, calls, model };
@@ -89,6 +91,32 @@ describe("every growing list asks the database for one page", () => {
       expect(findMany.where.createdAt).toEqual({ gte: window.startDate, lte: window.endDate });
       expect((model.count.mock.calls[0][0] as any).where).toEqual(findMany.where);
     }
+  });
+
+  it("loading orders: pages the window, and its stage counts leave the stage out", async () => {
+    const { db, model } = spyDb();
+    const query = loadingOrderListQuerySchema.parse({
+      ...page, startDate: "2026-05-01", endDate: "2026-05-31", search: "RAB", stage: "toReceive",
+    });
+    const repo = new CentralStockOrderRepository(db);
+    const [loads, total] = await repo.listLoadingOrders(query);
+
+    const findMany = model.findMany.mock.calls[0][0] as any;
+    expect(findMany).toMatchObject({ skip: 20, take: 10 });
+    // Every filter is an `AND` member: the window, the search and the stage.
+    expect(findMany.where.AND).toEqual(expect.arrayContaining([
+      { createdAt: { gte: query.startDate, lte: query.endDate } },
+    ]));
+    // The count must see exactly the same filter, or the page count lies.
+    expect((model.count.mock.calls[0][0] as any).where).toEqual(findMany.where);
+    expect(total).toBe(97);
+    expect(loads).toHaveLength(1);
+
+    // The badges count the whole window, so the stage cannot also narrow them.
+    const counts = spyDb();
+    await new CentralStockOrderRepository(counts.db).loadingOrderStageCounts(query);
+    const unfiltered = (counts.model.count.mock.calls[0][0] as any).where;
+    expect(JSON.stringify(unfiltered)).not.toContain("orderReceptions");
   });
 
   it("defaults to the first page of twenty when a client asks for no page", () => {

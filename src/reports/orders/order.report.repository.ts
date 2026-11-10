@@ -5,8 +5,22 @@ const num = (value: Prisma.Decimal | null | undefined) => Number(value ?? 0);
 const round = (value: number) => Math.round(value * 100) / 100;
 const iso = (date: Date | null | undefined) => date?.toISOString() ?? null;
 
-/** Cargo that never arrived must not count towards any quantity. */
-const isLive = (status: string) => status !== "cancelled";
+/**
+ * Cargo whose litres are not the order's any more must not count towards any
+ * quantity: one that never arrived, and one that arrived and went back to the
+ * supplier — with or without a replacement, which counts as itself.
+ */
+const WITHDRAWN = ["cancelled", "returned", "replaced"];
+const isLive = (status: string) => !WITHDRAWN.includes(status);
+
+/** How the shipment's own event reads on the order's timeline. */
+const cargoEventTitle = (status: string) => status === "cancelled"
+  ? "Cargo cancelled"
+  : status === "returned"
+    ? "Cargo returned to supplier"
+    : status === "replaced"
+      ? "Cargo returned, replacement raised"
+      : "Cargo recorded";
 
 type Event = {
   at: string;
@@ -262,7 +276,7 @@ export class OrderReportRepository {
       events.push({
         at: cargo.createdAt.toISOString(),
         type: "cargo",
-        title: cargo.status === "cancelled" ? "Cargo cancelled" : "Cargo recorded",
+        title: cargoEventTitle(cargo.status),
         detail: `${cargo.vesselName}${cargo.blRef ? ` · BL ${cargo.blRef}` : ""} · ${num(cargo.quantityInLitre).toLocaleString("en-US")} L`,
         by: null,
       });

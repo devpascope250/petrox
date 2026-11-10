@@ -9,7 +9,7 @@ import {
 } from "../../shared/validation/index.js";
 import { CargoService } from "./cargo.service.js";
 import { CargoRepository } from "./cargo.repository.js";
-import { cargoListQuerySchema, createCargoSchema, fileSchema } from "./cargo.schema.js";
+import { cargoListQuerySchema, createCargoSchema, fileSchema, returnCargoSchema } from "./cargo.schema.js";
 import { readCargoUpload } from "./cargo-upload.js";
 import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
@@ -142,6 +142,72 @@ const routes: FastifyPluginAsync = async (app) => {
       );
 
       return created(reply, cargo);
+    },
+  );
+
+  /**
+   * How far this shipment's litres have travelled, and whether it can still go
+   * back to the supplier. The same calculation the return applies, so what is
+   * shown and what is allowed cannot disagree.
+   */
+  app.get(
+    "/:id/movement",
+    { preHandler: [app.authenticate, app.authorize("cargo.read", "cargo.manage")] },
+    async (request) =>
+      success(await service.movement(parseInput(cuidParamsSchema, request.params).id)),
+  );
+
+  /**
+   * Sends an approved shipment back to the supplier, with or without a
+   * replacement to come. Nothing is rewritten: the cargo keeps its figures and
+   * a `CargoReturn` records what went back, why, and what is owed for it.
+   *
+   * JSON, or multipart when a document comes with it — the credit note or the
+   * correspondence agreeing the return.
+   */
+  app.post(
+    "/:id/return",
+    { preHandler: [app.authenticate, app.authorize("cargo.edit", "cargo.manage")] },
+    async (request, reply) => {
+      let body: unknown = request.body;
+      if (request.isMultipart()) {
+        const { fields, files } = await readCargoUpload(request, {
+          supportingDocUrl: ["supportingDocUrl", "supportingDoc", "supportingDocument", "document"],
+        });
+        body = { ...fields, ...(files.supportingDocUrl ? { supportingDocUrl: files.supportingDocUrl } : {}) };
+      }
+      return created(reply, await service.returnCargo(
+        parseInput(cuidParamsSchema, request.params).id,
+        parseInput(returnCargoSchema, body),
+        request.contextUser!.userId,
+      ));
+    },
+  );
+
+  /**
+   * The shipment raised in place of one that went back. A cargo in its own
+   * right — `pending` until it arrives and is approved — linked to the return
+   * so either record shows the other.
+   */
+  app.post(
+    "/:id/replacement",
+    { preHandler: [app.authenticate, app.authorize("cargo.create", "cargo.manage")] },
+    async (request, reply) => {
+      const { fields, files } = request.isMultipart()
+        ? await readCargoUpload(request, {
+            supportingDocUrl: ["supportingDocUrl", "supportingDoc", "supportingDocument"],
+            pfiSupportingDocUrl: ["pfiSupportingDocUrl", "pfiSupportingDoc", "pfiDocument"],
+          })
+        : { fields: request.body, files: {} as Record<string, string | undefined> };
+
+      const input = parseInput(createCargoSchema, fields);
+      if (files.supportingDocUrl) input.supportingDocUrl = files.supportingDocUrl;
+      if (input.pfi && files.pfiSupportingDocUrl) input.pfi.supportingDocUrl = files.pfiSupportingDocUrl;
+
+      return created(reply, await service.createReplacement(
+        parseInput(cuidParamsSchema, request.params).id,
+        input,
+      ));
     },
   );
 

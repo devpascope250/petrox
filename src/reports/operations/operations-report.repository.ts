@@ -67,7 +67,7 @@ export class OperationsReportRepository {
     };
     return this.db.$transaction(
       async (tx) => {
-        const [orders, total, ordered, received, invoiced] = await Promise.all([
+        const [orders, total, ordered, received, invoiced, refunded] = await Promise.all([
           tx.order.findMany({
             where,
             ...paginationArgs(query),
@@ -97,6 +97,20 @@ export class OperationsReportRepository {
                   cargoInvoices: {
                     select: { id: true, invoiceReference: true, quantity: true, unitPrice: true, amount: true, currencyCode: true },
                   },
+                  /*
+                   * What became of the shipment. The supplier's invoice is not
+                   * withdrawn when goods go back — it is refunded — so the
+                   * report shows invoiced and refunded, and the net of the
+                   * two, rather than quietly dropping the invoice.
+                   */
+                  returns: {
+                    orderBy: { createdAt: "desc" },
+                    select: {
+                      id: true, kind: true, reason: true, refundAmount: true,
+                      currencyCode: true, createdAt: true,
+                      replacementCargo: { select: { id: true, blRef: true, vesselName: true } },
+                    },
+                  },
                 },
               },
             },
@@ -111,9 +125,21 @@ export class OperationsReportRepository {
             _count: true,
             _sum: { quantity: true, amount: true },
           }),
+          // Refunds agreed for shipments that went back, by currency.
+          tx.cargoReturn.groupBy({
+            by: ["currencyCode"],
+            where: { cargo: { order: where }, refundAmount: { not: null } },
+            orderBy: { currencyCode: "asc" },
+            _count: true,
+            _sum: { refundAmount: true },
+          }),
         ]);
 
         const items = orders.map(({ cargos, plan, ...order }) => {
+          // Shipments that went back, and what the supplier owes for them.
+          const returns = cargos.flatMap((cargo) => cargo.returns);
+          const refundedAmount = round(returns.reduce(
+            (sum, row) => sum + num(row.refundAmount), 0));
           const volumeOrdered = num(order.quantity);
           const receivedVolume = cargos
             .filter((cargo) => cargo.status === "approved")
@@ -147,10 +173,24 @@ export class OperationsReportRepository {
             invoicedAmount: currency && currency !== "mixed"
               ? round(invoices.reduce((sum, invoice) => sum + num(invoice.amount), 0))
               : null,
+            /*
+             * What went back and what is owed for it, beside the invoiced
+             * figure rather than subtracted from it: both numbers are true,
+             * and which one a reader wants depends on the question.
+             */
+            refundedAmount,
+            netInvoicedAmount: currency && currency !== "mixed"
+              ? round(invoices.reduce((sum, invoice) => sum + num(invoice.amount), 0) - refundedAmount)
+              : null,
+            returnCount: returns.length,
             expectedArrival: cargos[0]?.receivedDate ?? null,
             invoiceStatus,
             orderStatus,
-            cargos: cargos.map(({ cargoInvoices, ...cargo }) => ({
+            cargos: cargos.map(({ cargoInvoices, returns: cargoReturns, ...cargo }) => ({
+              returns: cargoReturns.map((row) => ({
+                ...row,
+                refundAmount: row.refundAmount === null ? null : num(row.refundAmount),
+              })),
               ...cargo,
               quantityInKg: num(cargo.quantityInKg),
               quantityInLitre: num(cargo.quantityInLitre),
@@ -175,6 +215,15 @@ export class OperationsReportRepository {
                 row.currencyCode,
                 { invoices: row._count, quantity: num(row._sum.quantity), amount: num(row._sum.amount) },
               ]),
+            ),
+            /** Refunds for shipments sent back, by the currency they were agreed in. */
+            refundedByCurrency: Object.fromEntries(
+              refunded
+                .filter((row) => row.currencyCode !== null)
+                .map((row) => [
+                  row.currencyCode as string,
+                  { returns: row._count, amount: num(row._sum.refundAmount) },
+                ]),
             ),
           },
         };
