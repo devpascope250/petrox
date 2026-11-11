@@ -45,7 +45,8 @@ describe("every growing list asks the database for one page", () => {
     const findMany = model.findMany.mock.calls[0][0] as any;
     expect(findMany).toMatchObject({ skip: 20, take: 10 });
     expect(findMany.where.orderDate).toEqual({ gte: query.startDate, lte: query.endDate });
-    expect(findMany.where.OR).toHaveLength(3);
+    // Code, name, product, supplier — the name was added when orders got one.
+    expect(findMany.where.OR).toHaveLength(4);
     // The count must see exactly the same filter, or the page count lies.
     expect((model.count.mock.calls[0][0] as any).where).toEqual(findMany.where);
     expect(total).toBe(97);

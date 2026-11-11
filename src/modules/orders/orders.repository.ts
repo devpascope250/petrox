@@ -28,6 +28,7 @@ export class OrderRepository {
         id: true,
         orderPlanId: true,
         orderCode: true,
+        name: true,
         orderDate: true,
         quantity: true,
 
@@ -104,6 +105,8 @@ export class OrderRepository {
         ? {
             OR: [
               { orderCode: { contains: search } },
+              // What people actually remember an order by.
+              { name: { contains: search } },
               { item: { name: { contains: search } } },
               { supplier: { name: { contains: search } } },
             ],

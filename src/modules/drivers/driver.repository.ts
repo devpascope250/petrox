@@ -49,6 +49,10 @@ export class DriverRepository {
               model: true,
               status: true,
               tankCapacity: true,
+              // A truck is known by its body and trailer numbers as much as by
+              // its plate, and a nomination is searched for by all three.
+              truckNumber: true,
+              trailerNumber: true,
             }
           },
           nominations: {
@@ -101,6 +105,15 @@ export class DriverRepository {
               { lisence: { contains: term } },
               { passport: { contains: term } },
               { transport: { is: { name: { contains: term } } } },
+              /*
+               * The trucks assigned to him. A driver is very often looked up
+               * by the vehicle rather than by his own name — "who is on
+               * RAB 123 F" — and a trailer number is what is written on the
+               * paperwork at the depot.
+               */
+              { vehicles: { some: { vechile: { platNumber: { contains: term } } } } },
+              { vehicles: { some: { vechile: { truckNumber: { contains: term } } } } },
+              { vehicles: { some: { vechile: { trailerNumber: { contains: term } } } } },
             ],
           }
         : {}),

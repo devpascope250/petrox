@@ -385,6 +385,12 @@ enum PlanStatus {
 model Order {
   id              String    @id @default(uuid())
   orderCode       String    @unique
+  /// What this order is called, for people rather than for the system.
+  ///
+  /// Optional: `orderCode` is the identifier and is generated, but a buyer
+  /// talks about "the February Dar parcel", and a code is no help in finding
+  /// that again. Searched alongside the code, the supplier and the product.
+  name            String?
   supplierId      String
   orderDate       DateTime
   itemId          String

@@ -19,7 +19,10 @@ export type CreateDriverSchema = z.infer<typeof createDriverSchema>;
  * answer "no driver by that name" for a driver sitting on another page.
  */
 export const driverListQuerySchema = paginationQuerySchema.extend({
-  /** Matched against the name, phone, licence, passport and transporter. */
+  /**
+ * Matched against the name, phone, licence, passport, transporter — and the
+ * plate, truck and trailer numbers of the vehicles assigned to him.
+ */
   search: z.string().trim().max(80).optional(),
   /** Active, inactive, or — left out — both. Also a page's filter, for the same reason. */
   status: z.enum(["active", "inactive"]).optional(),

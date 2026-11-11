@@ -9,13 +9,19 @@ export const orderListQuerySchema = pagedDatesQuerySchema.extend({
   itemId: uuidSchema.optional(),
   supplierId: uuidSchema.optional(),
   orderPlanId: uuidSchema.optional(),
-  /** Matches an order code, a supplier or an item. */
+  /** Matches an order code, its name, a supplier or an item. */
   search: z.string().trim().max(100).optional(),
 });
 
 export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
 
 export const createOrderSchema = z.object({
+    /**
+     * What the order is called, for people. Optional, and a blank one is
+     * stored as nothing rather than as an empty string — otherwise "no name"
+     * would have two spellings in the table.
+     */
+    name: z.string().trim().max(120).optional().transform((value) => value || null),
     supplierId: uuidSchema,
     orderDate:  z.coerce.date(),
     itemId:  uuidSchema,
