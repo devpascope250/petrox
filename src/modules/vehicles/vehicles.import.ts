@@ -3,7 +3,7 @@ import { importRows, num, text, type SheetImportInput, type SheetImportResult } 
 import { parseInput } from "../../shared/validation/index.js";
 import { BusinessError, ConflictError } from "../../utils/errors.js";
 import { createVehicleSchema } from "./vehicles.schema.js";
-import type { VehicleRepository } from "./vehicles.repository.js";
+import { rigName, type VehicleRepository } from "./vehicles.repository.js";
 
 /**
  * Trucks from the filled-in template.
@@ -41,10 +41,19 @@ export class VehicleImporter {
         model: text(row.model),
         tankCapacity: capacity,
       });
-      // The plate is what a truck is called everywhere else in the system, so
-      // two rows with one plate would make every later choice ambiguous.
-      if (await this.db.vehicle.findFirst({ where: { platNumber: data.platNumber }, select: { id: true } })) {
-        throw new ConflictError("VEHICLE_EXISTS", `${data.platNumber} is already on record`);
+      /*
+       * The pair is what a rig is called everywhere else in the system, so two
+       * rows with the same plate **and** trailer would make every later choice
+       * ambiguous. The same plate with a different trailer is a different rig
+       * and is allowed — `create` holds the same rule, and so does the
+       * database, so this is only here to name the row in the sheet.
+       */
+      if (await this.db.vehicle.findFirst({
+        where: { platNumber: data.platNumber, trailerNumber: data.trailerNumber },
+        select: { id: true },
+      })) {
+        throw new ConflictError("VEHICLE_EXISTS",
+          `${rigName(data.platNumber, data.trailerNumber)} is already on record`);
       }
       return this.repo.create(data);
     });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { cargoMovement } from "../src/modules/cargo/cargo-movement.js";
 import { StockRepository } from "../src/modules/stock/stock.repository.js";
 import { recordIdSchema } from "../src/shared/validation/index.js";
+import { VehicleRepository, rigName } from "../src/modules/vehicles/vehicles.repository.js";
 
 /**
  * Taking a shipment back is only honest while its fuel has not moved, and the
@@ -157,5 +158,58 @@ describe("a cargo id may be a uuid or a cuid", () => {
     for (const rubbish of ["", "   ", "not-an-id", "123", "6734659f-ee83-4997-a1e5"]) {
       expect(recordIdSchema.safeParse(rubbish).success).toBe(false);
     }
+  });
+});
+
+describe("a rig is the plate and the trailer together", () => {
+  /**
+   * One tractor unit is coupled to different trailers over its life, and each
+   * pairing is its own rig — so the same plate may be on record twice, and the
+   * pair may not. Which makes the pair the only name that identifies a truck,
+   * and therefore what the list has to be searchable by: `RAB123F/TR-884`.
+   */
+  it("is named by the pair wherever one is written out", () => {
+    expect(rigName("RAB123F", "TR-884")).toBe("RAB123F/TR-884");
+  });
+
+  /** Records the `where` each search builds, and answers no rows. */
+  function spyVehicles() {
+    const findMany = vi.fn().mockResolvedValue([]);
+    return { db: { vehicle: { findMany } } as never, findMany };
+  }
+
+  it("splits a typed pair across the two columns, not one", async () => {
+    const { db, findMany } = spyVehicles();
+    // Spaces around the slash are what a person types; they must not survive
+    // into the comparison.
+    await new VehicleRepository(db).list({ search: "RAB123F / TR-884" });
+
+    expect(findMany.mock.calls[0][0].where).toEqual({
+      platNumber: { contains: "RAB123F" },
+      trailerNumber: { contains: "TR-884" },
+    });
+  });
+
+  it("matches one term against every field a truck is known by", async () => {
+    const { db, findMany } = spyVehicles();
+    await new VehicleRepository(db).list({ search: "TR-884" });
+
+    const or = findMany.mock.calls[0][0].where.OR as Array<Record<string, unknown>>;
+    expect(or).toHaveLength(5);
+    expect(or).toEqual(expect.arrayContaining([
+      { platNumber: { contains: "TR-884" } },
+      { trailerNumber: { contains: "TR-884" } },
+      { truckNumber: { contains: "TR-884" } },
+    ]));
+  });
+
+  it("asks for everything when nothing was typed", async () => {
+    const { db, findMany } = spyVehicles();
+    await new VehicleRepository(db).list();
+    expect(findMany.mock.calls[0][0].where).toBeUndefined();
+
+    const blank = spyVehicles();
+    await new VehicleRepository(blank.db).list({ search: "   " });
+    expect(blank.findMany.mock.calls[0][0].where).toBeUndefined();
   });
 });

@@ -1,11 +1,11 @@
 import type { AppConfig } from "../../config/env.js";
 import { VehicleRepository } from "./vehicles.repository.js";
-import { CreateVehicleSchema } from "./vehicles.schema.js";
+import { CreateVehicleSchema, VehicleListQuery } from "./vehicles.schema.js";
 export class VehiclesService {
   constructor(private repo: VehicleRepository, private config: AppConfig) {}
 
-  async list() {
-    return await this.repo.list();
+  async list(query: VehicleListQuery = {}) {
+    return await this.repo.list(query);
   }
 
   find(id: string) { return this.repo.find(id); }

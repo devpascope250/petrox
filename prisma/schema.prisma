@@ -470,6 +470,18 @@ model Vehicle {
   updatedAt     DateTime         @updatedAt
   drivers       DriverVehicles[]
 
+  /// A rig is the plate **and** the trailer together.
+  ///
+  /// One tractor unit is coupled to different trailers over its life, and each
+  /// pairing is a different thing to nominate: a different tank, a different
+  /// capacity, its own paperwork at the depot. So the same plate may be on
+  /// record more than once, as long as the trailer differs — and the pair may
+  /// not repeat, or no later choice could tell the two apart.
+  ///
+  /// `trailerNumber` is required, which is what makes this work: MySQL treats
+  /// two NULLs as different, so a nullable column in a composite unique would
+  /// let the same plate in without limit.
+  @@unique([platNumber, trailerNumber])
   @@index([id])
   @@index([transporterId])
 }
