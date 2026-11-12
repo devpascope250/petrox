@@ -718,6 +718,13 @@ enum StockStatus {
   cancelled
   returned
   received
+  /// Finished with. A batch is in **ambient** litres from the bill of lading
+  /// while the trips that empty it are measured at 20 °C, so the last one off
+  /// leaves a small remainder that is not fuel anybody can load. Closing says
+  /// the batch is done and stops it being offered to a nomination.
+  ///
+  /// Appended, never inserted: MySQL stores an enum by index.
+  closed
 }
 
 enum CargoStatus {

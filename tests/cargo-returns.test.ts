@@ -3,6 +3,7 @@ import { cargoMovement } from "../src/modules/cargo/cargo-movement.js";
 import { StockRepository } from "../src/modules/stock/stock.repository.js";
 import { recordIdSchema } from "../src/shared/validation/index.js";
 import { VehicleRepository, rigName } from "../src/modules/vehicles/vehicles.repository.js";
+import { apportion, usageOf } from "../src/modules/stock/stock-taken.js";
 
 /**
  * Taking a shipment back is only honest while its fuel has not moved, and the
@@ -211,5 +212,51 @@ describe("a rig is the plate and the trailer together", () => {
     const blank = spyVehicles();
     await new VehicleRepository(blank.db).list({ search: "   " });
     expect(blank.findMany.mock.calls[0][0].where).toBeUndefined();
+  });
+});
+
+describe("a batch is drawn down by the T1, not by the nomination", () => {
+  /**
+   * A nomination says which batch a truck will load from and how much, but it
+   * moves nothing: planning to load does not take fuel out of a depot. The
+   * litres leave when the **T1** is recorded, because that is the first time
+   * anybody measured what the truck really took — customs, at the border, at
+   * 20 °C.
+   */
+  const planned = (ambQuantity: number) => ({
+    ambQuantity,
+    nomination: { t1Validations: [], nominationVessels: [{ ambQuantity }] },
+  });
+  const validated = (ambQuantity: number, quantityAt20C: number, siblings: number[] = []) => ({
+    ambQuantity,
+    nomination: {
+      t1Validations: [{ quantityAt20C }],
+      nominationVessels: [{ ambQuantity }, ...siblings.map((q) => ({ ambQuantity: q }))],
+    },
+  });
+
+  it("a trip with no T1 has taken nothing, however much it nominated", () => {
+    expect(usageOf(100_000, [planned(40_000)])).toMatchObject({
+      taken: 0, nominated: 40_000, available: 100_000,
+    });
+  });
+
+  it("recording the T1 is what takes the litres out, at 20 °C", () => {
+    expect(usageOf(100_000, [validated(40_000, 39_670)])).toMatchObject({
+      taken: 39_670, nominated: 0, available: 60_330,
+    });
+  });
+
+  it("splits one truck's T1 across the batches it loaded from", () => {
+    // 20,000 of a 40,000 load came from this batch, and the T1 says 39,120.
+    expect(usageOf(100_000, [validated(20_000, 39_120, [20_000])]).taken).toBeCloseTo(19_560, 2);
+  });
+
+  it("never reports a negative balance", () => {
+    expect(usageOf(10_000, [validated(10_000, 12_000)]).available).toBe(0);
+  });
+
+  it("apportions nothing when a nomination draws nothing", () => {
+    expect(apportion(39_120, 0, 0)).toBe(0);
   });
 });

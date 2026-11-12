@@ -1,6 +1,7 @@
 import type { PrismaClient, StockStatus } from "../../../prisma/generated/prisma/client.js";
 import { NotFoundError } from "../../utils/errors.js";
 import { CreateStockSchema, StockReportQuerySchema } from "./stock.schema.js";
+import { usageOf } from "./stock-taken.js";
 export class StockRepository {
   constructor(private db: PrismaClient) {}
 
@@ -65,6 +66,11 @@ export class StockRepository {
                 destination: true,
                 expectedLoadingDate: true,
                 ambQuantity: true,
+                // What the trip actually took, once customs measured it —
+                // see `stock-taken`. The batch is drawn down by this, not by
+                // what the nomination planned.
+                t1Validations: { select: { quantityAt20C: true } },
+                nominationVessels: { select: { ambQuantity: true } },
                 driverVehicle: {
                   select: {
                     driver: {
@@ -98,7 +104,10 @@ export class StockRepository {
       item: typeof stocks[number]["item"];
       summary: {
         totalQuantity: number;
+        /** Planned on trips whose T1 is not in yet. Holds nothing back. */
         nominatedQuantity: number;
+        /** Confirmed gone, from the T1s of the trips that loaded from it. */
+        takenQuantity: number;
         remainingQuantity: number;
         stockCount: number;
         quantitiesByStatus: Record<string, number>;
@@ -108,11 +117,18 @@ export class StockRepository {
          * the totals rather than inside them, so the figures still add up.
          */
         withdrawnQuantity: number;
+        /**
+         * What is left on batches that have been closed: the 20 °C residue of
+         * a batch whose trips are done. Real litres on paper, but not fuel
+         * anybody can load, so it is reported apart from what is available.
+         */
+        closedResidueQuantity: number;
       };
       stocks: Array<{
         id: string;
         quantityBeforeNominations: number;
         nominatedQuantity: number;
+        takenQuantity: number;
         remainingQuantity: number;
         receivedDate: Date;
         status: typeof stocks[number]["status"];
@@ -140,10 +156,12 @@ export class StockRepository {
           summary: {
             totalQuantity: 0,
             nominatedQuantity: 0,
+            takenQuantity: 0,
             remainingQuantity: 0,
             stockCount: 0,
             quantitiesByStatus: {},
             withdrawnQuantity: 0,
+            closedResidueQuantity: 0,
           },
           stocks: [],
         };
@@ -163,11 +181,14 @@ export class StockRepository {
         driver: nomination.driverVehicle.driver,
         vehicle: nomination.driverVehicle.vechile,
       }));
-      const nominatedQuantity = nominations.reduce(
-        (total, nomination) => total + nomination.quantity,
-        0,
-      );
-      const remainingQuantity = quantity - nominatedQuantity;
+      /*
+       * A batch is drawn down by the **T1s** of the trips that loaded from it,
+       * not by what those trips nominated: a nomination is a plan and moves no
+       * fuel. `nominated` is what is still only planned, shown beside the rest
+       * because somebody about to load will want to know about it.
+       */
+      const { taken: takenQuantity, nominated: nominatedQuantity, available: remainingQuantity } =
+        usageOf(stock.quantity, stock.nominationVessels);
 
       /*
        * A withdrawn batch is still listed — it is part of the history of the
@@ -181,7 +202,18 @@ export class StockRepository {
       } else {
         itemReport.summary.totalQuantity += quantity;
         itemReport.summary.nominatedQuantity += nominatedQuantity;
-        itemReport.summary.remainingQuantity += remainingQuantity;
+        itemReport.summary.takenQuantity += takenQuantity;
+        /*
+         * A closed batch keeps its own figures on its row — the fuel really
+         * arrived and really left — but what is left on it is the 20 °C
+         * residue, which nobody can load. So it is reported apart rather than
+         * counted as available.
+         */
+        if (stock.status === "closed") {
+          itemReport.summary.closedResidueQuantity += remainingQuantity;
+        } else {
+          itemReport.summary.remainingQuantity += remainingQuantity;
+        }
       }
       itemReport.summary.stockCount += 1;
       itemReport.summary.quantitiesByStatus[stock.status] =
@@ -191,6 +223,7 @@ export class StockRepository {
         id: stock.id,
         quantityBeforeNominations: quantity,
         nominatedQuantity,
+        takenQuantity,
         remainingQuantity,
         receivedDate: stock.receivedDate,
         status: stock.status,

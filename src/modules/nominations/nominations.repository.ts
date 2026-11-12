@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/clie
 import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { furthestStage, recordStage } from "./nomination-stage.js";
+import { usageOf, vesselUsageSelect } from "../stock/stock-taken.js";
 import { CreateNominationsSchema, NominationListQuerySchema, NominationVesselSchema } from "./nominations.schema.js";
 
 type Tx = Prisma.TransactionClient;
@@ -75,6 +76,14 @@ const nominationSelect = {
   // Whether customs validation has been raised. A PFI invoices the cargo, not
   // the trip, so there is no PFI count here any more.
   _count: { select: { t1Validations: true } },
+  /*
+   * The figure the trip actually took, once customs measured it. This is what
+   * draws its batch down — a nomination's own quantity is only a plan — so a
+   * client showing what a batch has left, or working out how much an edit may
+   * still draw, needs the number rather than just the count. At most one:
+   * `nominationId` is unique on `T1Validation`.
+   */
+  t1Validations: { select: { id: true, quantityAt20C: true } },
   /**
    * Where its vehicle is standing, if anywhere. One row at most, since only
    * one parking per vehicle is active — enough for a list to say where a truck
@@ -212,9 +221,17 @@ export class NominationRepository {
   }
 
   /**
-   * Every vessel must fit inside what its stock still has free. `exclude` drops
-   * a nomination's own vessels from the running total, so re-saving an
-   * unchanged nomination is not blocked by the stock it already holds.
+   * Every vessel must fit inside what its batch still has.
+   *
+   * What a batch has left is `quantity − what has actually been taken`, and a
+   * trip takes its litres when its **T1** is recorded — see `stock-taken`. A
+   * nomination on its own holds nothing back: it is a plan, and planning to
+   * load does not remove fuel from a depot. So two nominations may both be
+   * raised against the same litres, and the batch is only truly drawn down as
+   * their T1s come in.
+   *
+   * `exclude` drops a nomination's own vessels from the running total, so
+   * re-saving an unchanged nomination is not blocked by its own T1.
    */
   private async assertStockCapacity(
     tx: Tx,
@@ -230,7 +247,7 @@ export class NominationRepository {
         item: { select: { name: true } },
         nominationVessels: {
           ...(exclude ? { where: { nominationId: { not: exclude } } } : {}),
-          select: { ambQuantity: true },
+          select: vesselUsageSelect,
         },
       },
     });
@@ -250,15 +267,26 @@ export class NominationRepository {
           `This ${stock.item.name} batch ${stock.status === "returned" ? "has been sent back to the supplier" : "was cancelled"}, so it cannot be nominated.`,
         );
       }
-      const nominated = stock.nominationVessels.reduce(
-        (total, row) => total + Number(row.ambQuantity),
-        0,
-      );
-      const remaining = Number(stock.quantity) - nominated;
-      if (Number(vessel.ambQuantity) > remaining) {
+      // Retired by hand once its trips were done — what is left on it is the
+      // 20 °C residue, not loadable fuel. See `StockStatus.closed`.
+      if (stock.status === "closed") {
+        throw new BusinessError(
+          "STOCK_CLOSED",
+          `This ${stock.item.name} batch has been closed, so it cannot be nominated. `
+          + "Reopen it if it really still has fuel on it.",
+        );
+      }
+      const { available, nominated } = usageOf(stock.quantity, stock.nominationVessels);
+      if (Number(vessel.ambQuantity) > available) {
         throw new BusinessError(
           "400",
-          `The Nominations Qty can not be greater than stock quantity! Only ${remaining} ${stock.item.name} remains on this stock`,
+          `The Nominations Qty can not be greater than stock quantity! `
+          + `Only ${available} ${stock.item.name} remains on this batch`
+          + (nominated > 0
+            // Said plainly: the batch is not short because of these, but the
+            // person is about to be surprised by them.
+            ? ` (${nominated} more is nominated on trips whose T1 is not in yet).`
+            : "."),
         );
       }
     }
