@@ -27,6 +27,14 @@ export interface BatchUsage {
   taken: number;
   /** Planned but unconfirmed — nominations with no T1 yet. Informational. */
   nominated: number;
+  /**
+   * What **every** trip on this batch planned to draw, T1 or not, in ambient
+   * litres. Shown beside `taken` so the two can be read against each other:
+   * the gap between them is the trips still waiting for a T1, plus the
+   * contraction between the depot's ambient litres and the border's 20 °C
+   * ones. Holds nothing back either — it is a figure to read, not a balance.
+   */
+  nominatedAmbient: number;
   /** `quantity − taken`, never below zero. What may still be nominated. */
   available: number;
 }
@@ -53,6 +61,18 @@ export interface VesselUsage {
   };
 }
 
+/**
+ * What one trip took out of **this** batch, for a list that shows its trips.
+ * Zero until its T1 is recorded. Same apportioning as `usageOf`.
+ */
+export function takenByVessel(vessel: VesselUsage): number {
+  const t1 = vessel.nomination.t1Validations[0];
+  if (!t1) return 0;
+  const total = vessel.nomination.nominationVessels.reduce(
+    (sum, line) => sum + num(line.ambQuantity), 0);
+  return apportion(num(t1.quantityAt20C), num(vessel.ambQuantity), total);
+}
+
 /** The select `usageOf` needs, so every caller asks for the same shape. */
 export const vesselUsageSelect = {
   ambQuantity: true,
@@ -68,8 +88,10 @@ export const vesselUsageSelect = {
 export function usageOf(quantity: Prisma.Decimal | number, vessels: VesselUsage[]): BatchUsage {
   let taken = 0;
   let nominated = 0;
+  let nominatedAmbient = 0;
   for (const vessel of vessels) {
     const drew = num(vessel.ambQuantity);
+    nominatedAmbient += drew;
     // At most one T1 per nomination — `nominationId` is unique on it.
     const t1 = vessel.nomination.t1Validations[0];
     if (t1) {
@@ -85,6 +107,7 @@ export function usageOf(quantity: Prisma.Decimal | number, vessels: VesselUsage[
     quantity: total,
     taken,
     nominated,
+    nominatedAmbient,
     available: Math.max(0, total - taken),
   };
 }

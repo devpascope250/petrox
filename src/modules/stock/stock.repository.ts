@@ -1,7 +1,7 @@
 import type { PrismaClient, StockStatus } from "../../../prisma/generated/prisma/client.js";
 import { NotFoundError } from "../../utils/errors.js";
 import { CreateStockSchema, StockReportQuerySchema } from "./stock.schema.js";
-import { usageOf } from "./stock-taken.js";
+import { takenByVessel, usageOf } from "./stock-taken.js";
 export class StockRepository {
   constructor(private db: PrismaClient) {}
 
@@ -106,6 +106,8 @@ export class StockRepository {
         totalQuantity: number;
         /** Planned on trips whose T1 is not in yet. Holds nothing back. */
         nominatedQuantity: number;
+        /** What every trip planned to draw, T1 or not, in ambient litres. */
+        nominatedAmbientQuantity: number;
         /** Confirmed gone, from the T1s of the trips that loaded from it. */
         takenQuantity: number;
         remainingQuantity: number;
@@ -128,6 +130,7 @@ export class StockRepository {
         id: string;
         quantityBeforeNominations: number;
         nominatedQuantity: number;
+        nominatedAmbientQuantity: number;
         takenQuantity: number;
         remainingQuantity: number;
         receivedDate: Date;
@@ -137,7 +140,10 @@ export class StockRepository {
         nominations: Array<{
           id: string;
           vesselId: string;
+          /** What this trip planned to draw from this batch, ambient. */
           quantity: number;
+          /** What its T1 says it took from this batch. Zero until one exists. */
+          takenQuantity: number;
           nominationQuantity: number;
           destination: string;
           expectedLoadingDate: Date;
@@ -156,6 +162,7 @@ export class StockRepository {
           summary: {
             totalQuantity: 0,
             nominatedQuantity: 0,
+            nominatedAmbientQuantity: 0,
             takenQuantity: 0,
             remainingQuantity: 0,
             stockCount: 0,
@@ -171,15 +178,21 @@ export class StockRepository {
       const quantity = Number(stock.quantity);
       // A nomination can load from several vessels, so `quantity` here is the
       // slice drawn from *this* stock, not the nomination's whole volume.
-      const nominations = stock.nominationVessels.map(({ nomination, ...vessel }) => ({
-        id: nomination.id,
-        vesselId: vessel.id,
-        quantity: Number(vessel.ambQuantity),
-        nominationQuantity: Number(nomination.ambQuantity),
-        destination: nomination.destination,
-        expectedLoadingDate: nomination.expectedLoadingDate,
-        driver: nomination.driverVehicle.driver,
-        vehicle: nomination.driverVehicle.vechile,
+      const nominations = stock.nominationVessels.map((line) => ({
+        id: line.nomination.id,
+        vesselId: line.id,
+        quantity: Number(line.ambQuantity),
+        /*
+         * What this trip actually took out of **this** batch: its T1 figure,
+         * split across the batches it loaded from. Zero until the T1 is
+         * recorded — which is the difference between a plan and a movement.
+         */
+        takenQuantity: takenByVessel(line),
+        nominationQuantity: Number(line.nomination.ambQuantity),
+        destination: line.nomination.destination,
+        expectedLoadingDate: line.nomination.expectedLoadingDate,
+        driver: line.nomination.driverVehicle.driver,
+        vehicle: line.nomination.driverVehicle.vechile,
       }));
       /*
        * A batch is drawn down by the **T1s** of the trips that loaded from it,
@@ -187,8 +200,12 @@ export class StockRepository {
        * fuel. `nominated` is what is still only planned, shown beside the rest
        * because somebody about to load will want to know about it.
        */
-      const { taken: takenQuantity, nominated: nominatedQuantity, available: remainingQuantity } =
-        usageOf(stock.quantity, stock.nominationVessels);
+      const {
+        taken: takenQuantity,
+        nominated: nominatedQuantity,
+        nominatedAmbient: nominatedAmbientQuantity,
+        available: remainingQuantity,
+      } = usageOf(stock.quantity, stock.nominationVessels);
 
       /*
        * A withdrawn batch is still listed — it is part of the history of the
@@ -202,6 +219,7 @@ export class StockRepository {
       } else {
         itemReport.summary.totalQuantity += quantity;
         itemReport.summary.nominatedQuantity += nominatedQuantity;
+        itemReport.summary.nominatedAmbientQuantity += nominatedAmbientQuantity;
         itemReport.summary.takenQuantity += takenQuantity;
         /*
          * A closed batch keeps its own figures on its row — the fuel really
@@ -223,6 +241,7 @@ export class StockRepository {
         id: stock.id,
         quantityBeforeNominations: quantity,
         nominatedQuantity,
+        nominatedAmbientQuantity,
         takenQuantity,
         remainingQuantity,
         receivedDate: stock.receivedDate,
