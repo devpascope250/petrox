@@ -150,8 +150,29 @@ export class NominationRepository {
   /** One page of the nominations in the window, with the total behind it. */
   async list(query: NominationListQuerySchema & { startDate: Date; endDate: Date }) {
     const { startDate, endDate, itemId, stage } = query;
+    const term = query.search?.trim();
     const where: Prisma.NominationWhereInput = {
       ...(itemId ? { nominationVessels: { some: { stock: { itemId } } } } : {}),
+      /*
+       * `AND`, not loose keys: the item filter and the search both narrow
+       * `nominationVessels`, and two of those in one object would leave only
+       * the last standing.
+       */
+      ...(term
+        ? {
+            AND: [{
+              OR: [
+                { destination: { contains: term } },
+                { driverVehicle: { driver: { names: { contains: term } } } },
+                { driverVehicle: { vechile: { platNumber: { contains: term } } } },
+                { driverVehicle: { vechile: { trailerNumber: { contains: term } } } },
+                // The ship it came in on, through the batch it loads from.
+                { nominationVessels: { some: { stock: { cargo: { vesselName: { contains: term } } } } } },
+                { nominationVessels: { some: { stock: { cargo: { blRef: { contains: term } } } } } },
+              ],
+            }],
+          }
+        : {}),
       // The trips whose furthest stage is this one: they have reached it and
       // nothing above it has been recorded.
       ...(stage

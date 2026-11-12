@@ -71,6 +71,13 @@ export const nominationListQuerySchema = pagedDatesQuerySchema.extend({
    * returns exactly the trips whose vehicle may be sent to a parking.
    */
   stage: z.enum(TimeLineStatus).optional(),
+  /**
+   * Matched against the destination, the driver, the truck's plate and
+   * trailer, and the **ship** the fuel came in on — `Cargo.vesselName`, two
+   * relations away through the batches the trip loads from. A trip is very
+   * often looked for by the vessel it came off.
+   */
+  search: z.string().trim().max(100).optional(),
 });
 
 export type NominationListQuerySchema = z.infer<typeof nominationListQuerySchema>;
