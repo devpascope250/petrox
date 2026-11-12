@@ -16,7 +16,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { T1ValidationRepository } from "./t1-validation.repository.js";
-import { createT1ValidationsSchema } from "./t1-validation.schema.js";
+import { createT1ValidationsSchema, t1ListQuerySchema } from "./t1-validation.schema.js";
 
 const routes: FastifyPluginAsync = async (app) => {
   const service = new T1ValidationSrvice(new T1ValidationRepository(app.prisma), app.config);
@@ -28,7 +28,7 @@ const routes: FastifyPluginAsync = async (app) => {
         app.authorize("t1.validation.read", "t1.validation.manage"),
       ],
     },
-    async (request) => success(await service.list(parseInput(pagedDatesQuerySchema, request.query))),
+    async (request) => success(await service.list(parseInput(t1ListQuerySchema, request.query))),
   );
 
     app.get(

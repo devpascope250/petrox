@@ -1,5 +1,20 @@
 import { z } from "zod";
-import { nonEmptyNameSchema, uuidSchema } from "../../shared/validation/index.js";
+import { nonEmptyNameSchema, pagedDatesQuerySchema, uuidSchema } from "../../shared/validation/index.js";
+
+/**
+ * One page of T1 validations in a window.
+ *
+ * `search` is matched against the **ship** the fuel came in on
+ * (`Cargo.vesselName`) and its BL, the declaration reference, the exporting
+ * country, and the trip's driver, plate, trailer and destination. A T1 is
+ * recognised by its vessel more than by anything else, which is why the search
+ * reaches two relations down to find it.
+ */
+export const t1ListQuerySchema = pagedDatesQuerySchema.extend({
+  search: z.string().trim().max(100).optional(),
+});
+
+export type T1ListQuery = z.infer<typeof t1ListQuerySchema>;
 
 export const createT1ValidationsSchema = z.object({
   nominationId: uuidSchema,

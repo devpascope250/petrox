@@ -4,7 +4,7 @@ import { within2DaysPeriod } from "../../utils/utils.js";
 import { paginatedData } from "../../shared/pagination/index.js";
 import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { T1ValidationRepository } from "./t1-validation.repository.js";
-import { CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema } from "./t1-validation.schema.js";
+import { CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema, T1ListQuery } from "./t1-validation.schema.js";
 export class T1ValidationSrvice {
   constructor(private repo: T1ValidationRepository, private config: AppConfig) {
   }
@@ -19,7 +19,7 @@ export class T1ValidationSrvice {
     })
   }
 
-    async list(query: PagedDatesQuery) {
+    async list(query: T1ListQuery) {
     // No window asked for still means a window: the last two days.
     const dates = within2DaysPeriod(query.startDate, query.endDate);
     const [t1, total] = await this.repo.list({ ...query, ...dates });

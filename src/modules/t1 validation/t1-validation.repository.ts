@@ -1,9 +1,9 @@
-import type { ExtraT1ValidationStatus, PrismaClient } from "../../../prisma/generated/prisma/client.js";
+import type { ExtraT1ValidationStatus, Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { recordStage } from "../nominations/nomination-stage.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema } from "./t1-validation.schema.js";
+import { T1ListQuery, CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema } from "./t1-validation.schema.js";
 export class T1ValidationRepository {
   constructor(private db: PrismaClient) {}
   async listByCompleted() {
@@ -52,8 +52,29 @@ export class T1ValidationRepository {
   }
 
   /** One page of the T1 validations in the window, with the total behind it. */
-  async list(query: PagedDatesQuery & { startDate: Date; endDate: Date }) {
-    const where = { createdAt: { gte: query.startDate, lte: query.endDate } };
+  async list(query: T1ListQuery & { startDate: Date; endDate: Date }) {
+    const term = query.search?.trim();
+    const where: Prisma.T1ValidationWhereInput = {
+      createdAt: { gte: query.startDate, lte: query.endDate },
+      ...(term
+        ? {
+            OR: [
+              { exportingCountry: { contains: term } },
+              { sdReference: { contains: term } },
+              { nomination: { destination: { contains: term } } },
+              { nomination: { driverVehicle: { driver: { names: { contains: term } } } } },
+              { nomination: { driverVehicle: { vechile: { platNumber: { contains: term } } } } },
+              { nomination: { driverVehicle: { vechile: { trailerNumber: { contains: term } } } } },
+              // The ship it came off, and its bill of lading — two relations
+              // down, through the batches the trip loaded from.
+              { nomination: { nominationVessels: { some: {
+                stock: { cargo: { vesselName: { contains: term } } } } } } },
+              { nomination: { nominationVessels: { some: {
+                stock: { cargo: { blRef: { contains: term } } } } } } },
+            ],
+          }
+        : {}),
+    };
     return this.db.$transaction([
       this.db.t1Validation.findMany({
       where,
@@ -73,7 +94,33 @@ export class T1ValidationRepository {
           select: {
             id: true,
             ambQuantity: true,
+            destination: true,
+            expectedLoadingDate: true,
+            createdAt: true,
             timeLine: true,
+            /*
+             * The truck and the man driving it. A T1 is read as a row of a
+             * loading list — truck, trailer, driver, licence, passport — so
+             * the list carries them rather than making the page fetch a
+             * nomination for each of its rows.
+             */
+            driverVehicle: {
+              select: {
+                id: true,
+                driver: {
+                  select: {
+                    id: true, names: true, phone: true, lisence: true, passport: true,
+                    transport: { select: { id: true, name: true } },
+                  },
+                },
+                vechile: {
+                  select: {
+                    id: true, platNumber: true, truckNumber: true, trailerNumber: true,
+                    tankCapacity: true,
+                  },
+                },
+              },
+            },
             // A nomination can load from several vessels now, so the stock and
             // its item come through the vessel list rather than one `stock`.
             nominationVessels: {
@@ -84,7 +131,15 @@ export class T1ValidationRepository {
                 ambQuantity: true,
                 stock: {
                   select: {
-                    item: true
+                    item: true,
+                    // The ship it came in on, its BL and the order behind it:
+                    // what a loading list is headed with.
+                    cargo: {
+                      select: {
+                        id: true, vesselName: true, blRef: true,
+                        order: { select: { id: true, orderCode: true, name: true } },
+                      },
+                    },
                   }
                 }
               }
