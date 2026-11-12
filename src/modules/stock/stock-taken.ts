@@ -13,6 +13,9 @@ const num = (value: Prisma.Decimal | number | null | undefined) => Number(value 
  * took — customs weighed it at the border, at 20 °C. Until then the trip has
  * taken nothing, however much it nominated.
  *
+ * A trip may carry **more than one** T1 — a load split across declarations, or
+ * a second raised after a correction — so what it took is the **sum** of them.
+ *
  * ⚠️ The batch is in **ambient** litres from the bill of lading and a T1 is at
  * 20 °C, so the two do not meet exactly: fuel contracts as it cools, and the
  * last trip off a batch leaves a small remainder — roughly 0.8% of the cargo
@@ -56,21 +59,25 @@ export function apportion(t1Quantity: number, vesselQuantity: number, nomination
 export interface VesselUsage {
   ambQuantity: Prisma.Decimal | number;
   nomination: {
+    /** Every T1 on the trip — their quantities are summed, not picked from. */
     t1Validations: Array<{ quantityAt20C: Prisma.Decimal | number }>;
     nominationVessels: Array<{ ambQuantity: Prisma.Decimal | number }>;
   };
 }
+
+/** Everything this trip was cleared for, across all of its T1s. */
+const clearedOn = (vessel: VesselUsage) =>
+  vessel.nomination.t1Validations.reduce((sum, t1) => sum + num(t1.quantityAt20C), 0);
 
 /**
  * What one trip took out of **this** batch, for a list that shows its trips.
  * Zero until its T1 is recorded. Same apportioning as `usageOf`.
  */
 export function takenByVessel(vessel: VesselUsage): number {
-  const t1 = vessel.nomination.t1Validations[0];
-  if (!t1) return 0;
+  if (vessel.nomination.t1Validations.length === 0) return 0;
   const total = vessel.nomination.nominationVessels.reduce(
     (sum, line) => sum + num(line.ambQuantity), 0);
-  return apportion(num(t1.quantityAt20C), num(vessel.ambQuantity), total);
+  return apportion(clearedOn(vessel), num(vessel.ambQuantity), total);
 }
 
 /** The select `usageOf` needs, so every caller asks for the same shape. */
@@ -92,12 +99,9 @@ export function usageOf(quantity: Prisma.Decimal | number, vessels: VesselUsage[
   for (const vessel of vessels) {
     const drew = num(vessel.ambQuantity);
     nominatedAmbient += drew;
-    // At most one T1 per nomination — `nominationId` is unique on it.
-    const t1 = vessel.nomination.t1Validations[0];
-    if (t1) {
-      const total = vessel.nomination.nominationVessels.reduce(
-        (sum, line) => sum + num(line.ambQuantity), 0);
-      taken += apportion(num(t1.quantityAt20C), drew, total);
+    // A trip may hold several T1s, so what it was cleared for is their sum.
+    if (vessel.nomination.t1Validations.length > 0) {
+      taken += takenByVessel(vessel);
     } else {
       nominated += drew;
     }

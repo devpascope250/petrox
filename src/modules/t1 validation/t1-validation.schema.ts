@@ -7,6 +7,12 @@ export const createT1ValidationsSchema = z.object({
   customOffice:   nonEmptyNameSchema,
   // transitNumbering: nonEmptyNameSchema,
   quantityAt20C: z.coerce.number(),
+  /**
+   * The reference on the customs declaration this T1 was cleared under.
+   * Optional: a trip may be recorded before its declaration comes back, and
+   * every row entered before this field existed has none.
+   */
+  sdReference: z.string().trim().max(120).optional().transform((value) => value || null),
   supportingDocUrl: z.string().optional().nullable(),
   createdBy: z.string().optional()
 });

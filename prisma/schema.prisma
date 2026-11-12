@@ -880,10 +880,17 @@ enum TimeLineStatus {
 
 model T1Validation {
   id               String     @id @default(uuid())
-  nominationId     String     @unique
+  /// **Many per nomination.** One trip may be cleared on more than one transit
+  /// document — a load split across declarations, or a second raised after a
+  /// correction — so what the trip took is the **sum** of its T1s, not the
+  /// first of them.
+  nominationId     String
   nomination       Nomination @relation(fields: [nominationId], references: [id])
   exportingCountry String
   quantityAt20C    Decimal    @default(0.0) @db.Decimal(18, 2)
+  /// The reference on the customs declaration this T1 was cleared under.
+  /// Optional: every row already on record predates it.
+  sdReference      String?
   supportingDocUrl String?
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt

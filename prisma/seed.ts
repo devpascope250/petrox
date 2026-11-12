@@ -730,10 +730,13 @@ async function seedDemo(db: Db, pinSecret: string, keys: Secrets, roles: Record<
           timeLineStatusId: rung.id, changedBy: adminId, descriptions: status.descriptions },
       });
     }
+    // Keyed by its own id, not by the nomination: a trip may hold several
+    // T1s now, so `nominationId` is no longer unique.
     const t1 = await db.t1Validation.upsert({
-      where: { nominationId: nomination.id }, update: {},
+      where: { id: ID(`t1:${shipment.key}`) }, update: {},
       create: { id: ID(`t1:${shipment.key}`), nominationId: nomination.id,
-        exportingCountry: "Tanzania", quantityAt20C: shipment.litres },
+        exportingCountry: "Tanzania", quantityAt20C: shipment.litres,
+        sdReference: `SD-${shipment.key.toUpperCase()}-0001` },
     });
 
     /* The central stock, and a cleared clearance on part of it. */

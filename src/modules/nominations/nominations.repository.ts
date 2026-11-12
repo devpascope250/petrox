@@ -80,10 +80,14 @@ const nominationSelect = {
    * The figure the trip actually took, once customs measured it. This is what
    * draws its batch down — a nomination's own quantity is only a plan — so a
    * client showing what a batch has left, or working out how much an edit may
-   * still draw, needs the number rather than just the count. At most one:
-   * `nominationId` is unique on `T1Validation`.
+   * still draw, needs the numbers rather than just the count. **Several are
+   * possible** — a load cleared on more than one declaration — so what the
+   * trip took is their sum.
    */
-  t1Validations: { select: { id: true, quantityAt20C: true } },
+  t1Validations: {
+    orderBy: { createdAt: "asc" as const },
+    select: { id: true, quantityAt20C: true, sdReference: true },
+  },
   /**
    * Where its vehicle is standing, if anywhere. One row at most, since only
    * one parking per vehicle is active — enough for a list to say where a truck

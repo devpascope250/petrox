@@ -3,7 +3,7 @@ import { cargoMovement } from "../src/modules/cargo/cargo-movement.js";
 import { StockRepository } from "../src/modules/stock/stock.repository.js";
 import { recordIdSchema } from "../src/shared/validation/index.js";
 import { VehicleRepository, rigName } from "../src/modules/vehicles/vehicles.repository.js";
-import { apportion, usageOf } from "../src/modules/stock/stock-taken.js";
+import { apportion, takenByVessel, usageOf } from "../src/modules/stock/stock-taken.js";
 
 /**
  * Taking a shipment back is only honest while its fuel has not moved, and the
@@ -258,5 +258,43 @@ describe("a batch is drawn down by the T1, not by the nomination", () => {
 
   it("apportions nothing when a nomination draws nothing", () => {
     expect(apportion(39_120, 0, 0)).toBe(0);
+  });
+});
+
+describe("a trip may be cleared on several T1s", () => {
+  /**
+   * `T1Validation.nominationId` used to be unique, so a trip had at most one
+   * customs document. A load can be cleared on more than one declaration, or a
+   * second T1 raised after a correction — so what the trip took out of its
+   * batch is the **sum** of them, never the first.
+   */
+  const tripWith = (quantities: number[], ambQuantity = 40_000) => ({
+    ambQuantity,
+    nomination: {
+      t1Validations: quantities.map((quantityAt20C) => ({ quantityAt20C })),
+      nominationVessels: [{ ambQuantity }],
+    },
+  });
+
+  it("sums them rather than reading the first", () => {
+    expect(usageOf(100_000, [tripWith([20_000, 19_670])])).toMatchObject({
+      taken: 39_670, nominated: 0, available: 60_330,
+    });
+  });
+
+  it("counts a trip as unmeasured only while it has none", () => {
+    expect(usageOf(100_000, [tripWith([])])).toMatchObject({ taken: 0, nominated: 40_000 });
+  });
+
+  it("splits the summed figure across the batches the trip loaded from", () => {
+    const vessel = {
+      ambQuantity: 20_000,
+      nomination: {
+        t1Validations: [{ quantityAt20C: 20_000 }, { quantityAt20C: 19_120 }],
+        nominationVessels: [{ ambQuantity: 20_000 }, { ambQuantity: 20_000 }],
+      },
+    };
+    // 39,120 cleared in total, half of the load came from this batch.
+    expect(takenByVessel(vessel)).toBeCloseTo(19_560, 2);
   });
 });

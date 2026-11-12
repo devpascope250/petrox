@@ -21,6 +21,8 @@ export class T1ValidationRepository {
         // What the T1 clears, at 20 °C: what can go into stock, not the
         // nomination's ambient quantity.
         quantityAt20C: true,
+        /** The customs declaration it was cleared under. */
+        sdReference: true,
         extraValidations: true,
         supportingDocUrl: true,
         nomination: {
@@ -63,6 +65,8 @@ export class T1ValidationRepository {
         // What the T1 clears, at 20 °C: what can go into stock, not the
         // nomination's ambient quantity.
         quantityAt20C: true,
+        /** The customs declaration it was cleared under. */
+        sdReference: true,
         extraValidations: true,
         supportingDocUrl: true,
         nomination: {
@@ -93,8 +97,13 @@ export class T1ValidationRepository {
     ]);
   }
 
+  /**
+   * A T1 against a trip. **Several are allowed**: a load may be cleared on more
+   * than one declaration, or a second raised after a correction, and what the
+   * trip took out of its batch is the sum of them. The guard that refused a
+   * second one has gone with the unique index it was defending.
+   */
   async create(data: CreateT1ValidationsSchema) {
-    if ((await this.findByNomination(data.nominationId))) throw new BusinessError("400", "The Validation is Already Existed!");
     return await this.db.$transaction(async(tx) => {
       // Through `recordStage`, so a stage already passed is not written again.
       await recordStage(tx, data.nominationId, "t1Pending", data.createdBy);
@@ -103,6 +112,7 @@ export class T1ValidationRepository {
         exportingCountry: data.exportingCountry,
         nominationId: data.nominationId,
         quantityAt20C: data.quantityAt20C,
+        sdReference: data.sdReference,
         extraValidations: {
           create: {
             customOffice: data.customOffice,
@@ -134,6 +144,7 @@ export class T1ValidationRepository {
        exportingCountry: data.exportingCountry,
         nominationId: data.nominationId,
         quantityAt20C: data.quantityAt20C,
+        sdReference: data.sdReference,
         extraValidations: {
           update: {
             where: {id: extraT1Id},
@@ -165,6 +176,11 @@ export class T1ValidationRepository {
     return this.db.t1Validation.findUnique({ where: { id } });
   }
 
+  /**
+   * ⚠️ A trip may hold **several** T1s, so this is the first of them and not
+   * "the" one. Use it only where any T1 will do — anything counting litres
+   * must sum them.
+   */
   async findByNomination(id: string) {
     return await this.db.t1Validation.findFirst({ where: { nominationId: id } });
   }
