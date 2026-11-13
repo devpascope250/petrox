@@ -1,5 +1,5 @@
 import type { PrismaClient, StockStatus } from "../../../prisma/generated/prisma/client.js";
-import { NotFoundError } from "../../utils/errors.js";
+import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { CreateStockSchema, StockReportQuerySchema } from "./stock.schema.js";
 import { takenByVessel, usageOf } from "./stock-taken.js";
 export class StockRepository {
@@ -68,8 +68,11 @@ export class StockRepository {
                 ambQuantity: true,
                 // What the trip actually took, once customs measured it —
                 // see `stock-taken`. The batch is drawn down by this, not by
-                // what the nomination planned.
-                t1Validations: { select: { quantityAt20C: true } },
+                // what the nomination planned. The checks come too, because a
+                // cancelled T1 draws nothing.
+                t1Validations: {
+                  select: { quantityAt20C: true, extraValidations: { select: { status: true } } },
+                },
                 nominationVessels: { select: { ambQuantity: true } },
                 driverVehicle: {
                   select: {
@@ -271,9 +274,31 @@ export class StockRepository {
     });
   }
 
+  /**
+   * Moves a batch between statuses — except away from `returned`.
+   *
+   * A returned batch is the stock side of a shipment that went back to the
+   * supplier: there is a `CargoReturn` saying what went back, why, and what is
+   * owed for it. Flipping the batch back to `received` would put litres into
+   * the depot that are not there and leave that record contradicting the
+   * stock, so it is refused. If the return itself was wrong, that is what has
+   * to be put right.
+   */
   async changeStatus(id: string, status: StockStatus) {
-    const stock = await this.find(id);
+    const stock = await this.db.stock.findUnique({
+      where: { id },
+      select: { status: true, cargo: { select: { status: true, blRef: true } } },
+    });
     if (!stock) throw new NotFoundError();
+    if (stock.status === "returned" && status !== "returned") {
+      const replaced = stock.cargo?.status === "replaced";
+      throw new BusinessError(
+        "STOCK_RETURNED",
+        `This batch went back to the supplier${stock.cargo?.blRef ? ` with BL ${stock.cargo.blRef}` : ""}`
+        + `${replaced ? " and was replaced" : ""}, so its status cannot be changed. `
+        + "Correct the shipment's return if that was recorded wrongly.",
+      );
+    }
     return await this.db.stock.update({
       where: { id },
       data: { status: status },

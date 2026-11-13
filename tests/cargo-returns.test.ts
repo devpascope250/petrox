@@ -3,7 +3,7 @@ import { cargoMovement } from "../src/modules/cargo/cargo-movement.js";
 import { StockRepository } from "../src/modules/stock/stock.repository.js";
 import { recordIdSchema } from "../src/shared/validation/index.js";
 import { VehicleRepository, rigName } from "../src/modules/vehicles/vehicles.repository.js";
-import { apportion, takenByVessel, usageOf } from "../src/modules/stock/stock-taken.js";
+import { apportion, isLive, takenByVessel, usageOf } from "../src/modules/stock/stock-taken.js";
 
 /**
  * Taking a shipment back is only honest while its fuel has not moved, and the
@@ -230,7 +230,8 @@ describe("a batch is drawn down by the T1, not by the nomination", () => {
   const validated = (ambQuantity: number, quantityAt20C: number, siblings: number[] = []) => ({
     ambQuantity,
     nomination: {
-      t1Validations: [{ quantityAt20C }],
+      // No cancelled check on it, so it draws. See the cancellation block.
+      t1Validations: [{ quantityAt20C, extraValidations: [] }],
       nominationVessels: [{ ambQuantity }, ...siblings.map((q) => ({ ambQuantity: q }))],
     },
   });
@@ -271,7 +272,7 @@ describe("a trip may be cleared on several T1s", () => {
   const tripWith = (quantities: number[], ambQuantity = 40_000) => ({
     ambQuantity,
     nomination: {
-      t1Validations: quantities.map((quantityAt20C) => ({ quantityAt20C })),
+      t1Validations: quantities.map((quantityAt20C) => ({ quantityAt20C, extraValidations: [] })),
       nominationVessels: [{ ambQuantity }],
     },
   });
@@ -290,11 +291,73 @@ describe("a trip may be cleared on several T1s", () => {
     const vessel = {
       ambQuantity: 20_000,
       nomination: {
-        t1Validations: [{ quantityAt20C: 20_000 }, { quantityAt20C: 19_120 }],
+        t1Validations: [
+          { quantityAt20C: 20_000, extraValidations: [] },
+          { quantityAt20C: 19_120, extraValidations: [] },
+        ],
         nominationVessels: [{ ambQuantity: 20_000 }, { ambQuantity: 20_000 }],
       },
     };
     // 39,120 cleared in total, half of the load came from this batch.
     expect(takenByVessel(vessel)).toBeCloseTo(19_560, 2);
+  });
+});
+
+/**
+ * Recording a T1 takes litres off a depot batch, so cancelling one has to put
+ * them back: a declaration withdrawn at the border leaves the fuel where it
+ * always was. A T1 is cancelled when any of its customs checks is — the same
+ * roll-up the T1 list shows on screen — and these hold the arithmetic to it.
+ */
+describe("a cancelled T1 gives the fuel back", () => {
+  const trip = (t1s: Array<{ quantityAt20C: number; status?: string }>, ambQuantity = 40_000) => ({
+    ambQuantity,
+    nomination: {
+      t1Validations: t1s.map(({ quantityAt20C, status }) => ({
+        quantityAt20C,
+        extraValidations: status ? [{ status }] : [],
+      })),
+      nominationVessels: [{ ambQuantity }],
+    },
+  });
+
+  it("stops drawing on the batch", () => {
+    expect(usageOf(100_000, [trip([{ quantityAt20C: 39_670, status: "cancelled" }])]))
+      .toMatchObject({ taken: 0, available: 100_000 });
+  });
+
+  it("puts the trip back to planned-but-untaken, which is what it is", () => {
+    expect(usageOf(100_000, [trip([{ quantityAt20C: 39_670, status: "cancelled" }])]))
+      .toMatchObject({ nominated: 40_000 });
+  });
+
+  it("leaves a confirmed or still-pending one drawing", () => {
+    expect(usageOf(100_000, [trip([{ quantityAt20C: 39_670, status: "confirmed" }])]).taken)
+      .toBe(39_670);
+    expect(usageOf(100_000, [trip([{ quantityAt20C: 39_670, status: "pending" }])]).taken)
+      .toBe(39_670);
+    // No checks at all is not a cancellation: nothing has been decided yet.
+    expect(usageOf(100_000, [trip([{ quantityAt20C: 39_670 }])]).taken).toBe(39_670);
+  });
+
+  it("takes only the cancelled one out of a trip cleared on several", () => {
+    expect(usageOf(100_000, [trip([
+      { quantityAt20C: 20_000, status: "confirmed" },
+      { quantityAt20C: 19_670, status: "cancelled" },
+    ])])).toMatchObject({ taken: 20_000, nominated: 0, available: 80_000 });
+  });
+
+  it("counts one cancelled check as cancelling the whole T1, as the list shows it", () => {
+    // A T1 passes several offices; a cancellation at any of them dominates.
+    expect(isLive({ quantityAt20C: 1, extraValidations: [
+      { status: "confirmed" }, { status: "cancelled" },
+    ] })).toBe(false);
+    expect(isLive({ quantityAt20C: 1, extraValidations: [
+      { status: "confirmed" }, { status: "pending" },
+    ] })).toBe(true);
+  });
+
+  it("gives the litres back through takenByVessel too, not only the totals", () => {
+    expect(takenByVessel(trip([{ quantityAt20C: 39_670, status: "cancelled" }]))).toBe(0);
   });
 });

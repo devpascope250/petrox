@@ -3,6 +3,7 @@ import { recordStage } from "../nominations/nomination-stage.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
+import { assertT1WithinCargo } from "../stock/stock-taken.js";
 import { T1ListQuery, CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema } from "./t1-validation.schema.js";
 export class T1ValidationRepository {
   constructor(private db: PrismaClient) {}
@@ -23,6 +24,8 @@ export class T1ValidationRepository {
         quantityAt20C: true,
         /** The customs declaration it was cleared under. */
         sdReference: true,
+        /** Where the load is said to have come from. Reference only. */
+        cargo: { select: { id: true, vesselName: true, blRef: true } },
         extraValidations: true,
         supportingDocUrl: true,
         nomination: {
@@ -71,6 +74,10 @@ export class T1ValidationRepository {
                 stock: { cargo: { vesselName: { contains: term } } } } } } },
               { nomination: { nominationVessels: { some: {
                 stock: { cargo: { blRef: { contains: term } } } } } } },
+              // And the origin the T1 names itself, which may be another ship
+              // than the batches its trip drew on.
+              { cargo: { vesselName: { contains: term } } },
+              { cargo: { blRef: { contains: term } } },
             ],
           }
         : {}),
@@ -88,6 +95,13 @@ export class T1ValidationRepository {
         quantityAt20C: true,
         /** The customs declaration it was cleared under. */
         sdReference: true,
+        /**
+         * The shipment this T1's fuel is said to have come off. Reference
+         * only — the litres are drawn from the nomination's own batches — and
+         * it is what tells a T1 off the cargo the trip loaded from one off a
+         * different cargo.
+         */
+        cargo: { select: { id: true, vesselName: true, blRef: true } },
         extraValidations: true,
         supportingDocUrl: true,
         nomination: {
@@ -160,12 +174,23 @@ export class T1ValidationRepository {
    */
   async create(data: CreateT1ValidationsSchema) {
     return await this.db.$transaction(async(tx) => {
+      /*
+       * A T1 is what moves the litres, so it is held to the shipment's own
+       * figure: a trip cannot be cleared for more than the batches it loaded
+       * from still hold. The nomination was checked when it was raised; until
+       * now the T1 was checked against nothing, and a mistyped one drew fuel
+       * that was never there.
+       */
+      await assertT1WithinCargo(tx, data.nominationId, data.quantityAt20C);
       // Through `recordStage`, so a stage already passed is not written again.
       await recordStage(tx, data.nominationId, "t1Pending", data.createdBy);
       return await tx.t1Validation.create({
       data: {
         exportingCountry: data.exportingCountry,
         nominationId: data.nominationId,
+        // Reference only — where the load is said to have come from. It is not
+        // what the litres are drawn against; the nomination's batches are.
+        cargoId: data.cargoId ?? null,
         quantityAt20C: data.quantityAt20C,
         sdReference: data.sdReference,
         extraValidations: {
@@ -193,11 +218,16 @@ export class T1ValidationRepository {
 
   async update(id: string, extraT1Id: string, data: CreateT1ValidationsSchema) {
     if (!(await this.find(id))) throw new NotFoundError();
+    // The same ceiling as on create, with this T1's own old figure left out of
+    // the comparison — otherwise correcting one downwards could be refused by
+    // the very quantity being corrected.
+    await assertT1WithinCargo(this.db, data.nominationId, data.quantityAt20C, id);
     return await this.db.t1Validation.update({
       where: { id: id },
      data: {
        exportingCountry: data.exportingCountry,
         nominationId: data.nominationId,
+        cargoId: data.cargoId ?? null,
         quantityAt20C: data.quantityAt20C,
         sdReference: data.sdReference,
         extraValidations: {
@@ -211,10 +241,36 @@ export class T1ValidationRepository {
     });
   }
 
+  /**
+   * Confirms or cancels one customs check.
+   *
+   * **Cancelling gives the fuel back.** Recording a T1 takes litres off the
+   * depot batch, so a cancelled one has to stop drawing them — a declaration
+   * withdrawn at the border leaves the fuel where it was. One cancelled check
+   * cancels the T1, which is the rule the list already shows on screen, and
+   * `stock-taken` reads it the same way.
+   *
+   * The one thing that cannot be given back is fuel already received into
+   * central stock on the strength of this T1. By then the litres are in another
+   * batch with their own clearances and draws behind them, and releasing the
+   * depot batch as well would have the same fuel in two places.
+   */
   async changeStatus(id: string, stat: ExtraT1ValidationStatus, createdBy?: string) {
     const t1 = await this.findExt(id);
     if (!t1) throw new NotFoundError();
     if(t1.status !== "pending") throw new BusinessError("400", "The Status Can not be changed since is not pending")
+    if (stat === "cancelled") {
+      const receipts = await this.db.centralStock.count({ where: { t1ValidationId: t1.t1ValidationId } });
+      if (receipts > 0) {
+        throw new BusinessError(
+          "T1_RECEIVED",
+          `This T1 has already been received into central stock on ${receipts} receipt(s). `
+          + "Cancelling it would release the depot batch while those litres are still counted, "
+          + "so the receipt has to be dealt with first.",
+          422,
+        );
+      }
+    }
       return await this.db.$transaction( async(tx) => {
      // Confirmed by customs; the trip is marked in transit by hand after this.
      await recordStage(tx, t1.validation.nominationId, "t1Confirmed", createdBy);

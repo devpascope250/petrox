@@ -685,6 +685,10 @@ model Cargo {
   /// The return this shipment was raised to replace, when it is a replacement.
   /// One source of truth for the pairing, read from either end through it.
   replacementFor   CargoReturn?   @relation("CargoReturnReplacement")
+  /// T1s that name this shipment as where their fuel came from. A **reference
+  /// only**: the litres a trip takes are drawn from the batches its nomination
+  /// loaded from, never from here. See `T1Validation.cargoId`.
+  t1Validations    T1Validation[]
 
   @@index([orderId])
   @@index([blRef])
@@ -886,6 +890,18 @@ model T1Validation {
   /// first of them.
   nominationId     String
   nomination       Nomination @relation(fields: [nominationId], references: [id])
+  /// The shipment this T1's fuel came off, for reference.
+  ///
+  /// **It moves nothing.** A trip draws on the batches its nomination names,
+  /// and that is still what `quantityAt20C` is apportioned across; this only
+  /// records which vessel the load is said to have come from, so a T1 loaded
+  /// from a different cargo than the nomination drew on can be recognised
+  /// rather than guessed at.
+  ///
+  /// Optional: every row already on record predates it, and the origin is not
+  /// always known when the T1 is entered.
+  cargoId          String?
+  cargo            Cargo?     @relation(fields: [cargoId], references: [id])
   exportingCountry String
   quantityAt20C    Decimal    @default(0.0) @db.Decimal(18, 2)
   /// The reference on the customs declaration this T1 was cleared under.
@@ -900,6 +916,7 @@ model T1Validation {
   centralStocks CentralStock[]
 
   @@index([nominationId])
+  @@index([cargoId])
   @@index([id])
 }
 
