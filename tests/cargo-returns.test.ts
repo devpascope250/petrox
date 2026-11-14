@@ -3,7 +3,9 @@ import { cargoMovement } from "../src/modules/cargo/cargo-movement.js";
 import { StockRepository } from "../src/modules/stock/stock.repository.js";
 import { recordIdSchema } from "../src/shared/validation/index.js";
 import { VehicleRepository, rigName } from "../src/modules/vehicles/vehicles.repository.js";
-import { apportion, isLive, takenByVessel, usageOf } from "../src/modules/stock/stock-taken.js";
+import {
+  apportion, isLive, t1HeadroomFrom, takenByVessel, usageOf,
+} from "../src/modules/stock/stock-taken.js";
 
 /**
  * Taking a shipment back is only honest while its fuel has not moved, and the
@@ -225,14 +227,23 @@ describe("a batch is drawn down by the T1, not by the nomination", () => {
    */
   const planned = (ambQuantity: number) => ({
     ambQuantity,
-    nomination: { t1Validations: [], nominationVessels: [{ ambQuantity }] },
+    cargoId: null,
+    nomination: { t1Validations: [], nominationVessels: [{ ambQuantity, cargoId: null }] },
   });
+  /*
+   * Names no cargo, so it is spread across the trip's lines — the only way a
+   * T1 was ever read before `cargoId`, and still how every row on record is.
+   */
   const validated = (ambQuantity: number, quantityAt20C: number, siblings: number[] = []) => ({
     ambQuantity,
+    cargoId: null,
     nomination: {
       // No cancelled check on it, so it draws. See the cancellation block.
-      t1Validations: [{ quantityAt20C, extraValidations: [] }],
-      nominationVessels: [{ ambQuantity }, ...siblings.map((q) => ({ ambQuantity: q }))],
+      t1Validations: [{ quantityAt20C, cargoId: null, extraValidations: [] }],
+      nominationVessels: [
+        { ambQuantity, cargoId: null },
+        ...siblings.map((q) => ({ ambQuantity: q, cargoId: null })),
+      ],
     },
   });
 
@@ -271,9 +282,12 @@ describe("a trip may be cleared on several T1s", () => {
    */
   const tripWith = (quantities: number[], ambQuantity = 40_000) => ({
     ambQuantity,
+    cargoId: null,
     nomination: {
-      t1Validations: quantities.map((quantityAt20C) => ({ quantityAt20C, extraValidations: [] })),
-      nominationVessels: [{ ambQuantity }],
+      t1Validations: quantities.map((quantityAt20C) => ({
+        quantityAt20C, cargoId: null, extraValidations: [],
+      })),
+      nominationVessels: [{ ambQuantity, cargoId: null }],
     },
   });
 
@@ -290,12 +304,16 @@ describe("a trip may be cleared on several T1s", () => {
   it("splits the summed figure across the batches the trip loaded from", () => {
     const vessel = {
       ambQuantity: 20_000,
+      cargoId: null,
       nomination: {
         t1Validations: [
-          { quantityAt20C: 20_000, extraValidations: [] },
-          { quantityAt20C: 19_120, extraValidations: [] },
+          { quantityAt20C: 20_000, cargoId: null, extraValidations: [] },
+          { quantityAt20C: 19_120, cargoId: null, extraValidations: [] },
         ],
-        nominationVessels: [{ ambQuantity: 20_000 }, { ambQuantity: 20_000 }],
+        nominationVessels: [
+          { ambQuantity: 20_000, cargoId: null },
+          { ambQuantity: 20_000, cargoId: null },
+        ],
       },
     };
     // 39,120 cleared in total, half of the load came from this batch.
@@ -312,12 +330,14 @@ describe("a trip may be cleared on several T1s", () => {
 describe("a cancelled T1 gives the fuel back", () => {
   const trip = (t1s: Array<{ quantityAt20C: number; status?: string }>, ambQuantity = 40_000) => ({
     ambQuantity,
+    cargoId: null,
     nomination: {
       t1Validations: t1s.map(({ quantityAt20C, status }) => ({
         quantityAt20C,
+        cargoId: null,
         extraValidations: status ? [{ status }] : [],
       })),
-      nominationVessels: [{ ambQuantity }],
+      nominationVessels: [{ ambQuantity, cargoId: null }],
     },
   });
 
@@ -349,15 +369,150 @@ describe("a cancelled T1 gives the fuel back", () => {
 
   it("counts one cancelled check as cancelling the whole T1, as the list shows it", () => {
     // A T1 passes several offices; a cancellation at any of them dominates.
-    expect(isLive({ quantityAt20C: 1, extraValidations: [
+    expect(isLive({ quantityAt20C: 1, cargoId: null, extraValidations: [
       { status: "confirmed" }, { status: "cancelled" },
     ] })).toBe(false);
-    expect(isLive({ quantityAt20C: 1, extraValidations: [
+    expect(isLive({ quantityAt20C: 1, cargoId: null, extraValidations: [
       { status: "confirmed" }, { status: "pending" },
     ] })).toBe(true);
   });
 
   it("gives the litres back through takenByVessel too, not only the totals", () => {
     expect(takenByVessel(trip([{ quantityAt20C: 39_670, status: "cancelled" }]))).toBe(0);
+  });
+});
+
+/**
+ * What the Nominations page reads to decide whether to offer a T1 at all. A
+ * trip loading from several batches is held to the tightest of them, so that is
+ * the figure — and `0` is what makes the button disappear rather than let
+ * somebody fill a form in and be refused at the end of it.
+ */
+describe("the litres a trip may still be cleared for", () => {
+  const batch = (ceiling: number) => ({
+    stockId: "s", cargoId: null,
+    quantity: 30_000, taken: 0, headroom: ceiling, ceiling,
+    attributedCeiling: ceiling, vessel: null, itemName: "AGO",
+  });
+
+  it("is the tightest batch the trip loaded from", () => {
+    expect(t1HeadroomFrom([batch(12_000), batch(4_500), batch(20_000)])).toBe(4_500);
+  });
+
+  it("is zero once a batch is fully cleared, which is what hides the action", () => {
+    expect(t1HeadroomFrom([batch(9_000), batch(0)])).toBe(0);
+  });
+
+  it("never goes negative, however overdrawn a batch is", () => {
+    expect(t1HeadroomFrom([batch(-500)])).toBe(0);
+  });
+
+  it("has nothing to say about a trip with no batches", () => {
+    expect(t1HeadroomFrom([])).toBeNull();
+    expect(t1HeadroomFrom(undefined)).toBeNull();
+  });
+});
+
+/**
+ * A truck that topped up from a second shipment is cleared on a T1 naming it,
+ * and those litres belong to that shipment. Spreading them across the trip
+ * would take fuel off a cargo that never gave any — so a T1 that names a cargo
+ * the trip loaded from is drawn off that cargo alone.
+ *
+ * The rule had to arrive without moving a single figure already on record:
+ * every T1 raised before `cargoId` existed names nothing, and the last block
+ * here is what holds that.
+ */
+describe("a T1 that names a shipment draws off that shipment", () => {
+  const A = "cargo-a";
+  const B = "cargo-b";
+  /** A trip on two shipments: 30,000 off A and 5,000 off B. */
+  const twoCargos = (t1s: Array<{ quantityAt20C: number; cargoId: string | null }>) => {
+    const lines = [{ ambQuantity: 30_000, cargoId: A }, { ambQuantity: 5_000, cargoId: B }];
+    const nomination = {
+      t1Validations: t1s.map((t1) => ({ ...t1, extraValidations: [] })),
+      nominationVessels: lines,
+    };
+    return {
+      onA: { ambQuantity: 30_000, cargoId: A, nomination },
+      onB: { ambQuantity: 5_000, cargoId: B, nomination },
+    };
+  };
+
+  it("puts the whole figure on the cargo it names, not a share of it", () => {
+    const { onA, onB } = twoCargos([
+      { quantityAt20C: 29_700, cargoId: A },
+      { quantityAt20C: 5_000, cargoId: B },
+    ]);
+    // Exactly what each shipment gave. Apportioning would have said
+    // 29,742 and 4,957 — close, and wrong about both.
+    expect(takenByVessel(onA)).toBeCloseTo(29_700, 2);
+    expect(takenByVessel(onB)).toBeCloseTo(5_000, 2);
+  });
+
+  it("leaves the other shipment alone when only one T1 is in", () => {
+    const { onA, onB } = twoCargos([{ quantityAt20C: 5_000, cargoId: B }]);
+    expect(takenByVessel(onA)).toBe(0);
+    expect(takenByVessel(onB)).toBeCloseTo(5_000, 2);
+  });
+
+  it("spreads a T1 that names nothing, and adds it to what is attributed", () => {
+    const { onA, onB } = twoCargos([
+      { quantityAt20C: 5_000, cargoId: B },
+      // Names nothing, so it is spread 30,000:5,000 — 6/7 and 1/7.
+      { quantityAt20C: 7_000, cargoId: null },
+    ]);
+    expect(takenByVessel(onA)).toBeCloseTo(6_000, 2);
+    expect(takenByVessel(onB)).toBeCloseTo(5_000 + 1_000, 2);
+  });
+
+  it("spreads one naming a cargo the trip never loaded from", () => {
+    // Naming a shipment is a claim about where fuel came from; it does not put
+    // the trip on that shipment. With no line to draw off, it is spread.
+    const { onA, onB } = twoCargos([{ quantityAt20C: 7_000, cargoId: "cargo-elsewhere" }]);
+    expect(takenByVessel(onA)).toBeCloseTo(6_000, 2);
+    expect(takenByVessel(onB)).toBeCloseTo(1_000, 2);
+  });
+
+  it("gives a cancelled attributed T1 back to its own shipment", () => {
+    const lines = [{ ambQuantity: 30_000, cargoId: A }, { ambQuantity: 5_000, cargoId: B }];
+    const nomination = {
+      t1Validations: [
+        { quantityAt20C: 29_700, cargoId: A, extraValidations: [] },
+        { quantityAt20C: 5_000, cargoId: B, extraValidations: [{ status: "cancelled" }] },
+      ],
+      nominationVessels: lines,
+    };
+    expect(takenByVessel({ ambQuantity: 30_000, cargoId: A, nomination })).toBeCloseTo(29_700, 2);
+    // B's own T1 was withdrawn, and A's does not leak onto it.
+    expect(takenByVessel({ ambQuantity: 5_000, cargoId: B, nomination })).toBe(0);
+  });
+
+  it("shares between two lines on the same shipment, in proportion", () => {
+    const lines = [{ ambQuantity: 20_000, cargoId: A }, { ambQuantity: 10_000, cargoId: A }];
+    const nomination = {
+      t1Validations: [{ quantityAt20C: 29_700, cargoId: A, extraValidations: [] }],
+      nominationVessels: lines,
+    };
+    expect(takenByVessel({ ambQuantity: 20_000, cargoId: A, nomination })).toBeCloseTo(19_800, 2);
+    expect(takenByVessel({ ambQuantity: 10_000, cargoId: A, nomination })).toBeCloseTo(9_900, 2);
+  });
+
+  /**
+   * The safety property. Everything on production names no cargo, so every
+   * figure it reports must be the one it reported before this rule existed.
+   */
+  it("changes nothing for a trip whose T1s name no cargo", () => {
+    const lines = [{ ambQuantity: 20_000, cargoId: A }, { ambQuantity: 20_000, cargoId: B }];
+    const nomination = {
+      t1Validations: [{ quantityAt20C: 39_120, cargoId: null, extraValidations: [] }],
+      nominationVessels: lines,
+    };
+    // The figure from the original apportioning test, to the litre.
+    expect(takenByVessel({ ambQuantity: 20_000, cargoId: A, nomination })).toBeCloseTo(19_560, 2);
+    expect(usageOf(100_000, [
+      { ambQuantity: 20_000, cargoId: A, nomination },
+      { ambQuantity: 20_000, cargoId: B, nomination },
+    ])).toMatchObject({ taken: 39_120, nominated: 0, available: 60_880 });
   });
 });

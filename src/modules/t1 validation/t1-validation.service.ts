@@ -3,8 +3,11 @@ import type { AppConfig } from "../../config/env.js";
 import { within2DaysPeriod } from "../../utils/utils.js";
 import { paginatedData } from "../../shared/pagination/index.js";
 import type { PagedDatesQuery } from "../../shared/validation/index.js";
-import { T1ValidationRepository } from "./t1-validation.repository.js";
-import { CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema, T1ListQuery } from "./t1-validation.schema.js";
+import { T1RaiseRepository, T1ValidationRepository } from "./t1-validation.repository.js";
+import {
+  CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema, T1ListQuery,
+  T1RaiseOrdersQuery, T1RaiseTripsQuery, T1RaiseVehiclesQuery,
+} from "./t1-validation.schema.js";
 export class T1ValidationSrvice {
   constructor(private repo: T1ValidationRepository, private config: AppConfig) {
   }
@@ -56,4 +59,28 @@ export class T1ValidationSrvice {
     return await this.repo.changeStatus(id, status, createdAt);
   }
 
+}
+
+/**
+ * Finding the trip a customs document belongs to: order, then truck, then the
+ * trip. Each step is a page of a list, so a depot with thousands of trips
+ * behaves like one with ten.
+ */
+export class T1RaiseService {
+  constructor(private repo: T1RaiseRepository) {}
+
+  async orders(query: T1RaiseOrdersQuery) {
+    const [items, total] = await this.repo.orders(query);
+    return paginatedData(items, total, query);
+  }
+
+  async vehicles(query: T1RaiseVehiclesQuery) {
+    const [items, total] = await this.repo.vehicles(query);
+    return paginatedData(items, total, query);
+  }
+
+  async trips(query: T1RaiseTripsQuery) {
+    const [items, total] = await this.repo.trips(query);
+    return paginatedData(items, total, query);
+  }
 }

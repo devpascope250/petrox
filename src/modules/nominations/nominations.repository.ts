@@ -2,7 +2,9 @@ import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/clie
 import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { furthestStage, recordStage } from "./nomination-stage.js";
-import { usageOf, vesselUsageSelect } from "../stock/stock-taken.js";
+import {
+  asVesselUsage, t1HeadroomOf, usageOf, vesselUsageSelect, type BatchCeiling,
+} from "../stock/stock-taken.js";
 import { CreateNominationsSchema, NominationListQuerySchema, NominationVesselSchema } from "./nominations.schema.js";
 
 type Tx = Prisma.TransactionClient;
@@ -199,7 +201,7 @@ export class NominationRepository {
         lte: endDate
       }
     };
-    return this.db.$transaction([
+    const [rows, total] = await this.db.$transaction([
       this.db.nomination.findMany({
         where,
         ...paginationArgs(query),
@@ -208,6 +210,49 @@ export class NominationRepository {
       }),
       this.db.nomination.count({ where }),
     ]);
+    return [await this.withT1Headroom(rows), total] as const;
+  }
+
+  /**
+   * Hangs `t1Headroom` on each row: the most a **new** T1 on that trip may say,
+   * in litres at 20 °C.
+   *
+   * `0` means its shipments are fully cleared and no further T1 can be raised,
+   * so a list can stop offering one rather than let somebody fill a form in and
+   * be refused at the end of it. The figure comes from the same arithmetic as
+   * the refusal (`t1Ceilings`), so the page and the API cannot disagree.
+   *
+   * `null` where there is nothing to state — a trip with no vessel lines.
+   *
+   * One extra query for the whole page, not one per row.
+   */
+  private async withT1Headroom<T extends { id: string }>(rows: T[]) {
+    const headroom = rows.length === 0
+      ? new Map()
+      : await t1HeadroomOf(this.db, rows.map((row) => row.id));
+    return rows.map((row) => {
+      const found = headroom.get(row.id);
+      return {
+        ...row,
+        t1Headroom: (found?.headroom ?? null) as number | null,
+        /*
+         * Per shipment, what it will still take — so a page offering a choice
+         * of vessel can say which ones have room, and how much. A T1 naming a
+         * shipment is drawn off that one alone, so `attributedCeiling` is what
+         * such a T1 is held to; `t1Headroom` above is for one naming none.
+         */
+        t1Batches: (found?.batches ?? []).map((batch: BatchCeiling) => ({
+          stockId: batch.stockId,
+          cargoId: batch.cargoId,
+          vessel: batch.vessel,
+          itemName: batch.itemName,
+          quantity: batch.quantity,
+          cleared: batch.taken,
+          headroom: batch.headroom,
+          clearable: batch.attributedCeiling,
+        })),
+      };
+    });
   }
 
   /**
@@ -301,7 +346,8 @@ export class NominationRepository {
           + "Reopen it if it really still has fuel on it.",
         );
       }
-      const { available, nominated } = usageOf(stock.quantity, stock.nominationVessels);
+      const { available, nominated } = usageOf(
+        stock.quantity, stock.nominationVessels.map(asVesselUsage));
       if (Number(vessel.ambQuantity) > available) {
         throw new BusinessError(
           "400",
@@ -473,41 +519,61 @@ export class NominationRepository {
    * there is nothing here to fix its load.
    */
   async addVessels(id: string, vessels: NominationVesselSchema[]) {
-    const nomination = await this.db.nomination.findUnique({
+    return await this.db.$transaction(
+      async (tx) => await this.addVesselsWithin(tx, id, vessels),
+      { isolationLevel: "Serializable" },
+    );
+  }
+
+  /**
+   * The body of `addVessels`, inside a transaction somebody else opened.
+   *
+   * Raising a T1 against a shipment the trip has not nominated adds the line
+   * for it, and that has to be one movement with the T1 itself: a line added
+   * and then a T1 that failed would leave fuel nominated off a batch for a trip
+   * that was never cleared for it. See `T1ValidationRepository.create`.
+   *
+   * The caller owns the isolation level. `addVessels` uses `Serializable`,
+   * since the capacity checks here are read-then-write.
+   */
+  async addVesselsWithin(tx: Tx, id: string, vessels: NominationVesselSchema[]) {
+    const nomination = await tx.nomination.findUnique({
       where: { id },
       select: { id: true, driverVehicleId: true },
     });
     if (!nomination) throw new NotFoundError("Nomination not found");
-    return await this.db.$transaction(async (tx) => {
-      // What the nomination already carries counts here: added stock must be
-      // the same product.
-      await this.assertSingleItem(tx, vessels, id);
-      // A pure addition, so everything already nominated — including this
-      // nomination's own vessels — counts against what the stock has left.
-      await this.assertStockCapacity(tx, vessels);
-      // An addition: what the nomination already carries stays on the truck.
-      await this.assertTruckCapacity(tx, nomination.driverVehicleId, this.totalQuantity(vessels));
-      await tx.nominationVessel.createMany({
-        data: vessels.map((vessel) => ({
-          nominationId: id,
-          stockId: vessel.stockId,
-          ambQuantity: vessel.ambQuantity,
-        })),
-      });
-      // Stock going onto the truck is loading. Skipped once the trip is past
-      // that stage, so adding stock to one already released cannot drag its
-      // history back down the ladder.
-      await recordStage(tx, id, "underLoading");
-      return await tx.nomination.update({
-        where: { id },
-        data: { ambQuantity: { increment: this.totalQuantity(vessels) } },
-        select: nominationSelect,
-      });
-    }, { isolationLevel: "Serializable" });
+    // What the nomination already carries counts here: added stock must be
+    // the same product.
+    await this.assertSingleItem(tx, vessels, id);
+    // A pure addition, so everything already nominated — including this
+    // nomination's own vessels — counts against what the stock has left.
+    await this.assertStockCapacity(tx, vessels);
+    // An addition: what the nomination already carries stays on the truck.
+    await this.assertTruckCapacity(tx, nomination.driverVehicleId, this.totalQuantity(vessels));
+    await tx.nominationVessel.createMany({
+      data: vessels.map((vessel) => ({
+        nominationId: id,
+        stockId: vessel.stockId,
+        ambQuantity: vessel.ambQuantity,
+      })),
+    });
+    // Stock going onto the truck is loading. Skipped once the trip is past
+    // that stage, so adding stock to one already released cannot drag its
+    // history back down the ladder.
+    await recordStage(tx, id, "underLoading");
+    return await tx.nomination.update({
+      where: { id },
+      data: { ambQuantity: { increment: this.totalQuantity(vessels) } },
+      select: nominationSelect,
+    });
   }
 
-  find(id: string) {
-    return this.db.nomination.findUnique({ where: { id }, select: nominationDetailSelect });
+  async find(id: string) {
+    const row = await this.db.nomination.findUnique({
+      where: { id }, select: nominationDetailSelect });
+    if (!row) return row;
+    // The drawer raises T1s too, so it needs the same headroom the list has.
+    return (await this.withT1Headroom([row]))[0]!;
   }
 
   async findByTimeLine(nominationId: string) {

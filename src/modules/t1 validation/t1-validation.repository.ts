@@ -4,7 +4,12 @@ import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { assertT1WithinCargo } from "../stock/stock-taken.js";
-import { T1ListQuery, CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema } from "./t1-validation.schema.js";
+import { NominationRepository } from "../nominations/nominations.repository.js";
+import {
+  T1ListQuery, CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema,
+  T1RaiseOrdersQuery, T1RaiseTripsQuery, T1RaiseVehiclesQuery,
+} from "./t1-validation.schema.js";
+import { t1Ceilings, t1HeadroomFrom } from "../stock/stock-taken.js";
 export class T1ValidationRepository {
   constructor(private db: PrismaClient) {}
   async listByCompleted() {
@@ -172,24 +177,79 @@ export class T1ValidationRepository {
    * trip took out of its batch is the sum of them. The guard that refused a
    * second one has gone with the unique index it was defending.
    */
+  /**
+   * A T1 against a trip.
+   *
+   * `cargoId` says which shipment the fuel came off. When it names one the trip
+   * has **not** nominated, the trip is put on it first: a line is added for
+   * that batch, and the T1 then draws its litres off that shipment rather than
+   * off whatever the trip had nominated before. The two are one transaction,
+   * because a line added without its T1 would leave fuel nominated off a batch
+   * nobody was cleared for.
+   *
+   * Naming nothing is still allowed and still means what it always did — the
+   * figure is spread across the trip's batches — which is how every row raised
+   * before this existed is read.
+   */
   async create(data: CreateT1ValidationsSchema) {
+    /*
+     * Whether a line has to be added decides the isolation level, so it is
+     * asked before the transaction opens. The guards inside re-check, so a
+     * line appearing in between costs an added line at worst, not a bad figure.
+     */
+    const needsLine = Boolean(data.cargoId) && !(await this.lineFor(data.nominationId, data.cargoId!));
+
     return await this.db.$transaction(async(tx) => {
+      if (needsLine) {
+        const batch = await tx.stock.findFirst({
+          where: { cargoId: data.cargoId!, status: { notIn: ["returned", "cancelled"] } },
+          orderBy: { createdAt: "asc" },
+          select: { id: true },
+        });
+        if (!batch) {
+          throw new BusinessError(
+            "CARGO_HAS_NO_BATCH",
+            "That shipment has no batch at a depot to load from, so a trip cannot draw on it. "
+            + "Approve the shipment first.",
+            422,
+          );
+        }
+        /*
+         * The ambient litres that went in. The T1's own figure unless told
+         * otherwise: at the border nobody has a second measurement, and a
+         * 20 °C figure is the closest thing to one.
+         *
+         * Goes through the nomination's own guarded path, so the batch's
+         * capacity, the one-product rule and the truck's tank all still hold.
+         */
+        await new NominationRepository(this.db).addVesselsWithin(tx, data.nominationId, [{
+          stockId: batch.id,
+          ambQuantity: data.cargoAmbQuantity ?? data.quantityAt20C,
+        }]);
+      }
+
       /*
        * A T1 is what moves the litres, so it is held to the shipment's own
        * figure: a trip cannot be cleared for more than the batches it loaded
        * from still hold. The nomination was checked when it was raised; until
        * now the T1 was checked against nothing, and a mistyped one drew fuel
        * that was never there.
+       *
+       * After the line is added, not before — a T1 naming a shipment is judged
+       * against that shipment, which has to be on the trip to be found.
        */
-      await assertT1WithinCargo(tx, data.nominationId, data.quantityAt20C);
+      await assertT1WithinCargo(tx, data.nominationId, data.quantityAt20C, undefined, data.cargoId);
       // Through `recordStage`, so a stage already passed is not written again.
       await recordStage(tx, data.nominationId, "t1Pending", data.createdBy);
       return await tx.t1Validation.create({
       data: {
         exportingCountry: data.exportingCountry,
         nominationId: data.nominationId,
-        // Reference only — where the load is said to have come from. It is not
-        // what the litres are drawn against; the nomination's batches are.
+        /*
+         * Where the load came off. Load-bearing when set: the litres are drawn
+         * off this shipment alone rather than spread over the trip. Null keeps
+         * the spreading, which is how every older row is read.
+         */
         cargoId: data.cargoId ?? null,
         quantityAt20C: data.quantityAt20C,
         sdReference: data.sdReference,
@@ -202,8 +262,15 @@ export class T1ValidationRepository {
         supportingDocUrl: data.supportingDocUrl
       },
     });
-    }) 
-    
+    }, needsLine ? { isolationLevel: "Serializable" } : undefined)
+  }
+
+  /** The trip's line on a shipment, if it has one. */
+  private lineFor(nominationId: string, cargoId: string) {
+    return this.db.nominationVessel.findFirst({
+      where: { nominationId, stock: { cargoId } },
+      select: { id: true },
+    });
   }
 
   async createExtraT1(data: CreateExtraT1ValidationsSchema) {
@@ -221,7 +288,7 @@ export class T1ValidationRepository {
     // The same ceiling as on create, with this T1's own old figure left out of
     // the comparison — otherwise correcting one downwards could be refused by
     // the very quantity being corrected.
-    await assertT1WithinCargo(this.db, data.nominationId, data.quantityAt20C, id);
+    await assertT1WithinCargo(this.db, data.nominationId, data.quantityAt20C, id, data.cargoId);
     return await this.db.t1Validation.update({
       where: { id: id },
      data: {
@@ -300,4 +367,274 @@ export class T1ValidationRepository {
     return this.db.extraT1Validation.findUnique({ where: { id }, select: {t1ValidationId: true, id: true, status: true, validation: {select: {nominationId: true}}} });
   }
 
+}
+
+/* ------------------------------------------------------------------------- *
+ * Finding the trip to raise a T1 against — see the schemas for why.
+ * ------------------------------------------------------------------------- */
+
+export class T1RaiseRepository {
+  constructor(private db: PrismaClient) {}
+
+  /**
+   * Orders with fuel actually on the road: those whose shipments have batches a
+   * trip has nominated from. An order nobody has loaded against cannot have a
+   * T1, so offering it would only be a dead end.
+   */
+  async orders(query: T1RaiseOrdersQuery) {
+    const term = query.search?.trim();
+    const where: Prisma.OrderWhereInput = {
+      cargos: { some: { stocks: { some: { nominationVessels: { some: {} } } } } },
+      ...(term
+        ? {
+            OR: [
+              { orderCode: { contains: term } },
+              { name: { contains: term } },
+              { supplier: { name: { contains: term } } },
+              { item: { name: { contains: term } } },
+            ],
+          }
+        : {}),
+    };
+    const [items, total] = await this.db.$transaction([
+      this.db.order.findMany({
+        where,
+        ...paginationArgs(query),
+        orderBy: { orderDate: "desc" },
+        select: {
+          id: true,
+          orderCode: true,
+          name: true,
+          orderDate: true,
+          quantity: true,
+          item: { select: { id: true, name: true } },
+          supplier: { select: { id: true, name: true } },
+          // What there is to go at: the ships under this order, named the way
+          // a T1 names them.
+          cargos: {
+            where: { stocks: { some: { nominationVessels: { some: {} } } } },
+            orderBy: { receivedDate: "desc" },
+            select: { id: true, vesselName: true, blRef: true, quantityInLitre: true },
+          },
+        },
+      }),
+      this.db.order.count({ where }),
+    ]);
+    return [items, total] as const;
+  }
+
+  /**
+   * The trucks nominated on an order's shipments — or on anything at all, when
+   * no order is given, so a plate read off the document can be typed straight
+   * in.
+   *
+   * Returned as the **driver-and-vehicle assignment**, because that is what a
+   * nomination is made against: the same plate under a different driver is a
+   * different thing to clear.
+   */
+  async vehicles(query: T1RaiseVehiclesQuery) {
+    const term = query.search?.trim();
+    const onOrder: Prisma.NominationWhereInput = query.orderId
+      ? { nominationVessels: { some: { stock: { cargo: { orderId: query.orderId } } } } }
+      : {};
+    const where: Prisma.DriverVehiclesWhereInput = {
+      nominations: { some: onOrder },
+      ...(term
+        ? {
+            OR: [
+              { vechile: { platNumber: { contains: term } } },
+              { vechile: { trailerNumber: { contains: term } } },
+              { vechile: { truckNumber: { contains: term } } },
+              { driver: { names: { contains: term } } },
+            ],
+          }
+        : {}),
+    };
+    const [items, total] = await this.db.$transaction([
+      this.db.driverVehicles.findMany({
+        where,
+        ...paginationArgs(query),
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          driver: {
+            select: {
+              id: true, names: true, phone: true, lisence: true, passport: true,
+              transport: { select: { id: true, name: true } },
+            },
+          },
+          vechile: {
+            select: {
+              id: true, platNumber: true, truckNumber: true, trailerNumber: true,
+              tankCapacity: true,
+            },
+          },
+          /*
+           * How many of this truck's trips under the order still have no T1 —
+           * what the clerk is looking for, so the list can be read without
+           * opening each one. A cancelled T1 does not count as one: the trip
+           * needs clearing again.
+           */
+          _count: {
+            select: {
+              nominations: {
+                where: {
+                  ...onOrder,
+                  t1Validations: {
+                    none: { extraValidations: { none: { status: "cancelled" } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.db.driverVehicles.count({ where }),
+    ]);
+    return [items, total] as const;
+  }
+
+  /**
+   * The trips a T1 can be raised against, with what each one still has room
+   * for.
+   *
+   * Every line the trip loads from comes back named the way the customs
+   * document names it — ship, BL, ambient litres drawn — together with what
+   * that shipment will still clear, so the choice is made in the list rather
+   * than discovered when the form is refused.
+   */
+  async trips(query: T1RaiseTripsQuery) {
+    const term = query.search?.trim();
+    const where: Prisma.NominationWhereInput = {
+      ...(query.driverVehicleId ? { driverVehicleId: query.driverVehicleId } : {}),
+      ...(query.orderId
+        ? { nominationVessels: { some: { stock: { cargo: { orderId: query.orderId } } } } }
+        : {}),
+      /*
+       * Only trips with no live T1, when asked. A cancelled one does not count:
+       * the fuel went back on the batch and the trip needs clearing again.
+       */
+      ...(query.withoutT1
+        ? { t1Validations: { none: { extraValidations: { none: { status: "cancelled" } } } } }
+        : {}),
+      ...(term
+        ? {
+            OR: [
+              { destination: { contains: term } },
+              { driverVehicle: { driver: { names: { contains: term } } } },
+              { driverVehicle: { vechile: { platNumber: { contains: term } } } },
+              { driverVehicle: { vechile: { trailerNumber: { contains: term } } } },
+              { driverVehicle: { vechile: { truckNumber: { contains: term } } } },
+              { nominationVessels: { some: { stock: { cargo: { vesselName: { contains: term } } } } } },
+              { nominationVessels: { some: { stock: { cargo: { blRef: { contains: term } } } } } },
+              { nominationVessels: { some: { stock: { cargo: { order: { orderCode: { contains: term } } } } } } },
+            ],
+          }
+        : {}),
+    };
+    const [rows, total] = await this.db.$transaction([
+      this.db.nomination.findMany({
+        where,
+        ...paginationArgs(query),
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          ambQuantity: true,
+          destination: true,
+          expectedLoadingDate: true,
+          createdAt: true,
+          driverVehicle: {
+            select: {
+              id: true,
+              driver: { select: { id: true, names: true, phone: true, lisence: true, passport: true } },
+              vechile: {
+                select: {
+                  id: true, platNumber: true, truckNumber: true, trailerNumber: true,
+                  tankCapacity: true,
+                },
+              },
+            },
+          },
+          nominationVessels: {
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true,
+              stockId: true,
+              ambQuantity: true,
+              stock: {
+                select: {
+                  id: true,
+                  cargoId: true,
+                  status: true,
+                  item: { select: { id: true, name: true } },
+                  cargo: {
+                    select: {
+                      id: true, vesselName: true, blRef: true, quantityInLitre: true,
+                      order: { select: { id: true, orderCode: true, name: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          // What is already on it, so a second declaration can be read against
+          // the first rather than guessed at.
+          t1Validations: {
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true,
+              quantityAt20C: true,
+              sdReference: true,
+              cargoId: true,
+              exportingCountry: true,
+              createdAt: true,
+              extraValidations: { select: { id: true, customOffice: true, status: true } },
+            },
+          },
+          timeLine: {
+            orderBy: { timeLineStatus: { level: "desc" } },
+            take: 1,
+            select: { timeLineStatus: { select: { status: true, level: true } } },
+          },
+        },
+      }),
+      this.db.nomination.count({ where }),
+    ]);
+
+    // One query for the page's batches, not one per trip.
+    const ceilings = await t1Ceilings(this.db, rows.map((row) => row.id));
+    const items = rows.map((row) => {
+      const batches = ceilings.get(row.id) ?? [];
+      return {
+        ...row,
+        /** The most a T1 naming no shipment may say. See `t1HeadroomFrom`. */
+        t1Headroom: t1HeadroomFrom(batches),
+        /*
+         * Per shipment the trip loads from: what it holds, what has been
+         * cleared off it, and what a T1 naming it may still say. The last is
+         * what the clerk needs — a shipment with nothing left cannot take
+         * another declaration, whatever the trip's totals look like.
+         */
+        vessels: row.nominationVessels.map((line) => {
+          const batch = batches.find((entry) => entry.stockId === line.stockId);
+          return {
+            vesselId: line.id,
+            stockId: line.stockId,
+            cargoId: line.stock.cargoId,
+            vesselName: line.stock.cargo?.vesselName ?? null,
+            blRef: line.stock.cargo?.blRef ?? null,
+            order: line.stock.cargo?.order ?? null,
+            itemName: line.stock.item.name,
+            /** Ambient litres this trip drew off this shipment. */
+            nominatedAmbient: Number(line.ambQuantity),
+            batchQuantity: batch?.quantity ?? Number(line.stock.cargo?.quantityInLitre ?? 0),
+            cleared: batch?.taken ?? 0,
+            /** What a T1 naming this shipment may still say. */
+            clearable: batch?.attributedCeiling ?? 0,
+          };
+        }),
+      };
+    });
+    return [items, total] as const;
+  }
 }

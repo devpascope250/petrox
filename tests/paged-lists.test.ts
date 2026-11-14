@@ -18,9 +18,15 @@ import { pagedDatesQuerySchema } from "../src/shared/validation/index.js";
 function spyDb() {
   const calls: any[] = [];
   const model = {
+    /*
+     * Returns an empty page, not a marker object: a repository may run a
+     * second `findMany` of its own and walk the result — the nominations list
+     * reads its page's batches to work out how much a new T1 may still clear.
+     * The assertions below read the recorded arguments, never the return.
+     */
     findMany: vi.fn((args: unknown) => {
       calls.push(args);
-      return { kind: "findMany", args };
+      return [] as unknown[];
     }),
     count: vi.fn((args: unknown) => {
       calls.push(args);

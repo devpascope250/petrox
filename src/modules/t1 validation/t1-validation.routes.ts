@@ -10,16 +10,41 @@ import {
   parseInput,
   t1ExtraStatusPamasSchema,
 } from "../../shared/validation/index.js";
-import { T1ValidationSrvice } from "./t1-validation.service.js";
+import { T1RaiseService, T1ValidationSrvice } from "./t1-validation.service.js";
 import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { T1ValidationRepository } from "./t1-validation.repository.js";
-import { createT1ValidationsSchema, t1ListQuerySchema } from "./t1-validation.schema.js";
+import { T1RaiseRepository, T1ValidationRepository } from "./t1-validation.repository.js";
+import {
+  createT1ValidationsSchema, t1ListQuerySchema,
+  t1RaiseOrdersQuerySchema, t1RaiseTripsQuerySchema, t1RaiseVehiclesQuerySchema,
+} from "./t1-validation.schema.js";
 
 const routes: FastifyPluginAsync = async (app) => {
   const service = new T1ValidationSrvice(new T1ValidationRepository(app.prisma), app.config);
+  const raise = new T1RaiseService(new T1RaiseRepository(app.prisma));
+
+  /*
+   * Finding the trip a customs document belongs to: order → truck → trip.
+   *
+   * Registered before `/:id`, or Fastify would read "raise" as an id. Gated on
+   * the T1 **create** permission as well as read: these exist to raise one, and
+   * somebody who may raise a T1 must be able to find its trip even where the
+   * nominations list is not theirs to see.
+   */
+  const canFind = {
+    preHandler: [
+      app.authenticate,
+      app.authorize("t1.validation.create", "t1.validation.read", "t1.validation.manage"),
+    ],
+  };
+  app.get("/raise/orders", canFind, async (request) =>
+    success(await raise.orders(parseInput(t1RaiseOrdersQuerySchema, request.query))));
+  app.get("/raise/vehicles", canFind, async (request) =>
+    success(await raise.vehicles(parseInput(t1RaiseVehiclesQuerySchema, request.query))));
+  app.get("/raise/trips", canFind, async (request) =>
+    success(await raise.trips(parseInput(t1RaiseTripsQuerySchema, request.query))));
   app.get(
     "/",
     {

@@ -1,7 +1,7 @@
 import type { PrismaClient, StockStatus } from "../../../prisma/generated/prisma/client.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { CreateStockSchema, StockReportQuerySchema } from "./stock.schema.js";
-import { takenByVessel, usageOf } from "./stock-taken.js";
+import { asVesselUsage, takenByVessel, usageOf } from "./stock-taken.js";
 export class StockRepository {
   constructor(private db: PrismaClient) {}
 
@@ -60,6 +60,10 @@ export class StockRepository {
           select: {
             id: true,
             ambQuantity: true,
+            // The shipment behind the batch. The same cargo as the row being
+            // listed, but read off the line like everywhere else, so
+            // `asVesselUsage` has it and attribution cannot be missed.
+            stock: { select: { cargoId: true } },
             nomination: {
               select: {
                 id: true,
@@ -71,9 +75,21 @@ export class StockRepository {
                 // what the nomination planned. The checks come too, because a
                 // cancelled T1 draws nothing.
                 t1Validations: {
-                  select: { quantityAt20C: true, extraValidations: { select: { status: true } } },
+                  select: {
+                    quantityAt20C: true,
+                    // Which shipment the T1 names, if any: one that names a
+                    // cargo the trip loaded from draws off that cargo rather
+                    // than being spread over the trip.
+                    cargoId: true,
+                    extraValidations: { select: { status: true } },
+                  },
                 },
-                nominationVessels: { select: { ambQuantity: true } },
+                // The trip's other lines, with their shipments: an
+                // unattributed T1 is spread across these, and an attributed
+                // one has to find its cargo among them.
+                nominationVessels: {
+                  select: { ambQuantity: true, stock: { select: { cargoId: true } } },
+                },
                 driverVehicle: {
                   select: {
                     driver: {
@@ -190,7 +206,7 @@ export class StockRepository {
          * split across the batches it loaded from. Zero until the T1 is
          * recorded — which is the difference between a plan and a movement.
          */
-        takenQuantity: takenByVessel(line),
+        takenQuantity: takenByVessel(asVesselUsage(line)),
         nominationQuantity: Number(line.nomination.ambQuantity),
         destination: line.nomination.destination,
         expectedLoadingDate: line.nomination.expectedLoadingDate,
@@ -208,7 +224,7 @@ export class StockRepository {
         nominated: nominatedQuantity,
         nominatedAmbient: nominatedAmbientQuantity,
         available: remainingQuantity,
-      } = usageOf(stock.quantity, stock.nominationVessels);
+      } = usageOf(stock.quantity, stock.nominationVessels.map(asVesselUsage));
 
       /*
        * A withdrawn batch is still listed — it is part of the history of the
