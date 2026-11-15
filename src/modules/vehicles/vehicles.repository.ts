@@ -1,10 +1,14 @@
 import type { Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { ConflictError, NotFoundError } from "../../utils/errors.js";
 import { CreateVehicleSchema, VehicleListQuery } from "./vehicles.schema.js";
+import { rigName, rigSearch } from "../../shared/search/index.js";
 
-/** How a rig is named wherever one is written out: `RAB123F/TR-884`. */
-export const rigName = (platNumber: string, trailerNumber: string) =>
-  `${platNumber}/${trailerNumber}`;
+/*
+ * `rigName` lives in `shared/search` now, beside the parsing that reads one
+ * back, so the way a rig is written and the way it is searched cannot drift
+ * apart. Re-exported here because this is where callers have always found it.
+ */
+export { rigName } from "../../shared/search/index.js";
 export class VehicleRepository {
   constructor(private db: PrismaClient) {}
 
@@ -19,27 +23,16 @@ export class VehicleRepository {
    */
   async list(query: VehicleListQuery = {}) {
     const term = query.search?.trim();
-    /*
-     * Split on the slash, so a pair matches both halves rather than being
-     * looked for verbatim in one column — `RAB123F/TR-884` is a plate AND a
-     * trailer, and neither field holds the slash.
-     */
-    const [plate, trailer] = term?.includes("/")
-      ? term.split("/", 2).map((part: string) => part.trim())
-      : [undefined, undefined];
     const where: Prisma.VehicleWhereInput | undefined = !term
       ? undefined
-      : plate && trailer
-        ? { platNumber: { contains: plate }, trailerNumber: { contains: trailer } }
-        : {
-            OR: [
-              { platNumber: { contains: term } },
-              { trailerNumber: { contains: term } },
-              { truckNumber: { contains: term } },
-              { model: { contains: term } },
-              { transport: { is: { name: { contains: term } } } },
-            ],
-          };
+      : {
+          OR: [
+            // Plate, trailer, body number — and the written pair as one thing.
+            ...rigSearch(term),
+            { model: { contains: term } },
+            { transport: { is: { name: { contains: term } } } },
+          ],
+        };
     return await this.db.vehicle.findMany({
       where,
       orderBy: { createdAt: "desc" },

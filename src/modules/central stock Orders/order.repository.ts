@@ -1,5 +1,6 @@
 import { CentralOrderStatus, Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
+import { rigSearch } from "../../shared/search/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { drawForRequisitionLines } from "../requisitions/requisition-load.js";
 import { CentralStockOrderReportQuerySchema, CreateCentralStockOrderSchema, CreateLoadingOrderSchema, LoadingOrderListQuery, LoadingOrderStage, LoadingOrderStatusSchema, ReceptionOrdersQuerySchema, ReceiveLoadingOrderSchema } from "./order.schema.js";
@@ -273,7 +274,7 @@ export class CentralStockOrderRepository {
     }
     if (term) {
       and.push({ OR: [
-        { dVehicle: { vechile: { platNumber: { contains: term } } } },
+        ...rigSearch(term, (vechile) => ({ dVehicle: { vechile } })),
         { dVehicle: { driver: { names: { contains: term } } } },
         { loadedOrders: { some: { order: { centralStock: { item: { name: { contains: term } } } } } } },
         { loadedOrders: { some: { order: { site: { name: { contains: term } } } } } },

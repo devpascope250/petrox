@@ -6,6 +6,7 @@ import {
   asVesselUsage, t1HeadroomOf, usageOf, vesselUsageSelect, type BatchCeiling,
 } from "../stock/stock-taken.js";
 import { CreateNominationsSchema, NominationListQuerySchema, NominationVesselSchema } from "./nominations.schema.js";
+import { rigSearch } from "../../shared/search/index.js";
 
 type Tx = Prisma.TransactionClient;
 
@@ -166,8 +167,9 @@ export class NominationRepository {
               OR: [
                 { destination: { contains: term } },
                 { driverVehicle: { driver: { names: { contains: term } } } },
-                { driverVehicle: { vechile: { platNumber: { contains: term } } } },
-                { driverVehicle: { vechile: { trailerNumber: { contains: term } } } },
+                // Plate, trailer, body number — and `RAB123F/TR-884` as the
+                // one rig it names, which is how a loading list writes it.
+                ...rigSearch(term, (vechile) => ({ driverVehicle: { vechile } })),
                 // The ship it came in on, through the batch it loads from.
                 { nominationVessels: { some: { stock: { cargo: { vesselName: { contains: term } } } } } },
                 { nominationVessels: { some: { stock: { cargo: { blRef: { contains: term } } } } } },
@@ -236,10 +238,11 @@ export class NominationRepository {
         ...row,
         t1Headroom: (found?.headroom ?? null) as number | null,
         /*
-         * Per shipment, what it will still take — so a page offering a choice
-         * of vessel can say which ones have room, and how much. A T1 naming a
-         * shipment is drawn off that one alone, so `attributedCeiling` is what
-         * such a T1 is held to; `t1Headroom` above is for one naming none.
+         * Per shipment: what it holds, what has been cleared off it, and what
+         * is **left in the vessel**. A T1 naming a shipment is drawn off that
+         * one alone, so `remaining` is what such a T1 is measured against —
+         * together with the truck's own total below, and the lower of the two
+         * wins.
          */
         t1Batches: (found?.batches ?? []).map((batch: BatchCeiling) => ({
           stockId: batch.stockId,
@@ -248,8 +251,10 @@ export class NominationRepository {
           itemName: batch.itemName,
           quantity: batch.quantity,
           cleared: batch.taken,
-          headroom: batch.headroom,
-          clearable: batch.attributedCeiling,
+          /** Litres left in the vessel. Shrinks as T1s are cleared off it. */
+          remaining: batch.headroom,
+          /** Ambient this trip planned off it; `0` for an unplanned top-up. */
+          planned: batch.planned,
         })),
       };
     });

@@ -164,10 +164,17 @@ export function takenByVessel(vessel: VesselUsage): number {
     }
     // Attributed: it belongs to this line only if this line is on that cargo.
     if (vessel.cargoId !== t1.cargoId) continue;
-    const onThatCargo = lines
-      .filter((line) => line.cargoId === t1.cargoId)
-      .reduce((sum, line) => sum + num(line.ambQuantity), 0);
-    taken += apportion(num(t1.quantityAt20C), drew, onThatCargo);
+    const group = lines.filter((line) => line.cargoId === t1.cargoId);
+    const onThatCargo = group.reduce((sum, line) => sum + num(line.ambQuantity), 0);
+    /*
+     * Nothing was *planned* off this shipment — the trip was put on it by the
+     * T1 itself, because the truck topped up somewhere the plan did not say.
+     * There is no ambient split to go by, so the figure is shared equally
+     * between its lines, which in practice means the one line gets it whole.
+     */
+    taken += onThatCargo > 0
+      ? apportion(num(t1.quantityAt20C), drew, onThatCargo)
+      : num(t1.quantityAt20C) / group.length;
   }
 
   const total = lines.reduce((sum, line) => sum + num(line.ambQuantity), 0);
@@ -295,8 +302,17 @@ export interface BatchCeiling {
   quantity: number;
   /** Already cleared off it, by every trip's live T1s. */
   taken: number;
-  /** `quantity − taken`: litres the batch itself has left. */
+  /** `quantity − taken`: litres the batch itself has left to clear. */
   headroom: number;
+  /**
+   * Ambient litres **this trip** planned off this batch.
+   *
+   * `0` where the trip was put on the shipment by a T1 rather than by a
+   * nomination — the truck topped up somewhere the plan did not say. Such a
+   * line constrains nothing for a T1 that names no shipment, since an
+   * unattributed figure is split by ambient and this line's share is nil.
+   */
+  planned: number;
   /**
    * What a T1 on this trip that **names no cargo** may say, given that only
    * part of the trip's load came off this batch. Such a T1 is spread over
@@ -405,7 +421,6 @@ export async function t1Ceilings(
       const batch = byId.get(line.stockId);
       if (!batch) continue;
       const drew = num(line.ambQuantity);
-      if (drew <= 0) continue;
 
       /*
        * What the batch has already given up: this trip's other T1s counted,
@@ -437,8 +452,18 @@ export async function t1Ceilings(
         quantity: num(batch.quantity),
         taken,
         headroom,
-        ceiling: Math.max(0, (headroom * tripTotal) / drew),
-        attributedCeiling: Math.max(0, (headroom * onThisCargo) / drew),
+        planned: drew,
+        /*
+         * Nothing planned off this batch means an unattributed T1 draws nothing
+         * off it, so it cannot be overdrawn by one and sets no limit. A T1 that
+         * *names* it draws the whole figure, so the limit is the batch's own.
+         */
+        ceiling: drew > 0
+          ? Math.max(0, (headroom * tripTotal) / drew)
+          : Number.POSITIVE_INFINITY,
+        attributedCeiling: drew > 0
+          ? Math.max(0, (headroom * onThisCargo) / drew)
+          : Math.max(0, headroom),
         vessel: batch.cargo ? `${batch.cargo.vesselName} (BL ${batch.cargo.blRef})` : null,
         itemName: batch.item.name,
       });
@@ -458,8 +483,11 @@ export async function t1Ceilings(
  * whose batches are on record.
  */
 export function t1HeadroomFrom(ceilings: BatchCeiling[] | undefined): number | null {
-  if (!ceilings || ceilings.length === 0) return null;
-  return Math.max(0, Math.min(...ceilings.map((batch) => batch.ceiling)));
+  // Only the batches the trip actually planned off can be overdrawn by a
+  // figure that is split by what each was planned for.
+  const planned = (ceilings ?? []).filter((batch) => batch.planned > 0);
+  if (planned.length === 0) return null;
+  return Math.max(0, Math.min(...planned.map((batch) => batch.ceiling)));
 }
 
 /**
@@ -532,4 +560,110 @@ export async function assertT1WithinCargo(
       },
     );
   }
+}
+
+/* ------------------------------------------------------------------------- *
+ * What the truck itself can be cleared for
+ *
+ * A nomination fixes a **total**: the litres that went on that truck, which in
+ * practice is what its tank holds. The T1s say where those litres came from —
+ * one shipment or several — but they cannot add up to more than the truck was
+ * nominated for, because the fuel was in one tank and somebody measured it.
+ *
+ * This is a different limit from the batch ceilings above, and both bite. A
+ * shipment can have 40,000 left while the truck has room for 3,000; clearing
+ * 40,000 against it would be fuel that never fitted in the vehicle.
+ * ------------------------------------------------------------------------- */
+
+/** What one trip has been cleared for, and what it may still take. */
+export interface TripCeiling {
+  /** The trip's own ambient total: the load the truck was nominated for. */
+  nominated: number;
+  /** The live T1s on it, summed at 20 °C. */
+  cleared: number;
+  /** `nominated − cleared`, never below zero. What a further T1 may say. */
+  remaining: number;
+}
+
+/**
+ * The trip's own figures, with `excludeT1Id` left out so an edit does not weigh
+ * its own old quantity against itself.
+ *
+ * `null` when there is no such trip.
+ *
+ * ⚠️ Ambient against 20 °C again: the nomination is in ambient litres and a T1
+ * is temperature-corrected, so a truck filled to the brim clears slightly under
+ * its nominated figure. This is a ceiling, not a reconciliation — it catches
+ * the typo and the double-count, and the shortfall is the tolerance report's
+ * business.
+ */
+export function tripCeilingFrom(
+  ambQuantity: Prisma.Decimal | number,
+  t1s: Array<T1Usage & { id?: string }>,
+  excludeT1Id?: string,
+): TripCeiling {
+  const cleared = t1s
+    .filter((t1) => isLive(t1) && (!excludeT1Id || t1.id !== excludeT1Id))
+    .reduce((sum, t1) => sum + num(t1.quantityAt20C), 0);
+  const nominated = num(ambQuantity);
+  return { nominated, cleared, remaining: Math.max(0, nominated - cleared) };
+}
+
+/** The same, read from the database for one trip. */
+export async function tripCeilingOf(
+  db: Db,
+  nominationId: string,
+  excludeT1Id?: string,
+): Promise<TripCeiling | null> {
+  const trip = await db.nomination.findUnique({
+    where: { id: nominationId },
+    select: {
+      ambQuantity: true,
+      t1Validations: {
+        select: {
+          id: true,
+          quantityAt20C: true,
+          cargoId: true,
+          extraValidations: { select: { status: true } },
+        },
+      },
+    },
+  });
+  if (!trip) return null;
+  return tripCeilingFrom(trip.ambQuantity, trip.t1Validations, excludeT1Id);
+}
+
+/**
+ * Refuses a T1 that would clear more than the truck was nominated for.
+ *
+ * The example this exists for: a truck nominated for 3,000 off one vessel, and
+ * that vessel turns out to have only 2,000 left. The remaining 1,000 is cleared
+ * off a second vessel on a T1 of its own — and that is the end of it. A third
+ * T1 would be clearing fuel the truck never had room for.
+ */
+export async function assertT1WithinTrip(
+  db: Db,
+  nominationId: string,
+  quantityAt20C: number,
+  excludeT1Id?: string,
+) {
+  const trip = await tripCeilingOf(db, nominationId, excludeT1Id);
+  if (!trip) return;
+  // The same hundredth of a litre of slack as the batch ceilings allow.
+  if (quantityAt20C <= trip.remaining + 0.01) return;
+
+  throw new BusinessError(
+    "TRIP_QUANTITY_EXCEEDED",
+    trip.cleared > 0
+      ? `This truck was nominated for ${trip.nominated.toLocaleString()} litres and `
+        + `${Math.round(trip.cleared).toLocaleString()} are already cleared on its T1s, `
+        + `so at most ${Math.round(trip.remaining).toLocaleString()} can go on another. `
+        + "The T1s on one trip cannot add up to more than it was nominated for — "
+        + "the fuel was in one tank."
+      : `This truck was nominated for ${trip.nominated.toLocaleString()} litres, `
+        + "so a T1 cannot clear more than that. Nominate more onto it first if it "
+        + "really carried more.",
+    422,
+    { nominated: trip.nominated, cleared: trip.cleared, remaining: trip.remaining },
+  );
 }

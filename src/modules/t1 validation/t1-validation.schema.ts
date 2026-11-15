@@ -40,21 +40,14 @@ export const createT1ValidationsSchema = z.object({
     .optional()
     .nullable()
     .transform((value) => value || null),
-  /**
-   * The ambient litres to put on the trip for `cargoId`, when the trip has not
-   * nominated that shipment at all.
+  /*
+   * There is deliberately no ambient figure here.
    *
-   * A truck that topped up from a second cargo did two things: it drew fuel off
-   * that batch, and it was cleared on a T1 for it. Naming the shipment records
-   * the second; this records the first, by adding the vessel line the trip was
-   * missing. Without it the litres would come off the batch the trip *had*
-   * nominated, which is the wrong fuel.
-   *
-   * Ignored when the trip already has a line on that shipment — then there is
-   * nothing to add. Omitted, the T1's own figure is used: the best estimate
-   * available of what went in, and the only one anybody has at the border.
+   * Naming a shipment the trip never nominated puts the trip on it — but with
+   * **nothing planned** off it, because the truck's total is what it was
+   * nominated for and a top-up does not make the truck bigger. It fills part of
+   * that same total, and `assertT1WithinTrip` holds the T1s to it.
    */
-  cargoAmbQuantity: z.coerce.number().positive().optional(),
   /**
    * The reference on the customs declaration this T1 was cleared under.
    * Optional: a trip may be recorded before its declaration comes back, and

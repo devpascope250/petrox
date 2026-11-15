@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
+import { rigSearch } from "../../shared/search/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { furthestStage } from "../nominations/nomination-stage.js";
 import type {
@@ -58,8 +59,7 @@ export class VehicleLocationRepository {
       ...(search
         ? {
             OR: [
-              { driverVehicle: { vechile: { platNumber: { contains: search } } } },
-              { driverVehicle: { vechile: { truckNumber: { contains: search } } } },
+              ...rigSearch(search, (vechile) => ({ driverVehicle: { vechile } })),
               { driverVehicle: { driver: { names: { contains: search } } } },
               { parking: { name: { contains: search } } },
             ],

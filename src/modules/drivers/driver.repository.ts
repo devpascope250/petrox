@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
+import { rigSearch } from "../../shared/search/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { CreateDriverSchema, type DriverListQuery } from "./deriver.schema.js";
 export class DriverRepository {
@@ -111,9 +112,7 @@ export class DriverRepository {
                * RAB 123 F" — and a trailer number is what is written on the
                * paperwork at the depot.
                */
-              { vehicles: { some: { vechile: { platNumber: { contains: term } } } } },
-              { vehicles: { some: { vechile: { truckNumber: { contains: term } } } } },
-              { vehicles: { some: { vechile: { trailerNumber: { contains: term } } } } },
+              ...rigSearch(term, (vechile) => ({ vehicles: { some: { vechile } } })),
             ],
           }
         : {}),

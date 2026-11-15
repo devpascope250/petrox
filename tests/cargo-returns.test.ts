@@ -3,8 +3,9 @@ import { cargoMovement } from "../src/modules/cargo/cargo-movement.js";
 import { StockRepository } from "../src/modules/stock/stock.repository.js";
 import { recordIdSchema } from "../src/shared/validation/index.js";
 import { VehicleRepository, rigName } from "../src/modules/vehicles/vehicles.repository.js";
+import { rigParts, rigSearch } from "../src/shared/search/index.js";
 import {
-  apportion, isLive, t1HeadroomFrom, takenByVessel, usageOf,
+  apportion, isLive, t1HeadroomFrom, takenByVessel, tripCeilingFrom, usageOf,
 } from "../src/modules/stock/stock-taken.js";
 
 /**
@@ -187,10 +188,44 @@ describe("a rig is the plate and the trailer together", () => {
     // into the comparison.
     await new VehicleRepository(db).list({ search: "RAB123F / TR-884" });
 
-    expect(findMany.mock.calls[0][0].where).toEqual({
+    // One condition, both halves at once: `RAB123F/TR-884` is one rig, not
+    // everything on plate RAB123F. The model and transporter conditions sit
+    // beside it and match nothing — no model has a slash in it.
+    const or = findMany.mock.calls[0][0].where.OR as Array<Record<string, unknown>>;
+    expect(or).toEqual(expect.arrayContaining([{
       platNumber: { contains: "RAB123F" },
       trailerNumber: { contains: "TR-884" },
-    });
+    }]));
+    expect(or.filter((c) => 'platNumber' in c)).toHaveLength(1);
+  });
+
+  /**
+   * The parsing itself, which every list that searches for a truck now shares —
+   * the nominations list, the T1 lists, the finder, the drivers, the parkings
+   * and the loading orders. It used to live in the vehicles repository alone,
+   * so typing a pair anywhere else found nothing.
+   */
+  it("reads a written pair, and leaves anything else alone", () => {
+    expect(rigParts("RAG153D/RL4707")).toEqual({ plate: "RAG153D", trailer: "RL4707" });
+    expect(rigParts(" RAG153D / RL4707 ")).toEqual({ plate: "RAG153D", trailer: "RL4707" });
+    // Half way through typing is not a pair yet.
+    expect(rigParts("RAG153D/")).toBeNull();
+    expect(rigParts("/RL4707")).toBeNull();
+    expect(rigParts("RAG153D")).toBeNull();
+    expect(rigParts(undefined)).toBeNull();
+  });
+
+  it("nests its conditions for the lists that reach a truck through a relation", () => {
+    // The nominations list and the T1 finder hold a truck two relations down.
+    expect(rigSearch("RAG153D/RL4707", (vechile) => ({ driverVehicle: { vechile } })))
+      .toEqual([{
+        driverVehicle: {
+          vechile: { platNumber: { contains: "RAG153D" }, trailerNumber: { contains: "RL4707" } },
+        },
+      }]);
+    // A single term still reaches every column a truck is known by.
+    expect(rigSearch("RAG153D", (vechile) => ({ driverVehicle: { vechile } })))
+      .toHaveLength(3);
   });
 
   it("matches one term against every field a truck is known by", async () => {
@@ -391,7 +426,7 @@ describe("a cancelled T1 gives the fuel back", () => {
 describe("the litres a trip may still be cleared for", () => {
   const batch = (ceiling: number) => ({
     stockId: "s", cargoId: null,
-    quantity: 30_000, taken: 0, headroom: ceiling, ceiling,
+    quantity: 30_000, taken: 0, headroom: ceiling, ceiling, planned: 10_000,
     attributedCeiling: ceiling, vessel: null, itemName: "AGO",
   });
 
@@ -514,5 +549,111 @@ describe("a T1 that names a shipment draws off that shipment", () => {
       { ambQuantity: 20_000, cargoId: A, nomination },
       { ambQuantity: 20_000, cargoId: B, nomination },
     ])).toMatchObject({ taken: 39_120, nominated: 0, available: 60_880 });
+  });
+});
+
+/**
+ * A nomination fixes a **total**: the litres that went on that truck, which is
+ * what its tank holds. The T1s say where those litres came from — one shipment
+ * or several — but they cannot add up to more than the truck was nominated for,
+ * because the fuel was in one tank and somebody measured it.
+ *
+ * The case this exists for, from the yard: a truck nominated for 3,000 off one
+ * vessel, and that vessel turns out to have 2,000 left. The last 1,000 is
+ * cleared off a second vessel on its own T1 — and that is the end of it.
+ */
+describe("the T1s on one trip cannot exceed what it was nominated for", () => {
+  const t1 = (quantityAt20C: number, cargoId: string | null = null, status?: string) => ({
+    id: `t1-${quantityAt20C}-${cargoId ?? "none"}`,
+    quantityAt20C,
+    cargoId,
+    extraValidations: status ? [{ status }] : [],
+  });
+
+  it("has the whole load to give before anything is cleared", () => {
+    expect(tripCeilingFrom(3_000, [])).toEqual({
+      nominated: 3_000, cleared: 0, remaining: 3_000,
+    });
+  });
+
+  it("counts what two shipments have already cleared between them", () => {
+    // The yard's example: 2,000 off the first vessel, 1,000 off the second.
+    expect(tripCeilingFrom(3_000, [t1(2_000, "v1"), t1(1_000, "v2")])).toEqual({
+      nominated: 3_000, cleared: 3_000, remaining: 0,
+    });
+  });
+
+  it("leaves room for the second shipment when the first came up short", () => {
+    expect(tripCeilingFrom(3_000, [t1(2_000, "v1")]).remaining).toBe(1_000);
+  });
+
+  it("never offers a negative remainder, however overcleared", () => {
+    expect(tripCeilingFrom(3_000, [t1(4_000, "v1")]).remaining).toBe(0);
+  });
+
+  it("gives the room back when a T1 is cancelled", () => {
+    expect(tripCeilingFrom(3_000, [t1(2_000, "v1"), t1(1_000, "v2", "cancelled")]))
+      .toMatchObject({ cleared: 2_000, remaining: 1_000 });
+  });
+
+  it("leaves an edited T1's own figure out, so it is not weighed against itself", () => {
+    const rows = [t1(2_000, "v1"), t1(1_000, "v2")];
+    // Correcting the 1,000 downwards must not be refused by the 1,000.
+    expect(tripCeilingFrom(3_000, rows, "t1-1000-v2").remaining).toBe(1_000);
+  });
+
+  it("counts a T1 that names nothing just the same", () => {
+    // The limit is about the tank, not about where the fuel came from.
+    expect(tripCeilingFrom(3_000, [t1(2_900)]).remaining).toBe(100);
+  });
+});
+
+/**
+ * A top-up is a line with nothing planned off it: the trip was put on the
+ * shipment by its T1, because the truck loaded somewhere the plan did not say.
+ * The plan is not rewritten — it never said that shipment — so the line carries
+ * no ambient, and the T1 is what says what came off it.
+ */
+describe("a shipment the trip never planned for", () => {
+  const A = "cargo-a";
+  const B = "cargo-b";
+
+  it("gives the named T1 to the unplanned line whole", () => {
+    // 3,000 nominated off A; only 2,000 was there, so 1,000 came off B.
+    const lines = [{ ambQuantity: 3_000, cargoId: A }, { ambQuantity: 0, cargoId: B }];
+    const nomination = {
+      t1Validations: [
+        { quantityAt20C: 2_000, cargoId: A, extraValidations: [] },
+        { quantityAt20C: 1_000, cargoId: B, extraValidations: [] },
+      ],
+      nominationVessels: lines,
+    };
+    expect(takenByVessel({ ambQuantity: 3_000, cargoId: A, nomination })).toBeCloseTo(2_000, 2);
+    // Would have been zero while an unplanned line was divided by its own
+    // nil ambient.
+    expect(takenByVessel({ ambQuantity: 0, cargoId: B, nomination })).toBeCloseTo(1_000, 2);
+  });
+
+  it("does not let an unplanned line inflate what the trip planned", () => {
+    const lines = [{ ambQuantity: 3_000, cargoId: A }, { ambQuantity: 0, cargoId: B }];
+    const nomination = {
+      t1Validations: [{ quantityAt20C: 1_000, cargoId: B, extraValidations: [] }],
+      nominationVessels: lines,
+    };
+    // The plan is still 3,000 — the truck did not get bigger.
+    expect(usageOf(50_000, [{ ambQuantity: 0, cargoId: B, nomination }]))
+      .toMatchObject({ nominatedAmbient: 0 });
+  });
+
+  it("is left out of the limit for a T1 that names no shipment", () => {
+    // An unattributed figure is split by what each line was planned for, so an
+    // unplanned line takes none of it and cannot be overdrawn by one.
+    expect(t1HeadroomFrom([
+      { stockId: "a", cargoId: A, quantity: 30_000, taken: 0, headroom: 300,
+        planned: 3_000, ceiling: 300, attributedCeiling: 300, vessel: null, itemName: "AGO" },
+      { stockId: "b", cargoId: B, quantity: 46_000, taken: 0, headroom: 46_000,
+        planned: 0, ceiling: Number.POSITIVE_INFINITY, attributedCeiling: 46_000,
+        vessel: null, itemName: "AGO" },
+    ])).toBe(300);
   });
 });

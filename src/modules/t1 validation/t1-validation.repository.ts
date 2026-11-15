@@ -3,13 +3,14 @@ import { recordStage } from "../nominations/nomination-stage.js";
 import { paginationArgs } from "../../shared/pagination/index.js";
 import type { PagedDatesQuery } from "../../shared/validation/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
-import { assertT1WithinCargo } from "../stock/stock-taken.js";
+import { assertT1WithinCargo, assertT1WithinTrip } from "../stock/stock-taken.js";
 import { NominationRepository } from "../nominations/nominations.repository.js";
 import {
   T1ListQuery, CreateExtraT1ValidationsSchema, CreateT1ValidationsSchema,
   T1RaiseOrdersQuery, T1RaiseTripsQuery, T1RaiseVehiclesQuery,
 } from "./t1-validation.schema.js";
-import { t1Ceilings, t1HeadroomFrom } from "../stock/stock-taken.js";
+import { t1Ceilings, t1HeadroomFrom, tripCeilingFrom } from "../stock/stock-taken.js";
+import { rigSearch } from "../../shared/search/index.js";
 export class T1ValidationRepository {
   constructor(private db: PrismaClient) {}
   async listByCompleted() {
@@ -71,8 +72,9 @@ export class T1ValidationRepository {
               { sdReference: { contains: term } },
               { nomination: { destination: { contains: term } } },
               { nomination: { driverVehicle: { driver: { names: { contains: term } } } } },
-              { nomination: { driverVehicle: { vechile: { platNumber: { contains: term } } } } },
-              { nomination: { driverVehicle: { vechile: { trailerNumber: { contains: term } } } } },
+              // The rig, by either half or by the written pair.
+              ...rigSearch(term, (vechile) => ({
+                nomination: { driverVehicle: { vechile } } })),
               // The ship it came off, and its bill of lading — two relations
               // down, through the batches the trip loaded from.
               { nomination: { nominationVessels: { some: {
@@ -215,16 +217,23 @@ export class T1ValidationRepository {
           );
         }
         /*
-         * The ambient litres that went in. The T1's own figure unless told
-         * otherwise: at the border nobody has a second measurement, and a
-         * 20 °C figure is the closest thing to one.
+         * **No ambient on the line.** The trip's total is the load the truck
+         * was nominated for, and a top-up from a second shipment does not make
+         * the truck bigger — it fills part of that same total, which is what
+         * `assertT1WithinTrip` holds it to. Growing the total here would let a
+         * trip clear whatever anybody typed, one vessel at a time.
          *
-         * Goes through the nomination's own guarded path, so the batch's
-         * capacity, the one-product rule and the truck's tank all still hold.
+         * So the plan is left as it was — it never said this shipment — and
+         * the T1 says what actually came off it. `takenByVessel` gives an
+         * unplanned line its named T1 whole, since there is no ambient split to
+         * go by.
+         *
+         * Still through the nomination's own guarded path, so the one-product
+         * rule and the stage it records both still hold.
          */
         await new NominationRepository(this.db).addVesselsWithin(tx, data.nominationId, [{
           stockId: batch.id,
-          ambQuantity: data.cargoAmbQuantity ?? data.quantityAt20C,
+          ambQuantity: 0,
         }]);
       }
 
@@ -239,6 +248,13 @@ export class T1ValidationRepository {
        * against that shipment, which has to be on the trip to be found.
        */
       await assertT1WithinCargo(tx, data.nominationId, data.quantityAt20C, undefined, data.cargoId);
+      /*
+       * And the truck's own total. A shipment may have 40,000 left while the
+       * trip has room for 3,000: clearing the 40,000 would be fuel that never
+       * fitted in the tank. Both limits bite, and this one is the one a clerk
+       * meets most often.
+       */
+      await assertT1WithinTrip(tx, data.nominationId, data.quantityAt20C);
       // Through `recordStage`, so a stage already passed is not written again.
       await recordStage(tx, data.nominationId, "t1Pending", data.createdBy);
       return await tx.t1Validation.create({
@@ -289,6 +305,7 @@ export class T1ValidationRepository {
     // the comparison — otherwise correcting one downwards could be refused by
     // the very quantity being corrected.
     await assertT1WithinCargo(this.db, data.nominationId, data.quantityAt20C, id, data.cargoId);
+    await assertT1WithinTrip(this.db, data.nominationId, data.quantityAt20C, id);
     return await this.db.t1Validation.update({
       where: { id: id },
      data: {
@@ -442,9 +459,7 @@ export class T1RaiseRepository {
       ...(term
         ? {
             OR: [
-              { vechile: { platNumber: { contains: term } } },
-              { vechile: { trailerNumber: { contains: term } } },
-              { vechile: { truckNumber: { contains: term } } },
+              ...rigSearch(term, (vechile) => ({ vechile })),
               { driver: { names: { contains: term } } },
             ],
           }
@@ -522,9 +537,7 @@ export class T1RaiseRepository {
             OR: [
               { destination: { contains: term } },
               { driverVehicle: { driver: { names: { contains: term } } } },
-              { driverVehicle: { vechile: { platNumber: { contains: term } } } },
-              { driverVehicle: { vechile: { trailerNumber: { contains: term } } } },
-              { driverVehicle: { vechile: { truckNumber: { contains: term } } } },
+              ...rigSearch(term, (vechile) => ({ driverVehicle: { vechile } })),
               { nominationVessels: { some: { stock: { cargo: { vesselName: { contains: term } } } } } },
               { nominationVessels: { some: { stock: { cargo: { blRef: { contains: term } } } } } },
               { nominationVessels: { some: { stock: { cargo: { order: { orderCode: { contains: term } } } } } } },
@@ -605,18 +618,28 @@ export class T1RaiseRepository {
     const ceilings = await t1Ceilings(this.db, rows.map((row) => row.id));
     const items = rows.map((row) => {
       const batches = ceilings.get(row.id) ?? [];
+      /*
+       * The truck's own limit, from rows already in hand. A shipment may have
+       * 40,000 left while the trip has room for 3,000 — the T1s on one trip
+       * cannot add up to more than it was nominated for, because the fuel was
+       * in one tank.
+       */
+      const trip = tripCeilingFrom(row.ambQuantity, row.t1Validations);
       return {
         ...row,
         /** The most a T1 naming no shipment may say. See `t1HeadroomFrom`. */
         t1Headroom: t1HeadroomFrom(batches),
+        /** Nominated, cleared so far, and what any further T1 may say. */
+        trip,
         /*
          * Per shipment the trip loads from: what it holds, what has been
-         * cleared off it, and what a T1 naming it may still say. The last is
-         * what the clerk needs — a shipment with nothing left cannot take
-         * another declaration, whatever the trip's totals look like.
+         * cleared off it, and what is **left in the vessel**. A clerk needs
+         * both this and `trip.remaining` — a T1 cannot exceed either, so the
+         * lower of the two is the real limit.
          */
         vessels: row.nominationVessels.map((line) => {
           const batch = batches.find((entry) => entry.stockId === line.stockId);
+          const remaining = batch?.headroom ?? 0;
           return {
             vesselId: line.id,
             stockId: line.stockId,
@@ -625,12 +648,20 @@ export class T1RaiseRepository {
             blRef: line.stock.cargo?.blRef ?? null,
             order: line.stock.cargo?.order ?? null,
             itemName: line.stock.item.name,
-            /** Ambient litres this trip drew off this shipment. */
+            /**
+             * Ambient this trip planned off this shipment. `0` where the trip
+             * was put on it by a T1 rather than by a nomination — a top-up.
+             */
             nominatedAmbient: Number(line.ambQuantity),
             batchQuantity: batch?.quantity ?? Number(line.stock.cargo?.quantityInLitre ?? 0),
             cleared: batch?.taken ?? 0,
-            /** What a T1 naming this shipment may still say. */
-            clearable: batch?.attributedCeiling ?? 0,
+            /** Litres left in the vessel. */
+            remaining,
+            /**
+             * What a T1 off this vessel may actually say: the lower of what the
+             * vessel has left and what the truck still has room for.
+             */
+            clearable: Math.max(0, Math.min(remaining, trip.remaining)),
           };
         }),
       };
