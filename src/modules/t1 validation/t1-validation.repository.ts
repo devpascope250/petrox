@@ -590,8 +590,17 @@ export class T1RaiseRepository {
               },
             },
           },
-          // What is already on it, so a second declaration can be read against
-          // the first rather than guessed at.
+          /*
+           * What is already on the trip, in full — not just how many. A clerk
+           * holding a second declaration needs to see what the first one said:
+           * how much it cleared, off which vessel, under which reference. A
+           * count alone cannot tell them whether the paper in their hand has
+           * already been entered.
+           *
+           * The vessel comes from the T1's own cargo rather than being matched
+           * back through the trip's lines, so a T1 naming a shipment the trip
+           * no longer carries still says what it named.
+           */
           t1Validations: {
             orderBy: { createdAt: "asc" },
             select: {
@@ -599,6 +608,7 @@ export class T1RaiseRepository {
               quantityAt20C: true,
               sdReference: true,
               cargoId: true,
+              cargo: { select: { id: true, vesselName: true, blRef: true } },
               exportingCountry: true,
               createdAt: true,
               extraValidations: { select: { id: true, customOffice: true, status: true } },

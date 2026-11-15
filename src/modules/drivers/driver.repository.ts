@@ -56,9 +56,37 @@ export class DriverRepository {
               trailerNumber: true,
             }
           },
+          /*
+           * What this truck is already carrying: nominated and not yet
+           * delivered. Their quantities make `nominatedQuantity`, and the rows
+           * themselves are listed when a nomination is being raised — a clerk
+           * filling a tank needs to see what is already on it, not only how
+           * many litres it adds up to.
+           *
+           * Few rows by nature: a truck has one load at a time, two while one
+           * is being added to.
+           */
           nominations: {
             where: { timeLine: { none: { timeLineStatus: { status: "stockReceived" } } } },
-            select: { ambQuantity: true },
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              ambQuantity: true,
+              destination: true,
+              expectedLoadingDate: true,
+              nominationVessels: {
+                orderBy: { createdAt: "asc" },
+                select: {
+                  ambQuantity: true,
+                  stock: {
+                    select: {
+                      item: { select: { name: true } },
+                      cargo: { select: { vesselName: true, blRef: true } },
+                    },
+                  },
+                },
+              },
+            },
           },
          }
        }
@@ -80,6 +108,19 @@ export class DriverRepository {
           nominatedQuantity,
           /** What still fits in the tank. */
           availableCapacity: Math.max(0, tankCapacity - nominatedQuantity),
+          /** Those same loads, to be listed rather than only totalled. */
+          nominations: nominations.map((row) => ({
+            id: row.id,
+            destination: row.destination,
+            expectedLoadingDate: row.expectedLoadingDate,
+            ambQuantity: Number(row.ambQuantity),
+            vessels: row.nominationVessels.map((line) => ({
+              ambQuantity: Number(line.ambQuantity),
+              itemName: line.stock.item.name,
+              vesselName: line.stock.cargo?.vesselName ?? null,
+              blRef: line.stock.cargo?.blRef ?? null,
+            })),
+          })),
         };
       }),
     }));
