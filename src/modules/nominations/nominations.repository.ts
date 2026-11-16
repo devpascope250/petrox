@@ -2,9 +2,7 @@ import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/clie
 import { paginationArgs } from "../../shared/pagination/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { furthestStage, recordStage } from "./nomination-stage.js";
-import {
-  asVesselUsage, t1HeadroomOf, usageOf, vesselUsageSelect, type BatchCeiling,
-} from "../stock/stock-taken.js";
+import { t1HeadroomOf, type BatchCeiling } from "../stock/stock-taken.js";
 import { CreateNominationsSchema, NominationListQuerySchema, NominationVesselSchema } from "./nominations.schema.js";
 import { rigSearch } from "../../shared/search/index.js";
 
@@ -296,34 +294,29 @@ export class NominationRepository {
   }
 
   /**
-   * Every vessel must fit inside what its batch still has.
+   * Every vessel's batch must be one that can still be loaded.
    *
-   * What a batch has left is `quantity − what has actually been taken`, and a
-   * trip takes its litres when its **T1** is recorded — see `stock-taken`. A
-   * nomination on its own holds nothing back: it is a plan, and planning to
-   * load does not remove fuel from a depot. So two nominations may both be
-   * raised against the same litres, and the batch is only truly drawn down as
-   * their T1s come in.
+   * It is **not** held to what the batch has left. A truck loads what its tank
+   * holds, and a cargo routinely has fewer litres on it than that — the rest of
+   * the load comes off another cargo, or the figure is simply the prediction it
+   * always was. A nomination is a plan: the litres move when the **T1** is
+   * recorded, and the T1 is what the batch is held to
+   * (`assertT1WithinCargo`). Refusing a plan for exceeding a batch would stop
+   * work that the yard does every day, and would protect nothing, because the
+   * plan takes nothing. So two nominations may both be raised against the same
+   * litres, and the batch is only truly drawn down as their T1s come in.
    *
-   * `exclude` drops a nomination's own vessels from the running total, so
-   * re-saving an unchanged nomination is not blocked by its own T1.
+   * What is still checked is the batch's **status**: a cargo that was sent
+   * back, cancelled or closed is not there to load at all, whatever its figure
+   * says.
    */
-  private async assertStockCapacity(
-    tx: Tx,
-    vessels: NominationVesselSchema[],
-    exclude?: string,
-  ) {
+  private async assertStockLoadable(tx: Tx, vessels: NominationVesselSchema[]) {
     const stocks = await tx.stock.findMany({
       where: { id: { in: vessels.map((vessel) => vessel.stockId) } },
       select: {
         id: true,
-        quantity: true,
         status: true,
         item: { select: { name: true } },
-        nominationVessels: {
-          ...(exclude ? { where: { nominationId: { not: exclude } } } : {}),
-          select: vesselUsageSelect,
-        },
       },
     });
     const byId = new Map(stocks.map((stock) => [stock.id, stock]));
@@ -333,8 +326,7 @@ export class NominationRepository {
       if (!stock) throw new NotFoundError("Stock not found");
       /*
        * A batch whose cargo was sent back to the supplier, or cancelled, is not
-       * there to load. The capacity check alone would have allowed it: it
-       * compares the quantity on record, which a withdrawn batch keeps.
+       * there to load — its litres are on record but they are not coming.
        */
       if (stock.status === "returned" || stock.status === "cancelled") {
         throw new BusinessError(
@@ -349,20 +341,6 @@ export class NominationRepository {
           "STOCK_CLOSED",
           `This ${stock.item.name} batch has been closed, so it cannot be nominated. `
           + "Reopen it if it really still has fuel on it.",
-        );
-      }
-      const { available, nominated } = usageOf(
-        stock.quantity, stock.nominationVessels.map(asVesselUsage));
-      if (Number(vessel.ambQuantity) > available) {
-        throw new BusinessError(
-          "400",
-          `The Nominations Qty can not be greater than stock quantity! `
-          + `Only ${available} ${stock.item.name} remains on this batch`
-          + (nominated > 0
-            // Said plainly: the batch is not short because of these, but the
-            // person is about to be surprised by them.
-            ? ` (${nominated} more is nominated on trips whose T1 is not in yet).`
-            : "."),
         );
       }
     }
@@ -455,7 +433,7 @@ export class NominationRepository {
   async create(data: CreateNominationsSchema) {
     return await this.db.$transaction(async (tx) => {
       await this.assertSingleItem(tx, data.vessels);
-      await this.assertStockCapacity(tx, data.vessels);
+      await this.assertStockLoadable(tx, data.vessels);
       await this.assertTruckCapacity(tx, data.driverVehicleId, this.totalQuantity(data.vessels));
       const nomination = await tx.nomination.create({
         data: {
@@ -489,7 +467,7 @@ export class NominationRepository {
     if (!(await this.find(id))) throw new NotFoundError();
     return await this.db.$transaction(async (tx) => {
       await this.assertSingleItem(tx, data.vessels);
-      await this.assertStockCapacity(tx, data.vessels, id);
+      await this.assertStockLoadable(tx, data.vessels);
       // Its own current load is being replaced, so it is left out of the total.
       await this.assertTruckCapacity(tx, data.driverVehicleId, this.totalQuantity(data.vessels), id);
       // The vessel list is replaced wholesale: what the client sends is what
@@ -552,7 +530,7 @@ export class NominationRepository {
     await this.assertSingleItem(tx, vessels, id);
     // A pure addition, so everything already nominated — including this
     // nomination's own vessels — counts against what the stock has left.
-    await this.assertStockCapacity(tx, vessels);
+    await this.assertStockLoadable(tx, vessels);
     // An addition: what the nomination already carries stays on the truck.
     await this.assertTruckCapacity(tx, nomination.driverVehicleId, this.totalQuantity(vessels));
     await tx.nominationVessel.createMany({

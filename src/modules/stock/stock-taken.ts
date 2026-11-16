@@ -278,9 +278,10 @@ export async function usageOfBatches(db: Db, stockIds: string[]) {
 /* ------------------------------------------------------------------------- *
  * How much more a trip may be cleared for
  *
- * A nomination is already held to the batch it draws on: `assertStockCapacity`
- * will not let a trip plan more than the batch has left. The T1 was held to
- * nothing — and the T1 is the figure that actually moves the litres, so a
+ * A nomination is **not** held to the batch it draws on, and deliberately so:
+ * it is a prediction, it takes nothing, and a truck is routinely planned onto a
+ * cargo holding fewer litres than its tank. Which makes this the only place a
+ * batch is held to its figure at all. The T1 is what moves the litres, so a
  * mistyped one could clear 300,000 out of a 30,000 cargo and the batch would
  * report it as taken.
  *
