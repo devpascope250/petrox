@@ -38,7 +38,22 @@ export class T1ValidationRepository {
           select: {
             id: true,
             ambQuantity: true,
+            destination: true,
             timeLine: true,
+            /*
+             * The truck, so a T1 can be picked by the rig that carried it.
+             * Receiving stock is done against a lorry at the gate, and a
+             * product and a quantity do not say which lorry — a plate and
+             * trailer do (`rigName`).
+             */
+            driverVehicle: {
+              select: {
+                vechile: {
+                  select: { id: true, platNumber: true, trailerNumber: true, truckNumber: true },
+                },
+                driver: { select: { id: true, names: true } },
+              },
+            },
             // A nomination can load from several vessels now, so the stock and
             // its item come through the vessel list rather than one `stock`.
             nominationVessels: {
@@ -49,7 +64,14 @@ export class T1ValidationRepository {
                 ambQuantity: true,
                 stock: {
                   select: {
-                    item: true
+                    item: true,
+                    /*
+                     * The bill of lading. A T1 raised before T1s could name a
+                     * cargo has none of its own, and its fuel came off what
+                     * the trip was nominated from — so the BL is read from
+                     * here when `cargo` above is null (`t1VesselLabel`).
+                     */
+                    cargo: { select: { id: true, vesselName: true, blRef: true } },
                   }
                 }
               }

@@ -294,6 +294,27 @@ export async function usageOfBatches(db: Db, stockIds: string[]) {
  * raise.
  * ------------------------------------------------------------------------- */
 
+/**
+ * How far above a ceiling a T1 may still be accepted: **half a litre**.
+ *
+ * Every screen and every refusal states these figures to the litre, because a
+ * cargo of 39,836.55 litres is read as "39,837" by everyone who handles it. A
+ * clerk types what the screen and the paperwork say, so the **stated** figure
+ * has to be accepted — otherwise the refusal contradicts the number it has
+ * just printed ("leaving 39,837, so at most 39,837 can be cleared" while
+ * refusing 39,837, which is what this fixes).
+ *
+ * Half a litre is one rounding step: the most a figure rounded to the litre can
+ * differ from the exact one. So `Math.round(ceiling)` is always within it, and
+ * a message and the rule behind it can no longer disagree.
+ *
+ * It is also far below what these ceilings can resolve at all: a batch is in
+ * ambient bill-of-lading litres while a T1 is corrected to 20 °C, a difference
+ * of hundreds of litres on a tanker. They catch the typo and the overdraw; the
+ * contraction belongs to the tolerance report.
+ */
+export const CEILING_SLACK = 0.5;
+
 /** What one of a trip's batches will still take, measured in T1 litres. */
 export interface BatchCeiling {
   /** The batch, and the shipment behind it. */
@@ -535,11 +556,11 @@ export async function assertT1WithinCargo(
     : ceilings.map((batch) => ({ batch, against: batch.ceiling }));
 
   for (const { batch, against } of judged) {
-    // A hundredth of a litre of slack: the ceiling is a division, and refusing
-    // a T1 over floating-point dust would be a lie about the fuel.
-    if (quantityAt20C <= against + 0.01) continue;
+    // Half a litre of slack, so the figure the screen states is accepted —
+    // and the division that produced `against` cannot refuse over dust either.
+    if (quantityAt20C <= against + CEILING_SLACK) continue;
     const vessel = batch.vessel ?? "This batch";
-    const whole = Math.abs(against - batch.headroom) <= 0.01;
+    const whole = Math.abs(against - batch.headroom) <= CEILING_SLACK;
     throw new BusinessError(
       "CARGO_QUANTITY_EXCEEDED",
       `${vessel} cannot clear this much ${batch.itemName}. `
@@ -650,8 +671,9 @@ export async function assertT1WithinTrip(
 ) {
   const trip = await tripCeilingOf(db, nominationId, excludeT1Id);
   if (!trip) return;
-  // The same hundredth of a litre of slack as the batch ceilings allow.
-  if (quantityAt20C <= trip.remaining + 0.01) return;
+  // The same half-litre of slack as the batch ceilings allow: this figure is
+  // shown rounded too ("… remaining in vessel"), and it is typed back in.
+  if (quantityAt20C <= trip.remaining + CEILING_SLACK) return;
 
   throw new BusinessError(
     "TRIP_QUANTITY_EXCEEDED",
