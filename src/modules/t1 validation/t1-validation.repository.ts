@@ -87,6 +87,16 @@ export class T1ValidationRepository {
     const term = query.search?.trim();
     const where: Prisma.T1ValidationWhereInput = {
       createdAt: { gte: query.startDate, lte: query.endDate },
+      /*
+       * Received into central stock, or still owed. Judged by whether a
+       * receipt exists against the T1 — the same test `listByCompleted` makes
+       * when it decides which T1s the central-stock form may still pick.
+       */
+      ...(query.received === undefined
+        ? {}
+        : query.received
+          ? { centralStocks: { some: {} } }
+          : { centralStocks: { none: {} } }),
       ...(term
         ? {
             OR: [
@@ -133,6 +143,24 @@ export class T1ValidationRepository {
         cargo: { select: { id: true, vesselName: true, blRef: true } },
         extraValidations: true,
         supportingDocUrl: true,
+        /*
+         * The receipt, where the fuel has been received into central stock.
+         * An empty list is a T1 still owed — which is what the `received`
+         * filter sorts on, so the row can say which group it is in rather
+         * than leaving a filtered list looking arbitrary.
+         *
+         * At most one receipt can exist per T1 (`listByCompleted` drops a T1
+         * as soon as one does), so this is a list of nought or one.
+         */
+        centralStocks: {
+          select: {
+            id: true,
+            receiptNumber: true,
+            quantityAt20C: true,
+            ambQuantity: true,
+            createdAt: true,
+          },
+        },
         nomination: {
           select: {
             id: true,

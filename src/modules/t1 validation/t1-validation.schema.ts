@@ -14,6 +14,27 @@ import {
  */
 export const t1ListQuerySchema = pagedDatesQuerySchema.extend({
   search: z.string().trim().max(100).optional(),
+  /**
+   * Whether the T1's fuel has been **received into central stock**.
+   *
+   * Three states, not two: left out means every T1, which is what the page
+   * opens on. `true` is the ones already receipted, `false` the ones still
+   * owed — the queue a receiving clerk works from.
+   *
+   * Received means a `CentralStock` row exists against it. That is the same
+   * test `listByCompleted` makes when it decides which T1s are still
+   * selectable in the central-stock form, so the two cannot disagree.
+   *
+   * Not `z.coerce.boolean()`: a query string carries "false", and
+   * `Boolean("false")` is `true` — the filter could never be set to "not
+   * received" from a URL.
+   */
+  received: z
+    .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+    // Transformed before `.optional()`, so the key itself stays optional
+    // rather than becoming one that must be passed as `undefined`.
+    .transform((value) => value === true || value === "true" || value === "1")
+    .optional(),
 });
 
 export type T1ListQuery = z.infer<typeof t1ListQuerySchema>;
