@@ -30,6 +30,8 @@ export class T1ValidationRepository {
         quantityAt20C: true,
         /** The customs declaration it was cleared under. */
         sdReference: true,
+        /** The day the truck was loaded, off the document. */
+        loadingDate: true,
         /** Where the load is said to have come from. Reference only. */
         cargo: { select: { id: true, vesselName: true, blRef: true } },
         extraValidations: true,
@@ -134,6 +136,8 @@ export class T1ValidationRepository {
         quantityAt20C: true,
         /** The customs declaration it was cleared under. */
         sdReference: true,
+        /** The day the truck was loaded, off the document. */
+        loadingDate: true,
         /**
          * The shipment this T1's fuel is said to have come off. Reference
          * only — the litres are drawn from the nomination's own batches — and
@@ -158,6 +162,8 @@ export class T1ValidationRepository {
             receiptNumber: true,
             quantityAt20C: true,
             ambQuantity: true,
+            /** When it was discharged, not when the receipt was typed. */
+            offloadingDate: true,
             createdAt: true,
           },
         },
@@ -319,6 +325,9 @@ export class T1ValidationRepository {
         cargoId: data.cargoId ?? null,
         quantityAt20C: data.quantityAt20C,
         sdReference: data.sdReference,
+        // When the truck was loaded, as the document says — not when this row
+        // was typed, which is what `createdAt` already records.
+        loadingDate: data.loadingDate ?? null,
         extraValidations: {
           create: {
             customOffice: data.customOffice,
@@ -364,6 +373,7 @@ export class T1ValidationRepository {
         cargoId: data.cargoId ?? null,
         quantityAt20C: data.quantityAt20C,
         sdReference: data.sdReference,
+        loadingDate: data.loadingDate ?? null,
         extraValidations: {
           update: {
             where: {id: extraT1Id},

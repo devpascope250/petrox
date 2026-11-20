@@ -55,6 +55,21 @@ export const createCentralStockSchema = z.object({
   ambQuantity: z.coerce.number(),
   quantityAt20C: z.coerce.number(),
   receiptNumber: z.string(),
+  /**
+   * The day the truck was **actually discharged** into the depot.
+   *
+   * The other end of `T1Validation.loadingDate`: the pair says how long the
+   * load was on the road. `createdAt` cannot say it — a receipt is keyed in
+   * when the paperwork arrives, not as the hose comes off.
+   *
+   * Optional, and emptied rather than stored as an invalid date when the form
+   * sends "": every receipt already on record has none.
+   */
+  offloadingDate: z
+    .union([z.coerce.date(), z.literal("")])
+    .optional()
+    .nullable()
+    .transform((value) => (value instanceof Date ? value : null)),
   supportingDocUrl: z.string().optional().nullable(),
   t1ValidationId: uuidSchema,
   status:  z.enum(CentralStockStatus).default("inStock").optional(),

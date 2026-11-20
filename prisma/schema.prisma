@@ -904,6 +904,18 @@ model T1Validation {
   cargo            Cargo?     @relation(fields: [cargoId], references: [id])
   exportingCountry String
   quantityAt20C    Decimal    @default(0.0) @db.Decimal(18, 2)
+  /// The day the truck was actually loaded, as the paperwork states it.
+  ///
+  /// Not `createdAt`: a T1 is typed in when the document reaches the office,
+  /// which is routinely days after the loading it describes. The two are the
+  /// reason this is its own column — one says when the fuel moved, the other
+  /// when somebody recorded it.
+  ///
+  /// `Nomination.expectedLoadingDate` is the *plan*; this is what happened.
+  ///
+  /// Nullable: every row already on record predates it, and the date cannot be
+  /// guessed for the past without inventing it.
+  loadingDate      DateTime?
   /// The reference on the customs declaration this T1 was cleared under.
   /// Optional: every row already on record predates it.
   sdReference      String?
@@ -948,6 +960,15 @@ model CentralStock {
   ambQuantity        Decimal             @default(0.0) @db.Decimal(18, 2)
   quantityAt20C      Decimal             @default(0.0) @db.Decimal(18, 2)
   receiptNumber      String?
+  /// The day the truck was actually discharged into the depot.
+  ///
+  /// The other end of `T1Validation.loadingDate`: the two together say how
+  /// long the load was on the road, which is the transporter's own time and
+  /// cannot be read off `createdAt` — a receipt is keyed in when the paperwork
+  /// arrives, not as the hose comes off.
+  ///
+  /// Nullable: every receipt already on record predates it.
+  offloadingDate     DateTime?
   supportingDocUrl   String?
   t1ValidationId     String
   t1Validation       T1Validation        @relation(fields: [t1ValidationId], references: [id])

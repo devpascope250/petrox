@@ -75,6 +75,22 @@ export const createT1ValidationsSchema = z.object({
    * every row entered before this field existed has none.
    */
   sdReference: z.string().trim().max(120).optional().transform((value) => value || null),
+  /**
+   * The day the truck was **actually loaded**, off the transit document.
+   *
+   * Not the same thing as when this row was created: the document reaches the
+   * office days after the loading it describes, so `createdAt` cannot stand in
+   * for it. `Nomination.expectedLoadingDate` is the plan; this is what happened.
+   *
+   * Optional, and emptied rather than stored as an invalid date when the form
+   * sends "": every T1 already on record has none, and the date is not always
+   * legible when the row is first entered.
+   */
+  loadingDate: z
+    .union([z.coerce.date(), z.literal("")])
+    .optional()
+    .nullable()
+    .transform((value) => (value instanceof Date ? value : null)),
   supportingDocUrl: z.string().optional().nullable(),
   createdBy: z.string().optional()
 });

@@ -36,6 +36,10 @@ export class CentralStockRepository {
         quantityAt20C: true, 
         supportingDocUrl: true,
         receiptNumber: true,
+        // When the load was discharged, as against `createdAt`, which is when
+        // the receipt was typed. The pair with the T1's `loadingDate` is what
+        // says how long the load was on the road.
+        offloadingDate: true,
         status: true, 
         createdAt: true, 
         updatedAt: true,
@@ -51,6 +55,8 @@ export class CentralStockRepository {
           id: true, exportingCountry: true, supportingDocUrl: true, createdAt: true,
           // What customs validated, so a receipt can be compared against it.
           quantityAt20C: true,
+          // The day it was loaded, beside the day it was discharged.
+          loadingDate: true,
           nomination: { select: {
             id: true, ambQuantity: true, destination: true, expectedLoadingDate: true,
             nominationVessels: { orderBy: { createdAt: "asc" }, select: {
@@ -128,6 +134,7 @@ export class CentralStockRepository {
         clearedQuantity: number; unclearedQuantity: number;
         supportingDocUrl: string | null;
         receiptNumber: string | null;
+        offloadingDate: Date | null;
         // The receipt's own measured figures and reconciliation — previously
         // only the newest receipt's leaked onto the item group.
         ambQuantity: number; quantityAt20C: number;
@@ -244,6 +251,7 @@ export class CentralStockRepository {
         soldOutQuantity, remainingQuantity, clearedQuantity, unclearedQuantity,
         supportingDocUrl: stock.supportingDocUrl, status: stock.status,
         receiptNumber: stock.receiptNumber,
+        offloadingDate: stock.offloadingDate,
         ambQuantity: Number(stock.ambQuantity), quantityAt20C: Number(stock.quantityAt20C),
         lossQty: stock.lossQty === null ? null : Number(stock.lossQty),
         gainQty: stock.gainQty === null ? null : Number(stock.gainQty),
@@ -292,6 +300,8 @@ export class CentralStockRepository {
         deportId: data.deportId, 
         t1ValidationId: data.t1ValidationId, 
         receiptNumber: data.receiptNumber,
+        // When the hose came off, not when this was keyed in.
+        offloadingDate: data.offloadingDate ?? null,
         itemId: data.itemId,
         transactions: { 
           create: { 
