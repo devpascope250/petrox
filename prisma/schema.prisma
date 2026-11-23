@@ -425,7 +425,12 @@ model Deport {
   updatedAt     DateTime       @updatedAt
   stocks        Stock[]
   cargos        Cargo[]
-  centralStocks CentralStock[]
+  /// Receipts **discharged here** — where the fuel physically ended up.
+  centralStocks CentralStock[] @relation("CentralStockDeport")
+  /// Receipts that were *dispatched to* here. Named separately because a load
+  /// is not always discharged where it was sent: the two are compared, so they
+  /// cannot be the same column.
+  centralStockDestinations CentralStock[] @relation("CentralStockDestination")
 
   @@index([id])
   @@index([status])
@@ -953,8 +958,22 @@ enum ExtraT1ValidationStatus {
 
 model CentralStock {
   id                 String              @id @default(uuid())
+  /// Where the load was **sent**, as the trip was dispatched.
+  ///
+  /// Chosen from the same depot list as `deportId`, and recorded beside it
+  /// rather than instead of it: `deportId` is where the fuel was actually
+  /// discharged, and a load diverted en route is only visible when both are
+  /// on the row. `Nomination.destination` is free text typed when the trip was
+  /// raised; this is the depot itself.
+  ///
+  /// Nullable: every receipt already on record predates it, and no destination
+  /// can be recovered for the past from a free-text field that may name a town
+  /// rather than a depot.
+  destinationId      String?
+  destination        Deport?             @relation("CentralStockDestination", fields: [destinationId], references: [id])
+  /// Where the load was actually discharged.
   deportId           String
-  deport             Deport              @relation(fields: [deportId], references: [id])
+  deport             Deport              @relation("CentralStockDeport", fields: [deportId], references: [id])
   itemId             String
   item               Item                @relation(fields: [itemId], references: [id])
   ambQuantity        Decimal             @default(0.0) @db.Decimal(18, 2)
@@ -986,6 +1005,7 @@ model CentralStock {
 
   @@index([id])
   @@index([deportId])
+  @@index([destinationId])
   @@index([itemId])
   @@index([t1ValidationId])
   @@index([status])

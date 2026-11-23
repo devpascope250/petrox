@@ -51,6 +51,9 @@ export class CentralStockRepository {
           baseUnit: { select: { id: true, name: true, code: true } },
         } },
         deport: { select: { id: true, name: true, location: true, type: true, status: true } },
+        // Where it was *sent*, beside where it went. Selected the same way, so
+        // the two can be read against each other without a second lookup.
+        destination: { select: { id: true, name: true, location: true, type: true, status: true } },
         t1Validation: { select: {
           id: true, exportingCountry: true, supportingDocUrl: true, createdAt: true,
           // What customs validated, so a receipt can be compared against it.
@@ -146,6 +149,7 @@ export class CentralStockRepository {
         feeCount: number;
          status: typeof centralStocks[number]["status"];
         createdAt: Date; updatedAt: Date; depot: typeof centralStocks[number]["deport"];
+        destination: typeof centralStocks[number]["destination"];
         t1Validation: typeof centralStocks[number]["t1Validation"];
         clearances: Array<{
           id: string; quantity: number; fees: number | null;
@@ -259,7 +263,8 @@ export class CentralStockRepository {
         fees: landed.fees, feeTotals: landed.feeTotals, feeCount: landed.feeCount,
         createdAt: stock.createdAt, updatedAt: stock.updatedAt,
         // The database relation is named `deport`; expose it as `depot`.
-        depot: stock.deport, t1Validation: stock.t1Validation, clearances, transactions,
+        depot: stock.deport, destination: stock.destination,
+        t1Validation: stock.t1Validation, clearances, transactions,
       });
     }
 
@@ -298,6 +303,8 @@ export class CentralStockRepository {
         ambQuantity: data.ambQuantity, 
         quantityAt20C: data.quantityAt20C,
         deportId: data.deportId, 
+        // Where it was sent, which is not necessarily where it was discharged.
+        destinationId: data.destinationId ?? null,
         t1ValidationId: data.t1ValidationId, 
         receiptNumber: data.receiptNumber,
         // When the hose came off, not when this was keyed in.

@@ -51,6 +51,23 @@ const feesField = z.union([z.string(), z.array(z.unknown())])
 
 export const createCentralStockSchema = z.object({
   deportId: uuidSchema,
+  /**
+   * The depot this load was **sent to**, chosen from the same list as
+   * `deportId`.
+   *
+   * Beside where it was discharged, not instead of it: a load that went
+   * somewhere other than where it was dispatched is only visible when the
+   * receipt carries both ends. `Nomination.destination` is free text and may
+   * name a town, so it cannot answer this.
+   *
+   * Optional, and emptied rather than rejected when the form sends "": every
+   * receipt already on record has none.
+   */
+  destinationId: z
+    .union([uuidSchema, z.literal("")])
+    .optional()
+    .nullable()
+    .transform((value) => value || null),
   itemId:  uuidSchema,
   ambQuantity: z.coerce.number(),
   quantityAt20C: z.coerce.number(),
