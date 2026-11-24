@@ -9,7 +9,9 @@ import {
 } from "../../shared/validation/index.js";
 import { CargoService } from "./cargo.service.js";
 import { CargoRepository } from "./cargo.repository.js";
-import { cargoListQuerySchema, createCargoSchema, fileSchema, returnCargoSchema } from "./cargo.schema.js";
+import {
+  cargoListQuerySchema, changeCargoDepotSchema, createCargoSchema, fileSchema, returnCargoSchema,
+} from "./cargo.schema.js";
 import { readCargoUpload } from "./cargo-upload.js";
 import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
@@ -143,6 +145,25 @@ const routes: FastifyPluginAsync = async (app) => {
 
       return created(reply, cargo);
     },
+  );
+
+  /**
+   * Moves an **approved** shipment to another depot, taking its batches with
+   * it. JSON: `{ "deportId": "…" }`.
+   *
+   * Its own route rather than part of `PUT /:id`, which is closed once a
+   * shipment is approved: the figures are settled by then, but a depot can
+   * simply have been keyed in wrong and still needs correcting. Gated on
+   * `cargo.edit`, the same permission the edit it stands in for needed.
+   */
+  app.patch(
+    "/:id/depot",
+    { preHandler: [app.authenticate, app.authorize("cargo.edit", "cargo.manage")] },
+    async (request) =>
+      success(await service.changeDepot(
+        parseInput(recordIdParamsSchema, request.params).id,
+        parseInput(changeCargoDepotSchema, request.body).deportId,
+      )),
   );
 
   /**

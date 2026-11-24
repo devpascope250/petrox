@@ -200,6 +200,76 @@ export class CargoRepository {
     });
   }
 
+  /**
+   * Moves an **approved** shipment to another depot — and its batches with it.
+   *
+   * Not part of the edit, on purpose. An edit is closed once a shipment is
+   * approved because approval raised stock against its figures; where the fuel
+   * is standing is a different kind of fact, one that can simply have been
+   * typed wrong, and correcting it must not reopen the quantities.
+   *
+   * The `Stock` rows move in the same transaction. Approval copies the depot
+   * onto each batch, and it is the batch — not the cargo — that the stock
+   * report and the nomination picker read: moving the cargo alone would leave
+   * its fuel still offered from the depot it was never in.
+   *
+   * Every batch of the shipment moves, including any already reversed. A
+   * shipment is in one place; leaving a row behind would split it across two
+   * depots and have the totals disagree about where its litres are.
+   */
+  async changeDepot(id: string, deportId: string) {
+    const cargo = await this.db.cargo.findUnique({
+      where: { id },
+      select: { id: true, status: true, deportId: true },
+    });
+    if (!cargo) throw new NotFoundError("Cargo");
+
+    /*
+     * Approved only. A pending shipment is edited through the form, which
+     * already carries the depot; a cancelled, returned or replaced one is
+     * finished with, and moving the record of something that has been sent
+     * back says nothing true about where any fuel is.
+     */
+    if (cargo.status !== "approved") {
+      throw new BusinessError(
+        "CARGO_DEPOT_NOT_APPROVED",
+        cargo.status === "pending"
+          ? "This shipment is still pending — edit it instead, where the depot can be set with the rest."
+          : "This shipment is finished with, so its depot can no longer be moved.",
+      );
+    }
+
+    if (cargo.deportId === deportId) {
+      throw new BusinessError("CARGO_DEPOT_UNCHANGED", "This shipment is already in that depot.");
+    }
+
+    const depot = await this.db.deport.findUnique({
+      where: { id: deportId },
+      select: { id: true, name: true, status: true },
+    });
+    if (!depot) throw new NotFoundError("Depot");
+    // The same rule the forms apply: stock is not put into a depot that is no
+    // longer in use.
+    if (depot.status !== "active") {
+      throw new BusinessError("CARGO_DEPOT_INACTIVE", `${depot.name} is not active.`);
+    }
+
+    return await this.db.$transaction(async (tx) => {
+      const batches = await tx.stock.updateMany({ where: { cargoId: id }, data: { deportId } });
+      const updated = await tx.cargo.update({
+        where: { id, status: "approved" },
+        data: { deportId },
+        select: {
+          id: true, status: true, deportId: true, blRef: true, vesselName: true,
+          deport: { select: { id: true, name: true, location: true } },
+        },
+      });
+      // How many batches went with it, so the answer says what moved rather
+      // than only that something did.
+      return { ...updated, movedBatches: batches.count, previousDeportId: cargo.deportId };
+    });
+  }
+
   /** How far this shipment's litres have travelled — see `cargo-movement`. */
   movement(id: string) {
     return cargoMovement(this.db, id);

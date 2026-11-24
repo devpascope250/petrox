@@ -83,6 +83,21 @@ export const returnCargoSchema = z.object({
 
 export type ReturnCargoSchema = z.infer<typeof returnCargoSchema>;
 
+/**
+ * Moving an **approved** shipment to another depot.
+ *
+ * Its own body, and one field only, because this is deliberately not an edit:
+ * approval raised stock against the shipment, so its quantities and its order
+ * are settled. Where the fuel is sitting is a different kind of fact — it can
+ * simply have been keyed in wrong — and correcting it must not be a door back
+ * into the figures.
+ */
+export const changeCargoDepotSchema = z.object({
+  deportId: uuidSchema,
+});
+
+export type ChangeCargoDepotSchema = z.infer<typeof changeCargoDepotSchema>;
+
 export const fileSchema = z.file().optional().nullable();
 export type FileSchema = z.infer<typeof fileSchema>;
 export type CreateCargoSchema = z.infer<typeof createCargoSchema>;

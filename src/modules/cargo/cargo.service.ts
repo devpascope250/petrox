@@ -62,6 +62,14 @@ export class CargoService {
     return this.withDocumentUrls(await this.repo.update(id, input));
   }
 
+  /**
+   * Moves an approved shipment, and its batches, to another depot. No document
+   * URLs to resolve: the answer is the depot and what moved with it.
+   */
+  changeDepot(id: string, deportId: string) {
+    return this.repo.changeDepot(id, deportId);
+  }
+
   async updateStatus (id: string, status: CargoStatus, receivedDate: Date) {
     return this.withDocumentUrls(await this.repo.changeStatus(id, status, receivedDate));
   }
