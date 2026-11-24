@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, StockTransaction } from "../../../prisma/generated/prisma/client.js";
 import { toleranceColumns, toleranceForReceipt } from "./tolerance-rules.js";
+import { receiptWindow } from "./receipt-window.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { presentFees, reportFeeSelect, sumFeeTotals } from "../fees/fee.repository.js";
 import { releaseParkingForNomination } from "../vehicle-locations/vehicle-location.repository.js";
@@ -20,12 +21,10 @@ export class CentralStockRepository {
     const centralStocks = await this.db.centralStock.findMany({
       orderBy: { createdAt: "desc" },
       where: {
-        ...(startDate || endDate ? {
-          createdAt: {
-            ...(startDate && { gte: startDate }),
-            ...(endDate && { lte: endDate }),
-          },
-        } : {}),
+        // The day the load was discharged, falling back to the day the
+        // receipt was keyed in — see `receiptWindow`. The rows stay ordered by
+        // `createdAt`, which is the one date every receipt has.
+        ...receiptWindow(startDate, endDate),
         ...(depotId && { deportId: depotId }),
         ...(status && { status }),
         ...(itemId && { itemId }),

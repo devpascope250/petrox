@@ -103,6 +103,48 @@ export function toleranceFor(input: {
   };
 }
 
+/**
+ * What a receipt was recorded as taking in, reconstructed from the snapshot it
+ * keeps — **not** from its live `quantityAt20C`.
+ *
+ * The two are not the same number. A reconciliation decrements
+ * `CentralStock.quantityAt20C`, because that column doubles as the receipt's
+ * running balance: 30,000 taken in and 2,000 later reconciled out reads as
+ * 28,000. Grading a trip against the live column therefore re-judges it every
+ * time the depot's balance moves, and a transporter whose load was exact would
+ * be shown — and could be invoiced — as 2,000 short for a discrepancy found
+ * months later and nothing to do with them.
+ *
+ * `lossQty` and `gainQty` are written once, when the load is taken in, and
+ * never touched again. Since `difference = t1 - received` and the two columns
+ * are its positive and negative halves, the figure as it stood that day comes
+ * straight back out:
+ *
+ *     received = t1 - (lossQty - gainQty)
+ *
+ * The same reasoning as the `toleranceRate` snapshot beside them: a trip
+ * already made is not re-judged by anything that happened afterwards.
+ *
+ * Falls back to the live column when neither is recorded — receipts written
+ * before those columns existed have no snapshot to read, and a report that
+ * dropped them would be worse than one that grades them as they stand.
+ */
+export function receivedAsRecorded(input: {
+  t1Quantity: Prisma.Decimal | number | string | null;
+  lossQty: Prisma.Decimal | number | string | null;
+  gainQty: Prisma.Decimal | number | string | null;
+  /** The live column, used only when there is no snapshot. */
+  quantityAt20C: Prisma.Decimal | number | string;
+}): Prisma.Decimal {
+  // Both null means "never recorded". Both zero is a real snapshot — a trip
+  // that arrived exactly — so the test is nullness, never truthiness.
+  if (input.lossQty === null && input.gainQty === null) return money(input.quantityAt20C);
+  const t1 = money(input.t1Quantity ?? 0);
+  const loss = money(input.lossQty ?? 0);
+  const gain = money(input.gainQty ?? 0);
+  return money(t1.minus(loss.minus(gain)));
+}
+
 /** The columns a central stock receipt carries, from what the trip came to. */
 export function toleranceColumns(tolerance: Tolerance) {
   return {

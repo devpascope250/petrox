@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { allowedToleranceRate, toleranceColumns, toleranceFor } from "../src/modules/central-stock/tolerance-rules.js";
+import {
+  allowedToleranceRate, receivedAsRecorded, toleranceColumns, toleranceFor,
+} from "../src/modules/central-stock/tolerance-rules.js";
+import { receiptWindow } from "../src/modules/central-stock/receipt-window.js";
 
 /** 40,000 litres cleared at the border, as a tanker carries. */
 const trip = (received: number, allowedRate: number | null = 1) =>
@@ -113,5 +116,96 @@ describe("what the transporter is answerable for", () => {
   it("charges nothing when the product carries no rate", () => {
     // Nothing can be charged against an allowance nobody has set.
     expect(trip(39_400, null).chargeableQty).toBeNull();
+  });
+});
+
+/**
+ * A reconciliation months later must not re-judge a trip already made.
+ *
+ * `CentralStock.quantityAt20C` doubles as the receipt's running balance, so
+ * every reconciliation moves it. Grading a trip against it would turn a depot
+ * discrepancy found in March into a shortfall charged to whoever drove in
+ * November — on a report with a "send to transporter" button on it.
+ */
+describe("what a receipt was recorded as taking in", () => {
+  const taken = (options: {
+    lossQty: number | null;
+    gainQty: number | null;
+    quantityAt20C: number;
+  }) => receivedAsRecorded({ t1Quantity: 40_000, ...options }).toString();
+
+  it("reads the snapshot, not the balance the receipt has been reduced to", () => {
+    // Took in exactly what the T1 cleared, then 2,000 was reconciled out.
+    expect(taken({ lossQty: 0, gainQty: 0, quantityAt20C: 38_000 })).toBe("40000");
+  });
+
+  it("keeps a real shortfall intact", () => {
+    expect(taken({ lossQty: 240, gainQty: 0, quantityAt20C: 39_760 })).toBe("39760");
+    // And still does after a later reconciliation moved the balance.
+    expect(taken({ lossQty: 240, gainQty: 0, quantityAt20C: 10_000 })).toBe("39760");
+  });
+
+  it("keeps a real gain intact", () => {
+    expect(taken({ lossQty: 0, gainQty: 500, quantityAt20C: 40_500 })).toBe("40500");
+  });
+
+  it("falls back to the live column when there is no snapshot", () => {
+    // Receipts written before those columns existed have nothing to read, and
+    // dropping them from the report would be worse than grading them as they
+    // stand.
+    expect(taken({ lossQty: null, gainQty: null, quantityAt20C: 39_000 })).toBe("39000");
+  });
+
+  it("treats a recorded zero as a snapshot, not as a missing one", () => {
+    // Both columns zero is a trip that arrived exactly — the test has to be
+    // nullness, never truthiness.
+    expect(taken({ lossQty: 0, gainQty: null, quantityAt20C: 1 })).toBe("40000");
+  });
+
+  it("round-trips whatever toleranceFor stored, so the two cannot disagree", () => {
+    for (const received of [40_000, 39_760, 40_500, 0]) {
+      const stored = toleranceFor({ t1Quantity: 40_000, receivedQuantity: received, allowedRate: 1 });
+      expect(receivedAsRecorded({
+        t1Quantity: 40_000,
+        lossQty: stored.lossQty,
+        gainQty: stored.gainQty,
+        // Deliberately wrong, to prove it is not consulted.
+        quantityAt20C: -1,
+      }).toString()).toBe(String(received));
+    }
+  });
+});
+
+/**
+ * A dated report asked about October should answer about October's fuel, not
+ * October's typing. `createdAt` is `@default(now())` and nothing can set it, so
+ * a backlog keyed in today would otherwise all land in today's window.
+ */
+describe("the window a dated report puts over receipts", () => {
+  const from = new Date("2026-10-01");
+  const to = new Date("2026-10-31");
+
+  it("asks for the discharge date, and falls back to the typing date", () => {
+    expect(receiptWindow(from, to)).toEqual({
+      OR: [
+        { offloadingDate: { gte: from, lte: to } },
+        // Only where no discharge date was recorded — so a receipt that states
+        // one is never also matched by when it was keyed in.
+        { offloadingDate: null, createdAt: { gte: from, lte: to } },
+      ],
+    });
+  });
+
+  it("is empty when no window is asked for, so it can be spread anywhere", () => {
+    expect(receiptWindow()).toEqual({});
+  });
+
+  it("takes an open-ended window", () => {
+    expect(receiptWindow(from, undefined)).toEqual({
+      OR: [
+        { offloadingDate: { gte: from, lte: undefined } },
+        { offloadingDate: null, createdAt: { gte: from, lte: undefined } },
+      ],
+    });
   });
 });

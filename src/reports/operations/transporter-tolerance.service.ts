@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginatedData, paginationArgs } from "../../shared/pagination/index.js";
-import { toleranceFor } from "../../modules/central-stock/tolerance-rules.js";
+import { receivedAsRecorded, toleranceFor } from "../../modules/central-stock/tolerance-rules.js";
+import { receiptWindow } from "../../modules/central-stock/receipt-window.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { emailService } from "../../utils/emailService.js";
 import type { ShareToleranceSchema, TransporterToleranceReportSchema } from "./transporter-tolerance.schema.js";
@@ -83,9 +84,10 @@ export class TransporterToleranceService {
     return {
       ...(query.itemId ? { itemId: query.itemId } : {}),
       ...(query.deportId ? { deportId: query.deportId } : {}),
-      ...(query.startDate || query.endDate
-        ? { createdAt: { gte: query.startDate, lte: query.endDate } }
-        : {}),
+      // The day the load was discharged, not the day the receipt was typed —
+      // see `receiptWindow`. A statement sent to a transporter has to cover
+      // the trips they actually ran in those weeks.
+      ...receiptWindow(query.startDate, query.endDate),
       ...(Object.keys(vehicle).length
         ? { t1Validation: { nomination: { driverVehicle: { vechile: vehicle } } } }
         : {}),
@@ -96,9 +98,22 @@ export class TransporterToleranceService {
   private present(trip: Trip) {
     const vehicle = trip.t1Validation.nomination.driverVehicle.vechile;
     const driver = trip.t1Validation.nomination.driverVehicle.driver;
+    /*
+     * What came off the truck, from the receipt's own snapshot rather than its
+     * live `quantityAt20C` — that column is also the running balance, and a
+     * reconciliation months later moves it. Without this, a depot discrepancy
+     * found in March turns into a shortfall charged to whoever drove in
+     * November. See `receivedAsRecorded`.
+     */
+    const received = receivedAsRecorded({
+      t1Quantity: trip.t1Validation.quantityAt20C,
+      lossQty: trip.lossQty,
+      gainQty: trip.gainQty,
+      quantityAt20C: trip.quantityAt20C,
+    });
     const tolerance = toleranceFor({
       t1Quantity: trip.t1Validation.quantityAt20C,
-      receivedQuantity: trip.quantityAt20C,
+      receivedQuantity: received,
       // The snapshot on the receipt, not the product's rate today.
       allowedRate: trip.toleranceRate,
     });
@@ -124,8 +139,14 @@ export class TransporterToleranceService {
       vehicle: { id: vehicle.id, platNumber: vehicle.platNumber,
         truckNumber: vehicle.truckNumber, trailerNumber: vehicle.trailerNumber },
       driver,
-      /** What was taken in, at 20 °C — and at ambient, for the paperwork. */
-      receivedAt20C: money(trip.quantityAt20C),
+      /**
+       * What was taken in, at 20 °C — and at ambient, for the paperwork.
+       *
+       * The as-recorded figure, so the quantity on the statement and the loss
+       * beside it follow from each other. The depot's balance today is the
+       * stock report's business, not this one's.
+       */
+      receivedAt20C: money(received),
       receivedAmbient: money(trip.ambQuantity),
       difference: money(tolerance.difference),
       lossQty: money(tolerance.lossQty),

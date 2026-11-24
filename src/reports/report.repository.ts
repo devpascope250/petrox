@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient } from "../../prisma/generated/prisma/client.js";
-import { toleranceFor } from "../modules/central-stock/tolerance-rules.js";
+import { receivedAsRecorded, toleranceFor } from "../modules/central-stock/tolerance-rules.js";
+import { receiptWindow } from "../modules/central-stock/receipt-window.js";
 import { paginatedData, paginationArgs } from "../shared/pagination/index.js";
 import { presentFees, reportFeeSelect, sumFeeTotals } from "../modules/fees/fee.repository.js";
 import {
@@ -549,9 +550,21 @@ export class ReportRepository {
             t1Validation.quantityAt20C,
             nomination.ambQuantity,
           );
+          /*
+           * The quantity as it was taken in, from the receipt's snapshot —
+           * `quantityAt20C` is also the running balance and moves with every
+           * reconciliation, which would re-grade a trip long after it was
+           * made. See `receivedAsRecorded`.
+           */
+          const received = num(receivedAsRecorded({
+            t1Quantity: t1Validation.quantityAt20C,
+            lossQty: stock.lossQty,
+            gainQty: stock.gainQty,
+            quantityAt20C: stock.quantityAt20C,
+          }));
           const atStandard = this.assessTolerance(
             expected.quantity,
-            num(stock.quantityAt20C),
+            received,
             appliedRate,
             expected.basis,
           );
@@ -615,9 +628,18 @@ export class ReportRepository {
                 stock.toleranceRate === null ? null : num(stock.toleranceRate),
               gainQty: stock.gainQty === null ? null : num(stock.gainQty),
               lossQty: stock.lossQty === null ? null : num(stock.lossQty),
+              /*
+               * Whether the snapshot still agrees with the receipt's **live**
+               * balance. It no longer tests the assessment above, which is now
+               * built from the snapshot itself and so could only ever agree.
+               *
+               * What `false` means: this receipt's balance has moved since it
+               * was taken in — it has been reconciled. Worth seeing, and the
+               * reason the comparison is kept rather than dropped.
+               */
               matchesComputed:
                 round(num(stock.gainQty) - num(stock.lossQty)) ===
-                atStandard.variance,
+                round(num(stock.quantityAt20C) - expected.quantity),
             },
           };
         },
@@ -644,7 +666,14 @@ export class ReportRepository {
       );
       return this.assessTolerance(
         expected.quantity,
-        num(receipt.quantityAt20C),
+        // As recorded, exactly as the per-item rows above — one figure, so the
+        // headline and the lines beneath it cannot disagree.
+        num(receivedAsRecorded({
+          t1Quantity: receipt.t1Validation.quantityAt20C,
+          lossQty: receipt.lossQty,
+          gainQty: receipt.gainQty,
+          quantityAt20C: receipt.quantityAt20C,
+        })),
         receipt.toleranceRate === null
           ? (rateByItem.get(receipt.itemId) ?? null)
           : num(receipt.toleranceRate),
@@ -770,7 +799,9 @@ export class ReportRepository {
       ...(query.clearanceStatus && {
         stockClearances: { some: { status: query.clearanceStatus } },
       }),
-      createdAt: { gte: query.startDate, lte: query.endDate },
+      // When the fuel was discharged, falling back to when it was keyed in —
+      // see `receiptWindow`.
+      ...receiptWindow(query.startDate, query.endDate),
     };
   }
 
