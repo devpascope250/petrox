@@ -1107,6 +1107,24 @@ export class ReportRepository {
             },
             // What landing each receipt cost, to fold up to its item.
             chainStockFees: reportFeeSelect,
+            /*
+             * What of each receipt has been cleared, **as the period ended**
+             * rather than as it stands today. A clearance written in November
+             * must not retrospectively clear October's closing stock, so both
+             * the clearance and the draws against it are windowed to
+             * `endDate`. A row still `uncleared` is an allocation held, not
+             * stock cleared, so only `cleared` counts.
+             */
+            stockClearances: {
+              where: { status: "cleared", createdAt: { lte: query.endDate } },
+              select: {
+                quantity: true,
+                centralStockOrders: {
+                  where: { createdAt: { lte: query.endDate } },
+                  select: { quantity: true },
+                },
+              },
+            },
           },
         });
         const itemByStock = new Map(stocks.map((stock) => [stock.id, stock.item]));
@@ -1133,6 +1151,10 @@ export class ReportRepository {
           reconciledIn: Prisma.Decimal;
           sold: Prisma.Decimal;
           reconciledOut: Prisma.Decimal;
+          /** Of the closing balance, what may be sold. */
+          cleared: Prisma.Decimal;
+          /** The rest of it: held, but not cleared to move. */
+          uncleared: Prisma.Decimal;
         };
         const byItem = new Map<string, Totals>();
         const totalsFor = (stockId: string) => {
@@ -1146,6 +1168,8 @@ export class ReportRepository {
               reconciledIn: zero(),
               sold: zero(),
               reconciledOut: zero(),
+              cleared: zero(),
+              uncleared: zero(),
             };
             byItem.set(item.id, totals);
           }
@@ -1169,6 +1193,52 @@ export class ReportRepository {
           if (row.type === "reconcilliationOut") totals.reconciledOut = totals.reconciledOut.plus(quantity);
         }
 
+        /*
+         * Cleared and uncleared are a split **of the closing balance**, so
+         * they have to be worked out one receipt at a time: clearance papers
+         * belong to a receipt, and capping the total against the item's whole
+         * closing figure would let one receipt's spare clearance cover
+         * another's unpapered litres.
+         *
+         * `before` and `during` together are every movement up to `endDate`,
+         * so their sum per receipt is that receipt's closing balance.
+         */
+        const closingByStock = new Map<string, Prisma.Decimal>();
+        for (const row of [...before, ...during]) {
+          const quantity = row._sum.quantity ?? zero();
+          const incoming = row.type === "received" || row.type === "reconcilliationIn";
+          const running = closingByStock.get(row.centralStockId) ?? zero();
+          closingByStock.set(
+            row.centralStockId,
+            incoming ? running.plus(quantity) : running.minus(quantity),
+          );
+        }
+
+        for (const stock of stocks) {
+          const totals = totalsFor(stock.id);
+          /*
+           * A negative closing means more went out than was ever recorded
+           * coming in — a data error the `closing` column already flags in
+           * red. Clamped to zero here so neither of these two columns reports
+           * a negative quantity of fuel.
+           */
+          const held = Prisma.Decimal.max(closingByStock.get(stock.id) ?? zero(), zero());
+          // What the papers cover less what has already been drawn against
+          // them: a clearance spent on a sale no longer clears anything.
+          const available = stock.stockClearances.reduce((balance, clearance) => {
+            const drawn = clearance.centralStockOrders.reduce(
+              (sold, order) => sold.plus(order.quantity),
+              zero(),
+            );
+            return balance.plus(clearance.quantity).minus(drawn);
+          }, zero());
+          // Papers beyond what is actually standing clear nothing, so the
+          // split is capped by the balance: cleared + uncleared === closing.
+          const cleared = Prisma.Decimal.min(held, Prisma.Decimal.max(available, zero()));
+          totals.cleared = totals.cleared.plus(cleared);
+          totals.uncleared = totals.uncleared.plus(held.minus(cleared));
+        }
+
         const items = [...byItem.values()]
           .sort((a, b) => a.item.name.localeCompare(b.item.name))
           .map((totals) => {
@@ -1182,6 +1252,10 @@ export class ReportRepository {
               consumed: consumed.toNumber(),
               closing: totalStock.minus(consumed).toNumber(),
               totalStock: totalStock.toNumber(),
+              // The closing balance split by whether it may be sold. They add
+              // up to `closing`, except where a receipt closed negative.
+              cleared: totals.cleared.toNumber(),
+              uncleared: totals.uncleared.toNumber(),
               // What each column is made of, for a drill-down or tooltip.
               breakdown: {
                 received: totals.received.toNumber(),
@@ -1209,6 +1283,8 @@ export class ReportRepository {
             consumed: sum((row) => row.consumed),
             closing: sum((row) => row.closing),
             totalStock: sum((row) => row.totalStock),
+            cleared: sum((row) => row.cleared),
+            uncleared: sum((row) => row.uncleared),
             // Never added across currencies: that would be a wrong number
             // rather than a rounded one.
             landingFeeTotals: sumFeeTotals(items.map((row) => row.landingFeeTotals)),
