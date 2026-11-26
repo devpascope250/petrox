@@ -24,6 +24,14 @@ const two = (value: { toFixed: (digits: number) => string } | null) => value ===
 
 async function main() {
   const receipts = await db.centralStock.findMany({
+    /*
+     * Imported receipts only. Tolerance is `t1 - received`, so a receipt
+     * bought from a local supplier has no figure to recompute: it carries no
+     * T1, and its `lossQty`/`gainQty` are null for good rather than stale.
+     * Including them would have the script "correct" every one of them to a
+     * loss of its whole volume.
+     */
+    where: { t1ValidationId: { not: null } },
     orderBy: { createdAt: "asc" },
     select: {
       id: true, receiptNumber: true, itemId: true, quantityAt20C: true,
@@ -55,6 +63,9 @@ async function main() {
   let disagreed = 0;
   let unjudged = 0;
   for (const receipt of receipts) {
+    // Guaranteed by the `where` above; narrowed rather than asserted so this
+    // stays honest if that filter is ever changed.
+    if (!receipt.t1Validation) continue;
     const tolerance = toleranceFor({
       t1Quantity: receipt.t1Validation.quantityAt20C,
       receivedQuantity: receipt.quantityAt20C,

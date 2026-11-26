@@ -413,6 +413,18 @@ export class ReportRepository {
     const stockWhere: Prisma.CentralStockWhereInput = {
       ...(query.deportId && { deportId: query.deportId }),
       ...(query.itemId && { itemId: query.itemId }),
+      /*
+       * Only imported receipts. A local purchase has no T1, so there is
+       * nothing to measure it against — this report grades what the border
+       * cleared against what arrived, and a receipt with no border has
+       * neither figure.
+       *
+       * The nomination filter below already excludes them, since a null
+       * relation matches no nested condition. `t1ValidationId: { not: null }`
+       * says so outright: it is what makes the reader's guards below
+       * belt-and-braces rather than the only thing holding this together.
+       */
+      t1ValidationId: { not: null },
       t1Validation: { nomination: { nominationVessels: { some: { stock: { cargo: { order: orderWhere } } } } } },
     };
     const where: Prisma.ItemWhereInput = { centralStocks: { some: stockWhere } };
@@ -535,7 +547,18 @@ export class ReportRepository {
 
     const items = rows.map(({ centralStocks, toleranceRates, ...item }) => {
       const itemRate = rateByItem.get(item.id) ?? null;
-      const receipts = centralStocks.map(
+      const receipts = centralStocks
+        /*
+         * Unreachable through the filter above, which demands a T1 — guarded
+         * rather than trusted, and narrowed rather than asserted, so this
+         * stays correct if that filter is ever loosened.
+         */
+        .filter(
+          (stock): stock is typeof stock & {
+            t1Validation: NonNullable<typeof stock.t1Validation>;
+          } => stock.t1Validation !== null,
+        )
+        .map(
         ({ t1Validation, deport, ...stock }) => {
           const { nomination } = t1Validation;
           const vessels = nomination.nominationVessels;
@@ -659,7 +682,14 @@ export class ReportRepository {
       };
     });
 
-    const overall = allReceipts.map((receipt) => {
+    const overall = allReceipts
+      // Same reasoning as the per-item rows: no T1, nothing to grade.
+      .filter(
+        (receipt): receipt is typeof receipt & {
+          t1Validation: NonNullable<typeof receipt.t1Validation>;
+        } => receipt.t1Validation !== null,
+      )
+      .map((receipt) => {
       const expected = this.expectedQuantity(
         receipt.t1Validation.quantityAt20C,
         receipt.t1Validation.nomination.ambQuantity,
@@ -825,6 +855,11 @@ export class ReportRepository {
               gainQty: true,
               createdAt: true,
               updatedAt: true,
+              // What a local purchase cost and what delivered it. All null on
+              // an imported receipt — see `source` below.
+              unitPrice: true,
+              currencyCode: true,
+              truckNumber: true,
               item: {
                 select: {
                   id: true,
@@ -920,6 +955,15 @@ export class ReportRepository {
                 row.toleranceRate === null ? null : num(row.toleranceRate),
               lossQty: row.lossQty === null ? null : num(row.lossQty),
               gainQty: row.gainQty === null ? null : num(row.gainQty),
+              /*
+               * Where the fuel came from, derived rather than stored: an
+               * imported load discharged a T1, a local purchase never
+               * crossed a border. Printed reports need the word, and a
+               * receipt with no T1 would otherwise read as one with missing
+               * paperwork.
+               */
+              source: row.t1Validation ? ("import" as const) : ("local" as const),
+              unitPrice: row.unitPrice === null ? null : num(row.unitPrice),
               // Each charge, with the totals by currency. Empty when none
               // were charged, so every row reads the same way.
               ...fees,

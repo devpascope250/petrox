@@ -416,17 +416,17 @@ model Order {
 // moving to Deports
 
 model Deport {
-  id            String         @id @default(uuid())
-  name          String
-  type          DeportType     @default(local)
-  location      String
-  status        String
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  stocks        Stock[]
-  cargos        Cargo[]
+  id                       String         @id @default(uuid())
+  name                     String
+  type                     DeportType     @default(local)
+  location                 String
+  status                   String
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
+  stocks                   Stock[]
+  cargos                   Cargo[]
   /// Receipts **discharged here** — where the fuel physically ended up.
-  centralStocks CentralStock[] @relation("CentralStockDeport")
+  centralStocks            CentralStock[] @relation("CentralStockDeport")
   /// Receipts that were *dispatched to* here. Named separately because a load
   /// is not always discharged where it was sent: the two are compared, so they
   /// cannot be the same column.
@@ -755,30 +755,30 @@ enum CargoStatus {
 /// shipment came instead. So the position before the return and after it are
 /// both readable, and neither is a number that was quietly overwritten.
 model CargoReturn {
-  id       String          @id @default(uuid())
-  cargoId  String
-  cargo    Cargo           @relation(fields: [cargoId], references: [id])
-  kind     CargoReturnKind
+  id                 String          @id @default(uuid())
+  cargoId            String
+  cargo              Cargo           @relation(fields: [cargoId], references: [id])
+  kind               CargoReturnKind
   /// What went back, copied from the cargo as it stood: a return is of the
   /// whole shipment, and the cargo may be corrected by nothing afterwards, but
   /// a snapshot costs nothing and a reference can always drift.
-  quantityInLitre  Decimal @db.Decimal(18, 2)
-  quantityInKg     Decimal @db.Decimal(18, 2)
+  quantityInLitre    Decimal         @db.Decimal(18, 2)
+  quantityInKg       Decimal         @db.Decimal(18, 2)
   /// Required. "Why did 200,000 litres go back" is the whole point of the row.
-  reason           String  @db.Text
-  supportingDocUrl String?
+  reason             String          @db.Text
+  supportingDocUrl   String?
   /// What the **supplier** owes back. Taxes already paid on a clearance and
   /// fees already charged at receipt are not reversed here: that money really
   /// left, and it stays on record as the cost of the aborted shipment.
-  refundAmount     Decimal? @db.Decimal(18, 2)
-  currencyCode     String?
+  refundAmount       Decimal?        @db.Decimal(18, 2)
+  currencyCode       String?
   /// The shipment raised in its place, for a replacement. Set when that cargo
   /// is created, which is a second step — so it is empty in between.
-  replacementCargoId String? @unique
-  replacementCargo   Cargo?  @relation("CargoReturnReplacement", fields: [replacementCargoId], references: [id])
-  decidedBy String   @map("returnedBy")
-  user      User     @relation("CargoReturnDecider", fields: [decidedBy], references: [id])
-  createdAt DateTime @default(now())
+  replacementCargoId String?         @unique
+  replacementCargo   Cargo?          @relation("CargoReturnReplacement", fields: [replacementCargoId], references: [id])
+  decidedBy          String          @map("returnedBy")
+  user               User            @relation("CargoReturnDecider", fields: [decidedBy], references: [id])
+  createdAt          DateTime        @default(now())
 
   @@index([cargoId])
   @@index([createdAt])
@@ -989,8 +989,41 @@ model CentralStock {
   /// Nullable: every receipt already on record predates it.
   offloadingDate     DateTime?
   supportingDocUrl   String?
-  t1ValidationId     String
-  t1Validation       T1Validation        @relation(fields: [t1ValidationId], references: [id])
+  /// The border clearance this receipt discharged, for an **imported** load.
+  ///
+  /// Nullable because it is also what tells the two kinds of receipt apart:
+  /// a load bought from a local supplier never crossed a border, so there is
+  /// no T1 to attach. `t1ValidationId == null` **is** the definition of a
+  /// local purchase — deliberately not a separate `type` column, which could
+  /// disagree with the data it describes.
+  ///
+  /// ⚠️ Not the same question as `Deport.type`. An imported load is also
+  /// discharged at a *local* depot, so branching on the depot's type would
+  /// read every import as a local purchase.
+  t1ValidationId     String?
+  /// `onDelete: Restrict` declared rather than left to default: Prisma defaults
+  /// an *optional* relation to `SET NULL`, which would quietly cut a receipt
+  /// loose from its border paperwork. A T1 that has a receipt against it must
+  /// not be deletable at all. It is also what the live key already is, so
+  /// saying so here is what keeps the schema and the database in step.
+  t1Validation       T1Validation?       @relation(fields: [t1ValidationId], references: [id], onDelete: Restrict)
+  /// What a litre was bought for, on a local purchase. Null on an import,
+  /// where the cost is the cargo's and the landing fees beside it.
+  ///
+  /// The unit price only: a total would go stale the moment a quantity is
+  /// corrected, and is one multiplication away.
+  unitPrice          Decimal?            @db.Decimal(18, 2)
+  /// The currency `unitPrice` is in, **copied** from the `Currency` catalogue
+  /// rather than referenced — the same discipline as `ChainStockFee`: renaming
+  /// or retiring a currency must not rewrite what a past purchase cost.
+  currencyCode       String?
+  /// The truck that brought a local purchase in, as written on it — e.g.
+  /// `RAB123F/TR-884`.
+  ///
+  /// Free text on purpose, and **not** a `Vehicle` reference: a local
+  /// supplier's truck is nobody's nominated rig, has no driver on record here,
+  /// and must not be matched against one.
+  truckNumber        String?
   status             CentralStockStatus  @default(inStock)
   toleranceRate      Decimal?            @db.Decimal(12, 2)
   lossQty            Decimal?            @db.Decimal(18, 2)
@@ -1101,37 +1134,37 @@ enum StockTransactionType {
 }
 
 model CentralStockOrder {
-  id             String                   @id @default(uuid())
-  siteId         String?
-  site           TblSite?                 @relation(fields: [siteId], references: [id])
-  clearanceId    String
-  clearance      StockClearance           @relation(fields: [clearanceId], references: [id])
-  centralStockId String
-  centralStock   CentralStock             @relation(fields: [centralStockId], references: [id])
-  orderType      CentralStockOrderType
-  quantity       Decimal                  @db.Decimal(18, 2)
-  unitPrice      Decimal                  @db.Decimal(18, 2)
-  totalPrice     Decimal                  @db.Decimal(18, 2)
-  createdBy      String
-  user           User                     @relation("CentralStockOrderCreatedByUser", fields: [createdBy], references: [id])
-  approvedBy     String?
-  approvedUser   User?                    @relation("CentralStockOrderApprovedByUser", fields: [approvedBy], references: [id])
-  approvedAt     DateTime?
-  status         CentralOrderStatus       @default(pending)
-  createdAt      DateTime                 @default(now())
-  updatedAt      DateTime                 @updatedAt
+  id                String                   @id @default(uuid())
+  siteId            String?
+  site              TblSite?                 @relation(fields: [siteId], references: [id])
+  clearanceId       String
+  clearance         StockClearance           @relation(fields: [clearanceId], references: [id])
+  centralStockId    String
+  centralStock      CentralStock             @relation(fields: [centralStockId], references: [id])
+  orderType         CentralStockOrderType
+  quantity          Decimal                  @db.Decimal(18, 2)
+  unitPrice         Decimal                  @db.Decimal(18, 2)
+  totalPrice        Decimal                  @db.Decimal(18, 2)
+  createdBy         String
+  user              User                     @relation("CentralStockOrderCreatedByUser", fields: [createdBy], references: [id])
+  approvedBy        String?
+  approvedUser      User?                    @relation("CentralStockOrderApprovedByUser", fields: [approvedBy], references: [id])
+  approvedAt        DateTime?
+  status            CentralOrderStatus       @default(pending)
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
   /// The requisition line this draw serves, when it serves one.
   ///
   /// Nullable for good: a B2B sale is drawn against a clearance with no
   /// requisition behind it, and the draws raised before requisitions existed
   /// belong to no line either.
   requisitionLineId String?
-  requisitionLine   RequisitionLine? @relation(fields: [requisitionLineId], references: [id])
-  loadedOrders   LoadedOrder[]
-  events         CentralStockOrderEvent[]
+  requisitionLine   RequisitionLine?         @relation(fields: [requisitionLineId], references: [id])
+  loadedOrders      LoadedOrder[]
+  events            CentralStockOrderEvent[]
   /// The stock movements this draw caused, so one can be corrected without
   /// touching another draw's.
-  movements      StockTransaction[]
+  movements         StockTransaction[]
 
   @@index([centralStockId])
   @@index([clearanceId])
@@ -2574,21 +2607,20 @@ enum ClearanceAcceptStatus {
   rejected
 }
 
-
 /// A division of the company — Finance, Operations, Procurement.
 ///
 /// The offices under it are where people actually sit; a department on its own
 /// holds nobody.
 model CompanyDepartment {
-  id             String         @id @default(uuid())
+  id             String          @id @default(uuid())
   departmentName String
   /// Short code people type and import by, so it is unique: a second "FIN"
   /// means the next import silently files staff under the wrong department.
-  departmentCode String         @unique
+  departmentCode String          @unique
   description    String
-  status         StatusType     @default(active)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  status         StatusType      @default(active)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
   offices        CompanyOffice[]
 }
 
@@ -2613,9 +2645,15 @@ model CompanyOffice {
   @@index([departmentId])
 }
 
-/* -------------------------------------------------------------------------- */
-/* Requisitions                                                               */
-/* -------------------------------------------------------------------------- */
+/**
+ * --------------------------------------------------------------------------
+ */
+/**
+ * Requisitions
+ */
+/**
+ * --------------------------------------------------------------------------
+ */
 
 /// A station asking head office for stock.
 ///

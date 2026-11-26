@@ -50,6 +50,18 @@ const feesField = z.union([z.string(), z.array(z.unknown())])
   })).max(50).optional());
 
 export const createCentralStockSchema = z.object({
+  /**
+   * What kind of receipt this is, stated by the caller.
+   *
+   * **Not stored.** `t1ValidationId == null` remains the one definition of a
+   * local purchase, and the refinements below tie this to it so the two can
+   * never disagree. It exists purely so the *request* cannot be ambiguous:
+   * with the T1 relaxed to optional, a client that simply forgot to send one
+   * would otherwise have a local receipt written for it in silence, with no
+   * price, no truck, and no error. Omitting it means `import`, which is what
+   * every caller written before local purchases existed meant.
+   */
+  source: z.enum(["import", "local"]).optional(),
   deportId: uuidSchema,
   /**
    * The depot this load was **sent to**, chosen from the same list as
@@ -88,7 +100,74 @@ export const createCentralStockSchema = z.object({
     .nullable()
     .transform((value) => (value instanceof Date ? value : null)),
   supportingDocUrl: z.string().optional().nullable(),
-  t1ValidationId: uuidSchema,
+  /**
+   * The border clearance this load discharged — **imported receipts only**.
+   *
+   * Its absence is what makes a receipt a local purchase: fuel bought from a
+   * supplier in the country crossed no border, so there is no T1 to attach.
+   * Deliberately not paired with a stored `type`, which could contradict it.
+   *
+   * ⚠️ Nothing to do with `Deport.type`: an imported load is discharged at a
+   * local depot too.
+   */
+  t1ValidationId: z
+    .union([uuidSchema, z.literal("")])
+    .optional()
+    .nullable()
+    .transform((value) => value || null),
+  /**
+   * What a litre was bought for, on a local purchase.
+   *
+   * The unit price alone — the total is one multiplication away and would go
+   * stale the moment a quantity is corrected.
+   */
+  unitPrice: z
+    .union([z.coerce.number().nonnegative(), z.literal("")])
+    .optional()
+    .nullable()
+    .transform((value) => (typeof value === "number" ? value : null)),
+  /**
+   * The currency of `unitPrice`, as a code. Stored as copied text, the same
+   * discipline as the landing fees: retiring a currency must not rewrite what
+   * a past purchase cost. Checked against the `Currency` catalogue when the
+   * receipt is written, not here.
+   */
+  currencyCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .min(2)
+    .max(8)
+    .optional()
+    .nullable()
+    .or(z.literal("").transform(() => null)),
+  /**
+   * The truck that brought a local purchase in, as written on it —
+   * `RAB123F/TR-884`. Free text, and never matched against a `Vehicle`: a
+   * supplier's truck is nobody's nominated rig.
+   */
+  truckNumber: z
+    .string()
+    .trim()
+    .max(40)
+    .optional()
+    .nullable()
+    .or(z.literal("").transform(() => null)),
+  /**
+   * Whether a local supplier's load arrives already cleared.
+   *
+   * A local supplier has usually paid the duty themselves, so the litres can
+   * be sold the moment they land; when they have not, the stock sits uncleared
+   * and goes through the ordinary clearance request later.
+   *
+   * `true` writes a `StockClearance` for the whole receipt in the same
+   * transaction — it is a quantity sales draw against, not a flag. Ignored on
+   * an imported receipt, where clearance is the border's business.
+   */
+  arrivesCleared: z
+    .union([z.boolean(), z.enum(["true", "false", "1", "0", ""])])
+    .optional()
+    .transform((value) => value === true || value === "true" || value === "1"),
   status:  z.enum(CentralStockStatus).default("inStock").optional(),
   createdBy: uuidSchema,
   // `toleranceRate`, `lossQty` and `gainQty` are **no longer taken from the
@@ -99,7 +178,76 @@ export const createCentralStockSchema = z.object({
   /** What it cost to land this receipt. Left out when there is nothing to charge. */
   fees: feesField
 
-});
+})
+  /*
+   * The two kinds of receipt, kept from blurring into each other.
+   *
+   * There is no stored `type` to check against — `t1ValidationId` *is* the
+   * distinction — so these refinements are the only thing standing between a
+   * half-imported, half-local row and the database. A receipt that named a T1
+   * *and* a unit price would leave every reader guessing which it was.
+   */
+  /*
+   * An imported receipt must name its T1, exactly as it always had to: this is
+   * the old NOT NULL, moved from the column to the request. A caller that
+   * means to record a local purchase has to say so.
+   */
+  .refine(
+    (input) => input.source === "local" || input.t1ValidationId !== null,
+    {
+      message: "Choose the T1 validation being received, or send source=local for a local purchase",
+      path: ["t1ValidationId"],
+    },
+  )
+  /*
+   * And the reverse, so the stated kind and the data cannot drift apart: a
+   * request calling itself local while carrying a T1 is a mistake, not a
+   * preference to be guessed at.
+   */
+  .refine(
+    (input) => input.source !== "local" || input.t1ValidationId === null,
+    {
+      message: "A local purchase has no T1 validation",
+      path: ["t1ValidationId"],
+    },
+  )
+  .refine(
+    (input) => input.t1ValidationId === null || input.unitPrice === null,
+    {
+      message: "An imported receipt is costed by its cargo and landing fees, not a unit price",
+      path: ["unitPrice"],
+    },
+  )
+  .refine(
+    (input) => input.t1ValidationId === null || !input.truckNumber,
+    {
+      message: "An imported load's truck comes from its nomination, so it cannot be typed here",
+      path: ["truckNumber"],
+    },
+  )
+  /*
+   * A price with no currency is a number nobody can add up, and a currency
+   * with no price says nothing. Either both or neither.
+   */
+  .refine(
+    (input) => (input.unitPrice === null) === (!input.currencyCode),
+    {
+      message: "A unit price needs its currency, and a currency needs its price",
+      path: ["currencyCode"],
+    },
+  )
+  /*
+   * Clearing on arrival is a local supplier's affair. On an imported load the
+   * border decides, through a clearance request and its authorizers, so
+   * accepting it here would be a way round them.
+   */
+  .refine(
+    (input) => input.t1ValidationId === null || !input.arrivesCleared,
+    {
+      message: "An imported load is cleared through a clearance request, not on arrival",
+      path: ["arrivesCleared"],
+    },
+  );
 
 export const stockTransactionSchema = z.object({
   centralStockId: uuidSchema,

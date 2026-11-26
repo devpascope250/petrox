@@ -17,10 +17,15 @@ export class CentralStockService {
       stocks: itemReport.stocks.map((stock) => ({
         ...stock,
         supportingDocUrl: this.documentUrl(stock.supportingDocUrl),
-        t1Validation: {
-          ...stock.t1Validation,
-          supportingDocUrl: this.documentUrl(stock.t1Validation.supportingDocUrl),
-        },
+        // Null on a local purchase — there is no border paperwork to resolve a
+        // URL for. Kept as `null` rather than dropped so the key is always
+        // present and a client can test it to tell the two kinds apart.
+        t1Validation: stock.t1Validation
+          ? {
+              ...stock.t1Validation,
+              supportingDocUrl: this.documentUrl(stock.t1Validation.supportingDocUrl),
+            }
+          : null,
         clearances: stock.clearances.map((clearance) => ({
           ...clearance,
           supportingDocUrl: this.documentUrl(clearance.supportingDocUrl),

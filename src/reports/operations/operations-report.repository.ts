@@ -286,6 +286,11 @@ export class OperationsReportRepository {
             item: { select: { id: true, name: true } },
             // What it cost to land this receipt.
             chainStockFees: reportFeeSelect,
+            // A local purchase is priced on the receipt itself: there is no
+            // cargo and so no supplier invoice behind it.
+            quantityAt20C: true,
+            unitPrice: true,
+            currencyCode: true,
             t1Validation: {
               select: {
                 nomination: {
@@ -341,12 +346,31 @@ export class OperationsReportRepository {
           const combo = combos.get(key) ?? {
             depot: stock.deport, product: stock.item, invoices: new Map(), opening: 0, movements: new Map(),
           };
-          // One nomination can load from several vessels, so the cost of a
-          // receipt draws on every cargo behind it.
-          for (const vessel of stock.t1Validation.nomination.nominationVessels) {
+          /*
+           * What this receipt's fuel cost, for the weighted unit cost below.
+           *
+           * An **imported** receipt is costed by its cargo's supplier
+           * invoices, and one nomination can load from several vessels, so
+           * every cargo behind it contributes.
+           *
+           * A **local purchase** has no cargo and no invoice: the price is on
+           * the receipt. It is folded in as an invoice of its own so the
+           * depot's unit cost stays quantity-weighted across both kinds, and
+           * so `pricing()` still reports "mixed" rather than a meaningless
+           * average when a local purchase was bought in another currency.
+           */
+          for (const vessel of stock.t1Validation?.nomination.nominationVessels ?? []) {
             for (const invoice of vessel.stock.cargo.cargoInvoices) {
               combo.invoices.set(invoice.id, invoice);
             }
+          }
+          if (!stock.t1Validation && stock.unitPrice !== null && stock.currencyCode) {
+            combo.invoices.set(stock.id, {
+              id: stock.id,
+              quantity: stock.quantityAt20C,
+              unitPrice: stock.unitPrice,
+              currencyCode: stock.currencyCode,
+            });
           }
           combos.set(key, combo);
           comboOf.set(stock.id, key);

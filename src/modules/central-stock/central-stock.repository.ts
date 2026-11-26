@@ -45,6 +45,12 @@ export class CentralStockRepository {
         gainQty: true, 
         lossQty: true,
         toleranceRate: true,
+        // A local purchase: what a litre cost, in what money, and what
+        // delivered it. All null on an imported receipt, where the cost is the
+        // cargo's and the truck comes through the nomination.
+        unitPrice: true,
+        currencyCode: true,
+        truckNumber: true,
         item: { select: {
           id: true, name: true, descriptions: true, status: true, toleranceRates: true,
           baseUnit: { select: { id: true, name: true, code: true } },
@@ -141,6 +147,20 @@ export class CentralStockRepository {
         // only the newest receipt's leaked onto the item group.
         ambQuantity: number; quantityAt20C: number;
         lossQty: number | null; gainQty: number | null; toleranceRate: number | null;
+        /**
+         * Where this receipt's fuel came from, derived — never stored.
+         *
+         * `"import"` crossed a border and discharged a T1; `"local"` was
+         * bought from a supplier in the country. `t1ValidationId == null` is
+         * the whole of the distinction, so there is no second column that
+         * could contradict it.
+         *
+         * ⚠️ Not the depot's `type`: an imported load is discharged at a local
+         * depot too.
+         */
+        source: "import" | "local";
+        /** A local purchase's price and carrier. Null on an import. */
+        unitPrice: number | null; currencyCode: string | null; truckNumber: string | null;
         // What it cost to land this receipt: each charge, and the totals by
         // currency. Empty when no fee was charged against it.
         fees: ReturnType<typeof presentFees>["fees"];
@@ -256,6 +276,12 @@ export class CentralStockRepository {
         receiptNumber: stock.receiptNumber,
         offloadingDate: stock.offloadingDate,
         ambQuantity: Number(stock.ambQuantity), quantityAt20C: Number(stock.quantityAt20C),
+        // Derived from whether a T1 is attached, so it cannot disagree with
+        // the receipt it describes.
+        source: stock.t1Validation ? "import" : "local",
+        unitPrice: stock.unitPrice === null ? null : Number(stock.unitPrice),
+        currencyCode: stock.currencyCode,
+        truckNumber: stock.truckNumber,
         lossQty: stock.lossQty === null ? null : Number(stock.lossQty),
         gainQty: stock.gainQty === null ? null : Number(stock.gainQty),
         toleranceRate: stock.toleranceRate === null ? null : Number(stock.toleranceRate),
@@ -270,18 +296,43 @@ export class CentralStockRepository {
     return Array.from(report.values());
   }
 
+  /**
+   * Records fuel taken into a depot, from either end of the supply chain.
+   *
+   * **An imported load** discharges a T1 validation: the trip is closed off,
+   * its parking released, and what it lost on the road is worked out against
+   * what the T1 cleared.
+   *
+   * **A local purchase** has no T1 — `t1ValidationId` is null, which is the
+   * whole of the distinction — so none of that applies. There is no trip to
+   * close, no transporter to hold to a tolerance, and no border: instead the
+   * receipt carries what it cost and the truck that brought it, and may arrive
+   * already cleared.
+   *
+   * One record either way. A local receipt is still fuel standing in a depot:
+   * the same ledger draws it, the same orders sell it, the same clearances
+   * release it.
+   */
   async create(data: CreateCentralStockSchema) {
-    const stock = await this.db.centralStock.findFirst({ where: { t1ValidationId: data.t1ValidationId } });
-    if (stock) throw new BusinessError("400", "Can not Restock This T1 Validation");
-    // const existed
+    const t1ValidationId = data.t1ValidationId ?? null;
+    if (t1ValidationId) {
+      // One receipt per T1: a trip is discharged once. Guarded before the
+      // transaction only because it reads nothing the transaction writes.
+      const stock = await this.db.centralStock.findFirst({ where: { t1ValidationId } });
+      if (stock) throw new BusinessError("400", "Can not Restock This T1 Validation");
+    }
+    if (!t1ValidationId) await this.assertLocalPurchase(data);
+
     return await this.db.$transaction(async (tx) => {
-      const nomination = await this.db.t1Validation.findFirst({ where: { id: data.t1ValidationId }, select: {nominationId: true} });
-      if(nomination){
-        await recordStage(tx, nomination.nominationId, "stockReceived", data.createdBy);
-        // The trip is over, so the vehicle is no longer held in a parking. In
-        // the same write as the stock and the stage: a vehicle left standing in
-        // a parking it has already left would read as still being there.
-        await releaseParkingForNomination(tx, nomination.nominationId);
+      if (t1ValidationId) {
+        const nomination = await tx.t1Validation.findFirst({ where: { id: t1ValidationId }, select: {nominationId: true} });
+        if(nomination){
+          await recordStage(tx, nomination.nominationId, "stockReceived", data.createdBy);
+          // The trip is over, so the vehicle is no longer held in a parking. In
+          // the same write as the stock and the stage: a vehicle left standing in
+          // a parking it has already left would read as still being there.
+          await releaseParkingForNomination(tx, nomination.nominationId);
+        }
       }
 
       // What it cost to land the load, charged in the same write as the
@@ -289,13 +340,23 @@ export class CentralStockRepository {
       // would understate the landed cost until someone noticed.
       const landing = await chargedFees(tx, data.fees ?? [], data.createdBy);
 
-      // The difference against what the T1 cleared, at 20 °C on both sides,
-      // and the allowance the product carried that day.
-      const tolerance = await toleranceForReceipt(tx, {
-        t1ValidationId: data.t1ValidationId,
-        itemId: data.itemId,
-        receivedQuantity: data.quantityAt20C,
-      });
+      /*
+       * The difference against what the T1 cleared, at 20 °C on both sides,
+       * and the allowance the product carried that day.
+       *
+       * Left **null** on a local purchase, and that is not a gap in the data:
+       * tolerance is `t1 − received`, so with no T1 there is no figure to
+       * compute and nobody to attribute it to. `receivedAsRecorded()` reads
+       * both columns being null as "never recorded" and falls back to the
+       * quantity itself, which is exactly right here.
+       */
+      const tolerance = t1ValidationId
+        ? await toleranceForReceipt(tx, {
+            t1ValidationId,
+            itemId: data.itemId,
+            receivedQuantity: data.quantityAt20C,
+          })
+        : null;
 
       return await tx.centralStock.create({
       data: {
@@ -304,11 +365,17 @@ export class CentralStockRepository {
         deportId: data.deportId, 
         // Where it was sent, which is not necessarily where it was discharged.
         destinationId: data.destinationId ?? null,
-        t1ValidationId: data.t1ValidationId, 
+        t1ValidationId, 
         receiptNumber: data.receiptNumber,
         // When the hose came off, not when this was keyed in.
         offloadingDate: data.offloadingDate ?? null,
         itemId: data.itemId,
+        // What a local purchase cost, and what delivered it. Null on an
+        // import, where the cost is the cargo's — the schema refuses both
+        // together rather than letting a half-and-half row be written.
+        unitPrice: data.unitPrice ?? null,
+        currencyCode: data.currencyCode ?? null,
+        truckNumber: data.truckNumber ?? null,
         transactions: { 
           create: { 
             quantity: data.quantityAt20C, 
@@ -316,14 +383,70 @@ export class CentralStockRepository {
             createdBy: data.createdBy 
           } },
         ...(landing.length ? { chainStockFees: { create: landing } } : {}),
+        /*
+         * A local supplier's load that arrives duty-paid, cleared in the same
+         * write as the receipt.
+         *
+         * A real row rather than a flag, because a clearance is a quantity
+         * that sales draw against: `CentralStockOrder` points at one. It
+         * carries no `requestId` on purpose — there is nothing for the
+         * authorizers to approve when the supplier has already paid — and it
+         * carries the receipt's own document, which is what tells it apart
+         * from a cleared row that simply never went through the process.
+         */
+        ...(data.arrivesCleared && !t1ValidationId
+          ? {
+              stockClearances: {
+                create: {
+                  quantity: data.quantityAt20C,
+                  status: "cleared" as const,
+                  clearedBy: data.createdBy,
+                  supportingDocUrl: data.supportingDocUrl ?? null,
+                },
+              },
+            }
+          : {}),
         supportingDocUrl: data.supportingDocUrl,
         // What the trip lost or gained, worked out here rather than taken from
         // the form: it is the figure a transporter is held to, so it has to
         // follow from the two quantities and not from whoever typed them.
-        ...toleranceColumns(tolerance),
+        ...(tolerance ? toleranceColumns(tolerance) : {}),
       },
       include: { chainStockFees: reportFeeSelect },
     })});
+  }
+
+  /**
+   * What a local purchase has to say for itself before it is written.
+   *
+   * The shape of the request is already settled by the schema; these are the
+   * facts only the database can confirm — that the currency is one we actually
+   * keep, and that the depot is in the country. A local supplier cannot
+   * deliver into a foreign or international depot, and a receipt claiming
+   * otherwise would quietly corrupt the stock position of a depot that holds
+   * no local stock.
+   */
+  private async assertLocalPurchase(data: CreateCentralStockSchema) {
+    if (data.currencyCode) {
+      const currency = await this.db.currency.findFirst({
+        where: { code: data.currencyCode }, select: { id: true },
+      });
+      if (!currency) {
+        throw new BusinessError("400", `"${data.currencyCode}" is not a currency on record`);
+      }
+    }
+    const depots = await this.db.deport.findMany({
+      where: { id: { in: [data.deportId, ...(data.destinationId ? [data.destinationId] : [])] } },
+      select: { id: true, name: true, type: true },
+    });
+    for (const depot of depots) {
+      if (depot.type !== "local") {
+        throw new BusinessError(
+          "400",
+          `${depot.name} is a ${depot.type} depot, so a local supplier cannot deliver into it`,
+        );
+      }
+    }
   }
 
   async recentStock(centralStockId: string) {
@@ -350,7 +473,10 @@ export class CentralStockRepository {
     const stock = await tx.centralStock.findUnique({
       where: { id: data.centralStockId },
       select: { quantityAt20C: true, transactions: { select: { quantity: true, type: true } },
-        stockClearances: { select: { quantity: true } } },
+        stockClearances: { select: { quantity: true,
+          // What has actually been taken against each clearance — see the
+          // guard below for why the draws matter and the paperwork does not.
+          centralStockOrders: { select: { quantity: true } } } } },
     });
     if (!stock) throw new NotFoundError("Central stock not found");
     if (data.reconciliationType === "reconcilliationOut") {
@@ -358,9 +484,30 @@ export class CentralStockRepository {
       if (data.quantity > remaining) {
         throw new BusinessError("400", `The Remaining Stock is ${remaining} but you're Reconciling ${data.quantity}`);
       }
-      const allocated = stock.stockClearances.reduce((sum, row) => sum + Number(row.quantity), 0);
-      if (Number(stock.quantityAt20C) - data.quantity < allocated) {
-        throw new BusinessError("400", "Reconciliation would reduce stock below cleared or sold allocations");
+      /*
+       * What this receipt's fuel is already **committed to**: the litres drawn
+       * against its clearances by a sale or an issue. The balance may not be
+       * reconciled below that, because those litres have been promised to
+       * somebody and taking them away would leave a draw pointing at stock
+       * that is no longer there.
+       *
+       * Counted from the **draws**, not from the clearance quantities.
+       * Clearing fuel is paperwork: it says the duty is settled, not that the
+       * litres have left. A receipt cleared for its whole volume with nothing
+       * yet sold is entirely present and entirely correctable — judging it by
+       * the papers made it impossible to reconcile at all, which is precisely
+       * the case a depot discrepancy needs to be recorded against.
+       */
+      const committed = stock.stockClearances.reduce(
+        (sum, row) => sum + row.centralStockOrders.reduce((drawn, order) => drawn + Number(order.quantity), 0),
+        0,
+      );
+      if (Number(stock.quantityAt20C) - data.quantity < committed) {
+        throw new BusinessError(
+          "400",
+          `${committed} has already been drawn against this receipt's clearances, so its balance of `
+            + `${Number(stock.quantityAt20C)} cannot be reduced by ${data.quantity}`,
+        );
       }
     }
     if (data.state === "cleared") {

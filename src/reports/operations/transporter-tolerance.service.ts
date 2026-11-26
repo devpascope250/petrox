@@ -58,6 +58,21 @@ const tripSelect = {
 type Trip = Prisma.CentralStockGetPayload<{ select: typeof tripSelect }>;
 
 /**
+ * A trip this report can actually speak about: one with its T1 attached.
+ *
+ * `CentralStock.t1ValidationId` is nullable, because a receipt bought from a
+ * local supplier has no border paperwork — and no nominated truck, no driver
+ * and no transporter behind it either. There is nobody for such a receipt's
+ * litres to be attributed to, so this report excludes them in `where()` and
+ * works in this narrowed type thereafter rather than reaching through a
+ * relation that can be null.
+ */
+type ImportedTrip = Trip & { t1Validation: NonNullable<Trip["t1Validation"]> };
+
+/** Keeps a local purchase out of a statement that is about transporters. */
+const isImported = (trip: Trip): trip is ImportedTrip => trip.t1Validation !== null;
+
+/**
  * What each transporter's trips lost or gained between the border and the
  * depot.
  *
@@ -84,6 +99,17 @@ export class TransporterToleranceService {
     return {
       ...(query.itemId ? { itemId: query.itemId } : {}),
       ...(query.deportId ? { deportId: query.deportId } : {}),
+      /*
+       * Imported trips only.
+       *
+       * This report charges a transporter for what a load lost between the
+       * border and the depot. A local purchase crossed no border, was carried
+       * by nobody's nominated truck, and has no T1 quantity to be short
+       * against — so it is not an unjudged trip, it is not a trip at all.
+       * Without this it would be read through `t1Validation.nomination` and
+       * crash the statement.
+       */
+      t1ValidationId: { not: null },
       // The day the load was discharged, not the day the receipt was typed —
       // see `receiptWindow`. A statement sent to a transporter has to cover
       // the trips they actually ran in those weeks.
@@ -95,7 +121,7 @@ export class TransporterToleranceService {
   }
 
   /** One trip's figures, judged by the allowance it carried that day. */
-  private present(trip: Trip) {
+  private present(trip: ImportedTrip) {
     const vehicle = trip.t1Validation.nomination.driverVehicle.vechile;
     const driver = trip.t1Validation.nomination.driverVehicle.driver;
     /*
@@ -182,7 +208,8 @@ export class TransporterToleranceService {
       this.db.centralStock.count({ where }),
     ]);
 
-    const trips = all.map((trip) => this.present(trip));
+    // Narrowed as well as filtered: see `isImported`.
+    const trips = all.filter(isImported).map((trip) => this.present(trip));
     const judged = query.overTolerance === undefined
       ? trips
       : trips.filter((trip) => (query.overTolerance ? trip.withinTolerance === false : trip.withinTolerance === true));
@@ -239,7 +266,7 @@ export class TransporterToleranceService {
       chargeableQty: 0, overTolerance: 0, unjudged: 0 });
 
     const shown = query.overTolerance === undefined
-      ? page.map((trip) => this.present(trip))
+      ? page.filter(isImported).map((trip) => this.present(trip))
       : judged.slice((query.page - 1) * query.pageSize, query.page * query.pageSize);
 
     return {
