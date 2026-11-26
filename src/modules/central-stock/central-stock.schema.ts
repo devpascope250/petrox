@@ -152,7 +152,27 @@ export const createCentralStockSchema = z.object({
     .max(40)
     .optional()
     .nullable()
-    .or(z.literal("").transform(() => null)),
+    /*
+     * A transform, not `.or(z.literal(""))`: the branch above already accepts
+     * an empty string, so the union was never reached and a blank field was
+     * stored as `""` rather than as "none". A form always sends the field.
+     */
+    .transform((value) => value || null),
+  /**
+   * The supplier's own reference for the delivery, as written on their
+   * paperwork. Free text, because it is their numbering and not ours.
+   *
+   * What ties a local receipt back to the supplier's documents when there is
+   * no T1, no nomination and no cargo to trace it through.
+   */
+  sdReference: z
+    .string()
+    .trim()
+    .max(60)
+    .optional()
+    .nullable()
+    // Blank is "none", never a stored empty string — see `truckNumber`.
+    .transform((value) => value || null),
   /**
    * Whether a local supplier's load arrives already cleared.
    *
@@ -223,6 +243,18 @@ export const createCentralStockSchema = z.object({
     {
       message: "An imported load's truck comes from its nomination, so it cannot be typed here",
       path: ["truckNumber"],
+    },
+  )
+  /*
+   * An import's paperwork is the border's: its T1, its cargo's BL and the
+   * references on them. A supplier's delivery reference on the same row would
+   * leave two competing answers to "which document is this receipt?".
+   */
+  .refine(
+    (input) => input.t1ValidationId === null || !input.sdReference,
+    {
+      message: "An imported receipt is traced through its T1 and cargo, not a supplier reference",
+      path: ["sdReference"],
     },
   )
   /*

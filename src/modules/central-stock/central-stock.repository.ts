@@ -52,6 +52,7 @@ export class CentralStockRepository {
         unitPrice: true,
         currencyCode: true,
         truckNumber: true,
+        sdReference: true,
         item: { select: {
           id: true, name: true, descriptions: true, status: true, toleranceRates: true,
           baseUnit: { select: { id: true, name: true, code: true } },
@@ -162,6 +163,7 @@ export class CentralStockRepository {
         source: "import" | "local";
         /** A local purchase's price and carrier. Null on an import. */
         unitPrice: number | null; currencyCode: string | null; truckNumber: string | null;
+        sdReference: string | null;
         // What it cost to land this receipt: each charge, and the totals by
         // currency. Empty when no fee was charged against it.
         fees: ReturnType<typeof presentFees>["fees"];
@@ -283,6 +285,7 @@ export class CentralStockRepository {
         unitPrice: stock.unitPrice === null ? null : Number(stock.unitPrice),
         currencyCode: stock.currencyCode,
         truckNumber: stock.truckNumber,
+        sdReference: stock.sdReference,
         lossQty: stock.lossQty === null ? null : Number(stock.lossQty),
         gainQty: stock.gainQty === null ? null : Number(stock.gainQty),
         toleranceRate: stock.toleranceRate === null ? null : Number(stock.toleranceRate),
@@ -377,6 +380,8 @@ export class CentralStockRepository {
         unitPrice: data.unitPrice ?? null,
         currencyCode: data.currencyCode ?? null,
         truckNumber: data.truckNumber ?? null,
+        // The supplier's own reference, on a local purchase only.
+        sdReference: data.sdReference ?? null,
         transactions: { 
           create: { 
             quantity: data.quantityAt20C, 

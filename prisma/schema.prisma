@@ -1024,6 +1024,17 @@ model CentralStock {
   /// supplier's truck is nobody's nominated rig, has no driver on record here,
   /// and must not be matched against one.
   truckNumber        String?
+  /// The supplier's own reference for the delivery (`sdReference`), as written
+  /// on their paperwork, on a **local purchase**.
+  ///
+  /// The local equivalent of the border references an import carries: it is
+  /// how a receipt is tied back to the supplier's documents when there is no
+  /// T1, no nomination and no cargo to trace it through. Free text, because it
+  /// is their numbering and not ours.
+  ///
+  /// Null on an import — the schema refuses it there rather than letting a
+  /// receipt carry two kinds of paperwork.
+  sdReference        String?
   status             CentralStockStatus  @default(inStock)
   toleranceRate      Decimal?            @db.Decimal(12, 2)
   lossQty            Decimal?            @db.Decimal(18, 2)

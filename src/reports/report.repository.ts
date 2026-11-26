@@ -871,6 +871,7 @@ export class ReportRepository {
               unitPrice: true,
               currencyCode: true,
               truckNumber: true,
+              sdReference: true,
               item: {
                 select: {
                   id: true,

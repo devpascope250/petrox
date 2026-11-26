@@ -78,6 +78,7 @@ describe("the shape a local purchase has to arrive in", () => {
       unitPrice: "1250.50",
       currencyCode: "rwf",
       truckNumber: " RAB123F/TR-884 ",
+      sdReference: "  SD-2026-0471  ",
     });
 
     expect(parsed.t1ValidationId).toBeNull();
@@ -86,6 +87,9 @@ describe("the shape a local purchase has to arrive in", () => {
     // group together in a report rather than reading as two currencies.
     expect(parsed.currencyCode).toBe("RWF");
     expect(parsed.truckNumber).toBe("RAB123F/TR-884");
+    // Trimmed but not re-cased: it is the supplier's own numbering, so it is
+    // stored exactly as they wrote it.
+    expect(parsed.sdReference).toBe("SD-2026-0471");
   });
 
   /*
@@ -112,7 +116,8 @@ describe("the shape a local purchase has to arrive in", () => {
 
     expect(parsed.t1ValidationId).toBe(T1_ID);
     expect(parsed.unitPrice).toBeNull();
-    expect(parsed.truckNumber).toBeFalsy();
+    // Null rather than `""`: a blank field is "none", not an empty reference.
+    expect(parsed.truckNumber).toBeNull();
   });
 
   it("treats an empty T1 the same as none, since a form sends \"\"", () => {
@@ -140,6 +145,22 @@ describe("the shape a local purchase has to arrive in", () => {
     expect(JSON.stringify(result.error?.issues)).toContain("nomination");
   });
 
+  it("refuses a supplier reference on an imported receipt", () => {
+    // An import is traced through its T1 and its cargo's BL. A supplier's
+    // delivery reference on the same row would leave two competing answers to
+    // which document the receipt is.
+    const result = createCentralStockSchema.safeParse({
+      ...LOCAL, source: "import" as const, t1ValidationId: T1_ID, sdReference: "SD-2026-0471",
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain("supplier reference");
+  });
+
+  it("treats a blank supplier reference as none, not as an empty string", () => {
+    // Not every supplier issues one, and a form always sends the field.
+    expect(createCentralStockSchema.parse({ ...LOCAL, sdReference: "" }).sdReference).toBeNull();
+  });
+
   it("refuses a price with no currency, and a currency with no price", () => {
     expect(createCentralStockSchema.safeParse({ ...LOCAL, unitPrice: "1200" }).success).toBe(false);
     expect(createCentralStockSchema.safeParse({ ...LOCAL, currencyCode: "RWF" }).success).toBe(false);
@@ -159,6 +180,7 @@ describe("writing a local purchase", () => {
     const { repo, create, t1FindFirst } = repoFor();
     await repo.create(createCentralStockSchema.parse({
       ...LOCAL, unitPrice: "1250", currencyCode: "RWF", truckNumber: "RAB123F/TR-884",
+      sdReference: "SD-2026-0471",
     }));
 
     // No nomination to close off and no parking to release, so the T1 is never
@@ -169,6 +191,7 @@ describe("writing a local purchase", () => {
     expect(Number(data.unitPrice)).toBe(1250);
     expect(data.currencyCode).toBe("RWF");
     expect(data.truckNumber).toBe("RAB123F/TR-884");
+    expect(data.sdReference).toBe("SD-2026-0471");
   });
 
   it("leaves loss, gain and the allowance unrecorded", async () => {
