@@ -15,7 +15,7 @@
  *   pnpm tolerance:recompute --apply   # change it
  */
 import { PrismaClient } from "../prisma/generated/prisma/client.js";
-import { allowedToleranceRate, toleranceFor } from "../src/modules/central-stock/tolerance-rules.js";
+import { allowedToleranceRate, sumReceivedMovements, toleranceFor } from "../src/modules/central-stock/tolerance-rules.js";
 
 const db = new PrismaClient();
 const apply = process.argv.includes("--apply");
@@ -36,6 +36,15 @@ async function main() {
     select: {
       id: true, receiptNumber: true, itemId: true, quantityAt20C: true,
       lossQty: true, gainQty: true, toleranceRate: true, createdAt: true,
+      /*
+       * What actually arrived. **Not** `quantityAt20C`: that column doubles as
+       * the receipt's running balance and every reconciliation moves it, so
+       * recomputing from it would freeze a reconciled-out batch as a total
+       * loss and charge its whole load to whoever drove it. The `received`
+       * movements are the one immutable record — reconciliation writes its
+       * own rows beside them.
+       */
+      transactions: { where: { type: "received" }, select: { quantity: true, type: true } },
       item: { select: { name: true } },
       deport: { select: { name: true } },
       t1Validation: {
@@ -66,9 +75,16 @@ async function main() {
     // Guaranteed by the `where` above; narrowed rather than asserted so this
     // stays honest if that filter is ever changed.
     if (!receipt.t1Validation) continue;
+    /*
+     * The receipt's own `received` movements, falling back to the column only
+     * for a receipt whose movement cannot be found — better than grading it
+     * on nothing, and it is what the figure used to be in every case.
+     */
+    const movedIn = sumReceivedMovements(receipt.transactions);
+    const received = movedIn.greaterThan(0) ? movedIn : receipt.quantityAt20C;
     const tolerance = toleranceFor({
       t1Quantity: receipt.t1Validation.quantityAt20C,
-      receivedQuantity: receipt.quantityAt20C,
+      receivedQuantity: received,
       allowedRate: rates.get(receipt.itemId) ?? null,
     });
     const was = { loss: receipt.lossQty, gain: receipt.gainQty, rate: receipt.toleranceRate };
@@ -92,7 +108,7 @@ async function main() {
       `  ${receipt.createdAt.toISOString().slice(0, 10)} · ${receipt.receiptNumber ?? receipt.id.slice(0, 8)}`
       + ` · ${receipt.item.name} · ${receipt.deport.name} · ${transporter} (${plate})`);
     console.log(
-      `      T1 ${two(receipt.t1Validation.quantityAt20C)} → received ${two(receipt.quantityAt20C)}`
+      `      T1 ${two(receipt.t1Validation.quantityAt20C)} → received ${two(received)}`
       + ` · loss ${two(was.loss)} → ${two(tolerance.lossQty)}`
       + ` · gain ${two(was.gain)} → ${two(tolerance.gainQty)}`
       + ` · allowed ${two(was.rate)} → ${two(tolerance.allowedRate)}%`);

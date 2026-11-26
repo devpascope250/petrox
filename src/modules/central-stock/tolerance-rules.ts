@@ -125,20 +125,52 @@ export function toleranceFor(input: {
  * The same reasoning as the `toleranceRate` snapshot beside them: a trip
  * already made is not re-judged by anything that happened afterwards.
  *
- * Falls back to the live column when neither is recorded — receipts written
- * before those columns existed have no snapshot to read, and a report that
- * dropped them would be worse than one that grades them as they stand.
+ * With no snapshot — a receipt written before those columns existed — it falls
+ * back to the receipt's **`received` movements**, which reconciliation never
+ * touches: it writes its own rows beside them. Only with neither does it read
+ * the live column, and that reading is wrong the moment the receipt is
+ * reconciled: a batch reconciled out in full would report its whole load as
+ * lost, charging a −100% shortfall to whoever drove it. A report that dropped
+ * such receipts would still be worse than one that grades them as they stand,
+ * so the column remains the last resort rather than no answer at all.
  */
+/**
+ * What a receipt's `received` movements add up to. The movements are the one
+ * immutable record of what arrived: a reconciliation writes a
+ * `reconcilliationIn`/`Out` row of its own rather than changing these.
+ */
+export function sumReceivedMovements(
+  transactions: Array<{ quantity: Prisma.Decimal | number | string; type: string }>,
+) {
+  return transactions.reduce(
+    (total, transaction) =>
+      transaction.type === "received" ? total.plus(money(transaction.quantity)) : total,
+    money(0),
+  );
+}
+
 export function receivedAsRecorded(input: {
   t1Quantity: Prisma.Decimal | number | string | null;
   lossQty: Prisma.Decimal | number | string | null;
   gainQty: Prisma.Decimal | number | string | null;
-  /** The live column, used only when there is no snapshot. */
+  /** The live column: the last resort, and only when it is all there is. */
   quantityAt20C: Prisma.Decimal | number | string;
+  /**
+   * What the receipt's `received` movements add up to, for a receipt with no
+   * snapshot. Immutable, so it beats the column — pass it wherever the
+   * movements are already to hand.
+   */
+  receivedMovements?: Prisma.Decimal | number | string | null;
 }): Prisma.Decimal {
   // Both null means "never recorded". Both zero is a real snapshot — a trip
   // that arrived exactly — so the test is nullness, never truthiness.
-  if (input.lossQty === null && input.gainQty === null) return money(input.quantityAt20C);
+  if (input.lossQty === null && input.gainQty === null) {
+    const moved = input.receivedMovements;
+    // Zero movements is not an answer: a receipt whose `received` row cannot
+    // be found is better graded on its column than on nothing.
+    if (moved !== null && moved !== undefined && money(moved).greaterThan(0)) return money(moved);
+    return money(input.quantityAt20C);
+  }
   const t1 = money(input.t1Quantity ?? 0);
   const loss = money(input.lossQty ?? 0);
   const gain = money(input.gainQty ?? 0);

@@ -1,5 +1,6 @@
 import { Prisma } from "../../../prisma/generated/prisma/client.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
+import { settleStockStatus } from "../central-stock/stock-status.js";
 
 export interface LoadLineInput {
   requisitionLineId: string;
@@ -115,6 +116,9 @@ export async function drawForRequisitionLines(
             note: `${line.requisition.requisitionNo} · ${line.item.name}`,
           },
         });
+        // Drawn to nothing closes the batch, so the next load does not try to
+        // build itself out of an empty one.
+        await settleStockStatus(tx, stock.id);
         await tx.centralStockOrderEvent.create({
           data: { orderId: draw.id, action: "requested", toQuantity: room, actedBy },
         });

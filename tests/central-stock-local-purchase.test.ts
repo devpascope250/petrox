@@ -266,26 +266,49 @@ describe("writing a local purchase", () => {
  * against. It now measures against what has actually been **drawn**.
  */
 describe("how much of a receipt a reconciliation may remove", () => {
-  function reconcileRepo(clearances: Array<{ quantity: string; drawn: string[] }>) {
-    const create = vi.fn().mockResolvedValue({ id: "movement-1" });
+  function reconcileRepo(
+    clearances: Array<{ quantity: string; drawn: string[] }>,
+    received = "30000",
+  ) {
+    /*
+     * A faithful fake of the movement log rather than a fixed answer: the
+     * status is recomputed from the rows that exist **after** the write, so
+     * `create` appends and `findMany` hands back what is really there. A
+     * stubbed list would pass whatever the status rule did.
+     */
+    const movements: Array<{ quantity: string; type: string }> = [
+      { quantity: received, type: "received" },
+    ];
+    const create = vi.fn().mockImplementation(({ data }: { data: { quantity: number; type: string } }) => {
+      movements.push({ quantity: String(data.quantity), type: data.type });
+      return Promise.resolve({ id: "movement-1" });
+    });
+    const update = vi.fn().mockResolvedValue({});
     const tx = {
       centralStock: {
         findUnique: vi.fn().mockResolvedValue({
-          quantityAt20C: "30000",
-          transactions: [{ quantity: "30000", type: "received" }],
+          quantityAt20C: received,
+          transactions: [{ quantity: received, type: "received" }],
           stockClearances: clearances.map((row) => ({
             quantity: row.quantity,
             centralStockOrders: row.drawn.map((quantity) => ({ quantity })),
           })),
         }),
-        update: vi.fn().mockResolvedValue({}),
+        update,
       },
       stockClearance: { findFirst: vi.fn().mockResolvedValue({ id: "clearance-1" }), create: vi.fn() },
-      stockTransaction: { create },
+      stockTransaction: { create, findMany: vi.fn().mockImplementation(() => Promise.resolve(movements)) },
     };
     const db = { $transaction: vi.fn().mockImplementation((run: (t: unknown) => unknown) => run(tx)) };
-    return { repo: new CentralStockRepository(db as never), create };
+    return { repo: new CentralStockRepository(db as never), create, update };
   }
+
+  /** The `status` the receipt was left in, from the last update that set one. */
+  const statusWritten = (update: ReturnType<typeof vi.fn>) =>
+    update.mock.calls
+      .map(([args]) => (args as { data?: { status?: string } }).data?.status)
+      .filter((status): status is string => Boolean(status))
+      .at(-1);
 
   const out = {
     centralStockId: LOCAL.deportId,
@@ -314,5 +337,45 @@ describe("how much of a receipt a reconciliation may remove", () => {
     // The old message said only "below cleared or sold allocations", leaving
     // the person to guess what the limit was.
     await expect(repo.createReconciliation(out)).rejects.toThrow(/29000[\s\S]*30000[\s\S]*2000/);
+  });
+
+  /**
+   * `status` was a column nothing ever wrote: accepted on input, indexed, and
+   * filtered on by the allocation picker, but left at `inStock` for the life of
+   * every receipt — so a batch reconciled away to nothing went on offering
+   * itself to the next order forever.
+   */
+  describe("the receipt's own status, once the movement is in", () => {
+    it("closes a receipt reconciled down to nothing", async () => {
+      const { repo, update } = reconcileRepo([{ quantity: "30000", drawn: [] }], "2000");
+      // 2,000 received, 2,000 reconciled out: there is nothing left.
+      await repo.createReconciliation(out);
+      expect(statusWritten(update)).toBe("stockOut");
+    });
+
+    it("leaves a receipt open while any of it remains", async () => {
+      const { repo, update } = reconcileRepo([{ quantity: "30000", drawn: [] }]);
+      // 30,000 received, 2,000 out — 28,000 is still standing in the depot.
+      await repo.createReconciliation(out);
+      expect(statusWritten(update)).toBe("inStock");
+    });
+
+    it("reopens a receipt that is reconciled back up", async () => {
+      // The correction of a reconciliation that emptied it: fuel is there
+      // again, so it must not stay marked as empty.
+      const { repo, update } = reconcileRepo([{ quantity: "30000", drawn: [] }], "0");
+      await repo.createReconciliation({ ...out, reconciliationType: "reconcilliationIn" as const });
+      expect(statusWritten(update)).toBe("inStock");
+    });
+
+    it("counts the new movement, not the balance before it", async () => {
+      // The whole point of settling after the write: reading the log first
+      // would have left the receipt open on the strength of fuel it had just
+      // given up.
+      const { repo, update } = reconcileRepo([{ quantity: "30000", drawn: [] }], "2000");
+      await repo.createReconciliation(out);
+      const last = update.mock.calls.at(-1)?.[0] as { data?: { status?: string } };
+      expect(last?.data?.status).toBe("stockOut");
+    });
   });
 });

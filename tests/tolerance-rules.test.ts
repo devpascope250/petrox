@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  allowedToleranceRate, receivedAsRecorded, toleranceColumns, toleranceFor,
+  allowedToleranceRate, receivedAsRecorded, sumReceivedMovements, toleranceColumns, toleranceFor,
 } from "../src/modules/central-stock/tolerance-rules.js";
 import { receiptWindow } from "../src/modules/central-stock/receipt-window.js";
 
@@ -160,6 +160,56 @@ describe("what a receipt was recorded as taking in", () => {
     // Both columns zero is a trip that arrived exactly — the test has to be
     // nullness, never truthiness.
     expect(taken({ lossQty: 0, gainQty: null, quantityAt20C: 1 })).toBe("40000");
+  });
+
+  /**
+   * The snapshot-less case is not a historical curiosity: every receipt
+   * recorded before the tolerance columns existed takes it, and reading the
+   * balance column there reported a receipt reconciled out in full as having
+   * lost its entire load — −100%, "over tolerance", charged to a driver who
+   * had delivered exactly what he carried.
+   */
+  describe("a receipt with no snapshot", () => {
+    const movements = (quantity: number) => [{ quantity, type: "received" }];
+
+    it("is graded on what arrived, not on the balance it has been reduced to", () => {
+      expect(receivedAsRecorded({
+        t1Quantity: 40_000, lossQty: null, gainQty: null,
+        receivedMovements: sumReceivedMovements(movements(39_748)),
+        // Reconciled out in full: the column says there is nothing left.
+        quantityAt20C: 0,
+      }).toString()).toBe("39748");
+    });
+
+    it("still falls back to the column when no movement can be found", () => {
+      // Better than grading it on nothing, and it is what the figure was in
+      // every case before the movements were consulted.
+      expect(receivedAsRecorded({
+        t1Quantity: 40_000, lossQty: null, gainQty: null,
+        receivedMovements: sumReceivedMovements([]),
+        quantityAt20C: 39_000,
+      }).toString()).toBe("39000");
+    });
+
+    it("ignores the movements once a snapshot exists", () => {
+      // The snapshot is the figure the trip was judged on; the movements must
+      // not re-grade it.
+      expect(receivedAsRecorded({
+        t1Quantity: 40_000, lossQty: 240, gainQty: 0,
+        receivedMovements: sumReceivedMovements(movements(1)),
+        quantityAt20C: 1,
+      }).toString()).toBe("39760");
+    });
+
+    it("counts only the received rows, never a reconciliation", () => {
+      const total = sumReceivedMovements([
+        { quantity: 40_000, type: "received" },
+        { quantity: 39_748, type: "reconcilliationOut" },
+        { quantity: 500, type: "saleOut" },
+        { quantity: 100, type: "reconcilliationIn" },
+      ]);
+      expect(total.toString()).toBe("40000");
+    });
   });
 
   it("round-trips whatever toleranceFor stored, so the two cannot disagree", () => {

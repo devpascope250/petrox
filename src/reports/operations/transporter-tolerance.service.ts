@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient } from "../../../prisma/generated/prisma/client.js";
 import { paginatedData, paginationArgs } from "../../shared/pagination/index.js";
-import { receivedAsRecorded, toleranceFor } from "../../modules/central-stock/tolerance-rules.js";
+import { receivedAsRecorded, sumReceivedMovements, toleranceFor } from "../../modules/central-stock/tolerance-rules.js";
 import { receiptWindow } from "../../modules/central-stock/receipt-window.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { emailService } from "../../utils/emailService.js";
@@ -30,6 +30,12 @@ const money = (value: Prisma.Decimal) => Number(value.toDecimalPlaces(2));
 const tripSelect = {
   id: true, receiptNumber: true, quantityAt20C: true, ambQuantity: true,
   lossQty: true, gainQty: true, toleranceRate: true, status: true, createdAt: true,
+  /*
+   * Only the `received` rows. A receipt with no tolerance snapshot is graded
+   * on what arrived, never on `quantityAt20C`: that column is the running
+   * balance, so a reconciliation would charge the whole load to the driver.
+   */
+  transactions: { where: { type: "received" as const }, select: { quantity: true, type: true } },
   item: { select: { id: true, name: true } },
   deport: { select: { id: true, name: true } },
   t1Validation: {
@@ -135,6 +141,7 @@ export class TransporterToleranceService {
       t1Quantity: trip.t1Validation.quantityAt20C,
       lossQty: trip.lossQty,
       gainQty: trip.gainQty,
+      receivedMovements: sumReceivedMovements(trip.transactions),
       quantityAt20C: trip.quantityAt20C,
     });
     const tolerance = toleranceFor({

@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient, StockTransaction } from "../../../prisma/generated/prisma/client.js";
 import { toleranceColumns, toleranceForReceipt } from "./tolerance-rules.js";
 import { receiptWindow } from "./receipt-window.js";
+import { calculatingRemainStock, settleStockStatus } from "./stock-status.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
 import { presentFees, reportFeeSelect, sumFeeTotals } from "../fees/fee.repository.js";
 import { releaseParkingForNomination } from "../vehicle-locations/vehicle-location.repository.js";
@@ -463,8 +464,16 @@ export class CentralStockRepository {
     if (currentStock < data.quantity && data.type === "saleOut") {
       throw new BusinessError("400", `The Remaining Stock is ${currentStock} but you're Requesting ${data.quantity}`);
     }
-    return await this.db.stockTransaction.create({
-      data: {centralStockId: data.centralStockId, quantity: data.quantity, type: data.type, createdBy: userId },
+    return await this.db.$transaction(async (tx) => {
+      const movement = await tx.stockTransaction.create({
+        data: {centralStockId: data.centralStockId, quantity: data.quantity, type: data.type, createdBy: userId },
+      });
+      // The same rule as reconciliation: a receipt emptied by this movement is
+      // closed, and one topped back up is reopened. In one transaction with
+      // the movement, so the flag can never describe a balance that was never
+      // written.
+      await settleStockStatus(tx, data.centralStockId);
+      return movement;
     });
   }
 
@@ -528,7 +537,7 @@ export class CentralStockRepository {
       }
     );
 
-    return await tx.stockTransaction.create({ data: {
+    const movement = await tx.stockTransaction.create({ data: {
       centralStockId: data.centralStockId, 
       quantity: data.quantity,
       type: data.reconciliationType, 
@@ -536,6 +545,16 @@ export class CentralStockRepository {
       note: data.note, 
       supportingDocUrl: data.supportingDocUrl
     }})
+
+    /*
+     * Reconciled down to nothing closes the receipt; reconciled back up
+     * reopens it. After the movement, so it is counted — and in the same
+     * transaction, so a batch can never be left marked as holding fuel it no
+     * longer has.
+     */
+    await settleStockStatus(tx, data.centralStockId);
+
+    return movement;
   })
 }
 }
@@ -582,22 +601,9 @@ async function chargedFees(
   });
 }
 
-export function calculatingRemainStock(
-  transactions: Array<{
-    quantity: number | { toString(): string };
-    type: StockTransaction["type"];
-  }>,
-) {
-  return transactions.reduce((stock, transaction) => {
-    switch (transaction.type) {
-      case "received":
-      case "reconcilliationIn":
-        return stock + Number(transaction.quantity);
-      case "saleOut":
-      case "reconcilliationOut":
-        return stock - Number(transaction.quantity);
-      default:
-        return stock;
-    }
-  }, 0);
-}
+/*
+ * Re-exported from `stock-status.ts`, where it lives beside the status it
+ * decides. Kept here so the callers that already import it from the
+ * repository do not have to move.
+ */
+export { calculatingRemainStock } from "./stock-status.js";

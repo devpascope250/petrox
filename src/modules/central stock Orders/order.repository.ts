@@ -2,6 +2,7 @@ import { CentralOrderStatus, Prisma, type PrismaClient } from "../../../prisma/g
 import { paginationArgs } from "../../shared/pagination/index.js";
 import { rigSearch } from "../../shared/search/index.js";
 import { BusinessError, NotFoundError } from "../../utils/errors.js";
+import { settleStockStatus } from "../central-stock/stock-status.js";
 import { drawForRequisitionLines } from "../requisitions/requisition-load.js";
 import { CentralStockOrderReportQuerySchema, CreateCentralStockOrderSchema, CreateLoadingOrderSchema, LoadingOrderListQuery, LoadingOrderStage, LoadingOrderStatusSchema, ReceptionOrdersQuerySchema, ReceiveLoadingOrderSchema } from "./order.schema.js";
 
@@ -796,6 +797,10 @@ export class CentralStockOrderRepository {
         await tx.stockTransaction.create({ data: { centralStockId: allocation.centralStockId,
           quantity: allocation.quantity, type: "saleOut", drawId: order.id,
           createdBy: input.createdBy } });
+        // A batch drawn down to nothing is closed here rather than left
+        // offering itself to the next allocation. Per allocation, because one
+        // request may empty several batches.
+        await settleStockStatus(tx, allocation.centralStockId);
         // Where the trail starts, so the history reads from the request down.
         await tx.centralStockOrderEvent.create({ data: {
           orderId: order.id, action: "requested",
@@ -957,6 +962,9 @@ export class CentralStockOrderRepository {
             "corrected safely. Reject it and raise a new one.",
         );
       }
+      // The movement has changed size, so what is left on the batch has too:
+      // an edit downwards can reopen a receipt this request had closed.
+      await settleStockStatus(tx, order.centralStockId);
       await tx.centralStockOrderEvent.create({
         data: { orderId: id, action: "edited", comment, fromQuantity: was, toQuantity: quantity, actedBy },
       });

@@ -1,5 +1,5 @@
 import { Prisma, PrismaClient } from "../../prisma/generated/prisma/client.js";
-import { receivedAsRecorded, toleranceFor } from "../modules/central-stock/tolerance-rules.js";
+import { receivedAsRecorded, sumReceivedMovements, toleranceFor } from "../modules/central-stock/tolerance-rules.js";
 import { receiptWindow } from "../modules/central-stock/receipt-window.js";
 import { paginatedData, paginationArgs } from "../shared/pagination/index.js";
 import { presentFees, reportFeeSelect, sumFeeTotals } from "../modules/fees/fee.repository.js";
@@ -456,6 +456,12 @@ export class ReportRepository {
               toleranceRate: true,
               gainQty: true,
               lossQty: true,
+              /*
+               * Only the `received` rows, so a receipt with no tolerance
+               * snapshot is still graded on what arrived rather than on its
+               * balance column — see `receivedAsRecorded`.
+               */
+              transactions: { where: { type: "received" as const }, select: { quantity: true, type: true } },
               status: true,
               supportingDocUrl: true,
               createdAt: true,
@@ -525,6 +531,9 @@ export class ReportRepository {
           toleranceRate: true,
           gainQty: true,
           lossQty: true,
+          // See the per-item select above: the movements are what a receipt
+          // without a snapshot is graded on.
+          transactions: { where: { type: "received" as const }, select: { quantity: true, type: true } },
           t1Validation: {
             select: {
               quantityAt20C: true,
@@ -583,6 +592,7 @@ export class ReportRepository {
             t1Quantity: t1Validation.quantityAt20C,
             lossQty: stock.lossQty,
             gainQty: stock.gainQty,
+            receivedMovements: sumReceivedMovements(stock.transactions),
             quantityAt20C: stock.quantityAt20C,
           }));
           const atStandard = this.assessTolerance(
@@ -702,6 +712,7 @@ export class ReportRepository {
           t1Quantity: receipt.t1Validation.quantityAt20C,
           lossQty: receipt.lossQty,
           gainQty: receipt.gainQty,
+          receivedMovements: sumReceivedMovements(receipt.transactions),
           quantityAt20C: receipt.quantityAt20C,
         })),
         receipt.toleranceRate === null
