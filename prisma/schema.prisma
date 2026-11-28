@@ -323,7 +323,7 @@ model ItemPrice {
 }
 
 model Supplier {
-  id             String       @id @default(uuid())
+  id             String         @id @default(uuid())
   name           String
   address        String?
   phone          String?
@@ -332,11 +332,14 @@ model Supplier {
   email          String?
   documentUrl    String?
   supplierTypeId String
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  status         StatusType   @default(active)
-  supplierType   SupplierType @relation(fields: [supplierTypeId], references: [id])
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  status         StatusType     @default(active)
+  supplierType   SupplierType   @relation(fields: [supplierTypeId], references: [id])
   orders         Order[]
+  /// Receipts that name this supplier as where the fuel came from — local
+  /// receipts only; an import's supplier is read through its order.
+  centralStocks  CentralStock[]
 
   @@index([id])
   @@index([supplierTypeId])
@@ -1052,6 +1055,22 @@ model CentralStock {
   /// contradict the very thing it describes, and there is nothing in their
   /// rows to recover the real answer from.
   receiptType        CentralStockReceiptType?
+  /// Who the fuel came from, on a receipt with **no T1**.
+  ///
+  /// Optional on purpose: a `gain` is fuel found standing in the depot, so
+  /// there is nobody it came from, while a `transfer` or a `borrow` has a
+  /// counterparty worth naming. Rather than make the field conditional on the
+  /// kind — which would refuse a transfer whose source nobody recorded — it
+  /// is simply allowed to be absent.
+  ///
+  /// Refused on an import, whose supplier is already answered further up the
+  /// chain: `Order.supplier`, through the cargo the T1 drew from. A second
+  /// answer on the receipt could contradict it.
+  supplierId         String?
+  /// `onDelete: Restrict`: a supplier that has delivered stock must not be
+  /// deletable, and Prisma would otherwise default an optional relation to
+  /// `SET NULL` and quietly forget who delivered a load.
+  supplier           Supplier?                @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   status             CentralStockStatus       @default(inStock)
   toleranceRate      Decimal?                 @db.Decimal(12, 2)
   lossQty            Decimal?                 @db.Decimal(18, 2)
@@ -1071,6 +1090,7 @@ model CentralStock {
   @@index([t1ValidationId])
   @@index([status])
   @@index([receiptType])
+  @@index([supplierId])
 }
 
 enum CentralStockStatus {

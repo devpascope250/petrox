@@ -43,6 +43,8 @@ function repoFor(options: {
   /** What `deport.findMany` answers with, i.e. the depots named on the input. */
   depots?: Array<{ id: string; name: string; type: string }>;
   currency?: { id: string } | null;
+  /** What `supplier.findUnique` answers with, for the cases that name one. */
+  supplier?: { name: string; status: string } | null;
 } = {}) {
   const create = vi.fn().mockImplementation(({ data }) => Promise.resolve({ id: "receipt-1", ...data }));
   const t1FindFirst = vi.fn().mockResolvedValue({ nominationId: "nomination-1" });
@@ -69,6 +71,11 @@ function repoFor(options: {
     currency: {
       findFirst: vi.fn().mockResolvedValue(
         options.currency === undefined ? { id: "currency-1" } : options.currency,
+      ),
+    },
+    supplier: {
+      findUnique: vi.fn().mockResolvedValue(
+        options.supplier === undefined ? { name: "Kigali Fuels", status: "active" } : options.supplier,
       ),
     },
     deport: {
@@ -321,6 +328,57 @@ describe("writing a local purchase", () => {
     await expect(repo.create(createCentralStockSchema.parse({
       ...LOCAL, unitPrice: "1200", currencyCode: "ZZZ",
     }))).rejects.toThrow(/not a currency on record/);
+  });
+
+  /**
+   * Who the fuel came from. Optional rather than tied to `receiptType`: a
+   * `gain` came from nobody, and refusing a transfer whose source nobody wrote
+   * down would stop a real movement being recorded at all.
+   */
+  describe("the supplier it came from", () => {
+    const SUPPLIER = "66666666-6666-4666-8666-666666666666";
+
+    it("records the supplier named on a local receipt", async () => {
+      const { repo, create } = repoFor();
+      await repo.create(createCentralStockSchema.parse({ ...LOCAL, supplierId: SUPPLIER }));
+      expect(create.mock.calls[0]![0].data.supplierId).toBe(SUPPLIER);
+    });
+
+    it("is content with no supplier at all", async () => {
+      // A gain is fuel found standing in the depot.
+      const { repo, create } = repoFor();
+      await repo.create(createCentralStockSchema.parse({ ...LOCAL, receiptType: "gain" }));
+      expect(create.mock.calls[0]![0].data.supplierId).toBeNull();
+    });
+
+    it("refuses a supplier that is not on record", async () => {
+      const { repo } = repoFor({ supplier: null });
+      await expect(repo.create(createCentralStockSchema.parse({
+        ...LOCAL, supplierId: SUPPLIER,
+      }))).rejects.toThrow(/Supplier/);
+    });
+
+    it("refuses a retired supplier rather than recording one", async () => {
+      // The point of the field is to say who to go back to, and a supplier
+      // taken off the list is one nobody is dealing with any more.
+      const { repo } = repoFor({ supplier: { name: "Old Fuels", status: "inactive" } });
+      await expect(repo.create(createCentralStockSchema.parse({
+        ...LOCAL, supplierId: SUPPLIER,
+      }))).rejects.toThrow(/no longer an active supplier/);
+    });
+
+    it("refuses naming one on an imported receipt", () => {
+      // Its supplier is already answered by the order its cargo came from.
+      const result = createCentralStockSchema.safeParse({ ...IMPORTED, supplierId: SUPPLIER });
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain("comes from its order");
+    });
+
+    it("never looks a supplier up for an import", async () => {
+      const { repo, db } = repoFor();
+      await repo.create(createCentralStockSchema.parse({ ...IMPORTED }));
+      expect(db.supplier.findUnique).not.toHaveBeenCalled();
+    });
   });
 
   it("refuses to deliver a local purchase into a foreign depot", async () => {

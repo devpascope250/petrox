@@ -161,6 +161,23 @@ export const createCentralStockSchema = z.object({
      */
     .transform((value) => value || null),
   /**
+   * Who the fuel came from, on a local receipt.
+   *
+   * **Optional**, and deliberately not made conditional on `receiptType`: a
+   * `gain` is fuel found standing in the depot and has nobody it came from,
+   * while a `transfer` or a `borrow` has a counterparty worth naming — but
+   * refusing a transfer whose source nobody wrote down would stop a real
+   * movement being recorded at all.
+   *
+   * Refused on an import, whose supplier is already answered by the order its
+   * cargo came from.
+   */
+  supplierId: z
+    .union([uuidSchema, z.literal("")])
+    .optional()
+    .nullable()
+    .transform((value) => value || null),
+  /**
    * **How this stock came to be here.**
    *
    * `import` for a load that crossed a border on a T1. For a local receipt,
@@ -273,6 +290,18 @@ export const createCentralStockSchema = z.object({
     {
       message: "Say how this stock came in: a gain, a transfer or a borrow",
       path: ["receiptType"],
+    },
+  )
+  /*
+   * An import's supplier is read through `Order.supplier`, by way of the cargo
+   * its T1 drew from. Naming one on the receipt as well would be a second
+   * answer, free to contradict the first.
+   */
+  .refine(
+    (input) => input.t1ValidationId === null || input.supplierId === null,
+    {
+      message: "An imported receipt's supplier comes from its order, so it cannot be named here",
+      path: ["supplierId"],
     },
   )
   .refine(

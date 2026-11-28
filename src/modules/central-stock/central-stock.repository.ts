@@ -55,6 +55,9 @@ export class CentralStockRepository {
         truckNumber: true,
         sdReference: true,
         receiptType: true,
+        // Who delivered it, on a local receipt. Named rather than left as an
+        // id: the page shows it and should not have to look it up.
+        supplier: { select: { id: true, name: true } },
         item: { select: {
           id: true, name: true, descriptions: true, status: true, toleranceRates: true,
           baseUnit: { select: { id: true, name: true, code: true } },
@@ -167,6 +170,7 @@ export class CentralStockRepository {
         unitPrice: number | null; currencyCode: string | null; truckNumber: string | null;
         sdReference: string | null;
         receiptType: "import" | "gain" | "transfer" | "borrow" | null;
+        supplier: { id: string; name: string } | null;
         // What it cost to land this receipt: each charge, and the totals by
         // currency. Empty when no fee was charged against it.
         fees: ReturnType<typeof presentFees>["fees"];
@@ -290,6 +294,7 @@ export class CentralStockRepository {
         truckNumber: stock.truckNumber,
         sdReference: stock.sdReference,
         receiptType: stock.receiptType,
+        supplier: stock.supplier,
         lossQty: stock.lossQty === null ? null : Number(stock.lossQty),
         gainQty: stock.gainQty === null ? null : Number(stock.gainQty),
         toleranceRate: stock.toleranceRate === null ? null : Number(stock.toleranceRate),
@@ -395,6 +400,9 @@ export class CentralStockRepository {
          * the question was asked.
          */
         receiptType: data.receiptType ?? (t1ValidationId ? ("import" as const) : null),
+        // Where it came from, on a local receipt. Null for a gain, which came
+        // from nobody, and refused by the schema on an import.
+        supplierId: data.supplierId ?? null,
         transactions: { 
           create: { 
             quantity: data.quantityAt20C, 
@@ -440,7 +448,8 @@ export class CentralStockRepository {
    *
    * The shape of the request is already settled by the schema; these are the
    * facts only the database can confirm — that the currency is one we actually
-   * keep, and that the depot is in the country. A local supplier cannot
+   * keep, that the supplier named is one still being dealt with, and that the
+   * depot is in the country. A local supplier cannot
    * deliver into a foreign or international depot, and a receipt claiming
    * otherwise would quietly corrupt the stock position of a depot that holds
    * no local stock.
@@ -452,6 +461,21 @@ export class CentralStockRepository {
       });
       if (!currency) {
         throw new BusinessError("400", `"${data.currencyCode}" is not a currency on record`);
+      }
+    }
+    if (data.supplierId) {
+      const supplier = await this.db.supplier.findUnique({
+        where: { id: data.supplierId }, select: { name: true, status: true },
+      });
+      if (!supplier) throw new NotFoundError("Supplier");
+      /*
+       * A retired supplier is refused rather than recorded. The point of the
+       * field is to say who to go back to, and one taken off the list is one
+       * nobody is dealing with any more — the same discipline as a retired fee
+       * type, which `chargedFees` refuses too.
+       */
+      if (supplier.status !== "active") {
+        throw new BusinessError("400", `${supplier.name} is no longer an active supplier`);
       }
     }
     const depots = await this.db.deport.findMany({

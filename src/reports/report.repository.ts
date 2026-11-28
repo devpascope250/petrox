@@ -874,6 +874,8 @@ export class ReportRepository {
               truckNumber: true,
               sdReference: true,
               receiptType: true,
+              // Who delivered it, on a local receipt.
+              supplier: { select: { id: true, name: true } },
               item: {
                 select: {
                   id: true,
