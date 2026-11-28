@@ -107,7 +107,7 @@ export class CentralStockOrderRepository {
         approvedUser: { select: { id: true, firstName: true, lastName: true, email: true } },
         clearance: { select: {
           id: true, quantity: true, status: true, fees: true, amount: true,
-          supportingDocUrl: true, dmsDocUrl: true, createdAt: true,
+          supportingDocUrl: true, dmsDocUrl: true, dmsReference: true, createdAt: true,
           agent: { select: { id: true, names: true, fees: true, status: true } },
         } },
         centralStock: { select: {

@@ -94,7 +94,8 @@ export class CentralStockRepository {
           orderBy: { createdAt: "desc" },
           select: {
             id: true, quantity: true, fees: true, amount: true, status: true,
-            supportingDocUrl: true, dmsDocUrl: true, assessmentDocUrl: true, createdAt: true, updatedAt: true,
+            supportingDocUrl: true, dmsDocUrl: true, dmsReference: true, assessmentDocUrl: true,
+            createdAt: true, updatedAt: true,
             agent: { select: { id: true, names: true, fees: true, status: true } },
             user: { select: { id: true, firstName: true, lastName: true } },
             centralStockOrders: { select: { quantity: true, orderType: true } },
@@ -185,7 +186,8 @@ export class CentralStockRepository {
           amount: number | null;
           status: typeof centralStocks[number]["stockClearances"][number]["status"];
           request: typeof centralStocks[number]["stockClearances"][number]["request"];
-          supportingDocUrl: string | null; dmsDocUrl: string | null; assessmentDocUrl: string | null;
+          supportingDocUrl: string | null; dmsDocUrl: string | null; dmsReference: string | null;
+          assessmentDocUrl: string | null;
           createdAt: Date; updatedAt: Date;
           agent: typeof centralStocks[number]["stockClearances"][number]["agent"];
           clearedBy: typeof centralStocks[number]["stockClearances"][number]["user"];
@@ -250,6 +252,7 @@ export class CentralStockRepository {
           amount: clearance.amount === null ? null : Number(clearance.amount),
           status: clearance.status, request: clearance.request,
           supportingDocUrl: clearance.supportingDocUrl, dmsDocUrl: clearance.dmsDocUrl,
+          dmsReference: clearance.dmsReference,
           assessmentDocUrl: clearance.assessmentDocUrl,
           createdAt: clearance.createdAt, updatedAt: clearance.updatedAt, agent: clearance.agent,
           clearedBy: clearance.user,

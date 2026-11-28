@@ -61,6 +61,39 @@ describe("raising a clearance", () => {
   });
 });
 
+describe("the DMS reference", () => {
+  it("is optional: the number often comes back after the clearance is raised", () => {
+    const parsed = createStockClearanceSchema.parse(base);
+    expect(parsed.dmsReference).toBeNull();
+  });
+
+  it("stores a blank input as null, not an empty string", () => {
+    // An untouched input arrives as "" from a multipart form. Null is what
+    // "nobody wrote it down" looks like; "" reads as a number somebody typed.
+    expect(createStockClearanceSchema.parse({ ...base, dmsReference: "" }).dmsReference).toBeNull();
+    expect(createStockClearanceSchema.parse({ ...base, dmsReference: "   " }).dmsReference).toBeNull();
+  });
+
+  it("keeps the number as customs wrote it, trimmed", () => {
+    expect(
+      createStockClearanceSchema.parse({ ...base, dmsReference: " DMS/2026/00831 " }).dmsReference,
+    ).toBe("DMS/2026/00831");
+  });
+
+  it("refuses a reference too long to be one", () => {
+    const result = createStockClearanceSchema.safeParse({ ...base, dmsReference: "D".repeat(61) });
+    expect(result.success).toBe(false);
+  });
+
+  it("is nothing to do with the DMS document: both may be given", () => {
+    const parsed = createStockClearanceSchema.parse({
+      ...base, dmsReference: "DMS/2026/00831", dmsDocUrl: "/uploads/dms.pdf",
+    });
+    expect(parsed.dmsReference).toBe("DMS/2026/00831");
+    expect(parsed.dmsDocUrl).toBe("/uploads/dms.pdf");
+  });
+});
+
 describe("deciding on a clearance", () => {
   it("takes an approval with no reason", () => {
     expect(clearanceDecisionSchema.parse({ decision: "approved" })).toEqual({ decision: "approved" });

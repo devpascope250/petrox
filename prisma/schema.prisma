@@ -1157,6 +1157,9 @@ model StockClearance {
   agent              ClearingAgent?      @relation(fields: [agentId], references: [id])
   supportingDocUrl   String?
   dmsDocUrl          String?
+  /// The DMS number written on the declaration, copied from the act of
+  /// clearing that raised this row — see `ClearanceRequest.dmsReference`.
+  dmsReference       String?
   assessmentDocUrl   String?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
@@ -2576,6 +2579,13 @@ model ClearanceRequest {
   agentId          String?
   agent            ClearingAgent?        @relation(fields: [agentId], references: [id])
   dmsDocUrl        String?
+  /// **The DMS number** of the declaration this clearance was filed under, as
+  /// customs wrote it. Optional: the number often comes back after the
+  /// clearance has been raised, and a clearance nobody could record because
+  /// the number had not arrived yet is worse than one recorded without it. Free
+  /// text — it is customs' format, not ours, so nothing here parses it. Null
+  /// means nobody has written it down, not that there is none.
+  dmsReference     String?
   assessmentDocUrl String?
   supportingDocUrl String?
   /// Awaiting while anyone is still to decide, rejected the moment one says

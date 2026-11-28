@@ -5,7 +5,7 @@ import type { ClearanceDecisionSchema } from "./authorizers/clearance-authorizer
 
 const requestSelect = {
   id: true, quantity: true, fees: true, amount: true, clearanceStatus: true,
-  dmsDocUrl: true, assessmentDocUrl: true, supportingDocUrl: true,
+  dmsDocUrl: true, dmsReference: true, assessmentDocUrl: true, supportingDocUrl: true,
   paymentDocUrl: true, paidAt: true, createdAt: true, updatedAt: true,
   item: { select: { id: true, name: true } },
   agent: { select: { id: true, names: true, fees: true, status: true } },
@@ -266,6 +266,7 @@ export class StockClearanceRepository {
           amount,
           agentId: data.agentId,
           dmsDocUrl: data.dmsDocUrl,
+          dmsReference: data.dmsReference ?? null,
           assessmentDocUrl: data.assessmentDocUrl,
           supportingDocUrl: data.supportingDocUrl,
           createdBy: data.clearedBy,
@@ -284,6 +285,10 @@ export class StockClearanceRepository {
           amount: amount * ratio,
           agentId: data.agentId, clearedBy: data.clearedBy,
           dmsDocUrl: data.dmsDocUrl,
+          // Copied onto every receipt the act drew on, as the documents are:
+          // the row is what the central-stock screens read, and one declaration
+          // covers all of them.
+          dmsReference: data.dmsReference ?? null,
           assessmentDocUrl: data.assessmentDocUrl,
           supportingDocUrl: data.supportingDocUrl,
         }});

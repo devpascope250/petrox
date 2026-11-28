@@ -42,6 +42,18 @@ export const createStockClearanceSchema = z.object({
     clearedBy: uuidSchema.optional(),
     agentId: uuidSchema.optional(),
     dmsDocUrl: z.string().optional(),
+    /*
+     * The DMS number on the declaration. Optional on purpose: the number often
+     * comes back after the clearance has been raised, and refusing the whole
+     * clearance for want of it would stop a real one being recorded at all.
+     *
+     * Free text — customs' format, not ours — and blank is stored as null, so
+     * an untouched input never becomes an empty string that reads as a number
+     * somebody wrote down.
+     */
+    dmsReference: z.string().trim().max(60, "A DMS reference cannot be longer than 60 characters")
+      .optional()
+      .transform((value) => value || null),
     assessmentDocUrl: z.string().optional(),
     supportingDocUrl: z.string().optional(),
   }).refine((data) => {
