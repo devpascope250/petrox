@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { uuidSchema } from "../../shared/validation/index.js";
-import { CentralStockStatus, StockStateStatus, StockTransactionType } from "../../../prisma/generated/prisma/enums.js";
+import { CentralStockReceiptType, CentralStockStatus, StockStateStatus, StockTransactionType } from "../../../prisma/generated/prisma/enums.js";
 
 export const centralStockReportQuerySchema = z.object({
   startDate: z.coerce.date().optional(),
   endDate: z.coerce.date().optional(),
   status: z.enum(CentralStockStatus).optional(),
+  /** How the stock came about: an import, or one of the three local kinds. */
+  receiptType: z.enum(CentralStockReceiptType).optional(),
   itemId: uuidSchema.optional(),
   depotId: uuidSchema.optional(),
   // Keep this alias while the database and older clients use `deport`.
@@ -159,6 +161,24 @@ export const createCentralStockSchema = z.object({
      */
     .transform((value) => value || null),
   /**
+   * **How this stock came to be here.**
+   *
+   * `import` for a load that crossed a border on a T1. For a local receipt,
+   * which of the three kinds it is: fuel found over (`gain`), moved in from
+   * somewhere else of ours (`transfer`), or taken on loan (`borrow`).
+   *
+   * Required on a local receipt — it is the one question nothing else in the
+   * row answers — and refused as anything but `import` on an imported one,
+   * where the T1 has already answered it. Left out on an import it is stored
+   * as `import` rather than null, so every receipt written from here states
+   * its kind.
+   */
+  receiptType: z
+    .enum(CentralStockReceiptType)
+    .optional()
+    .nullable()
+    .or(z.literal("").transform(() => null)),
+  /**
    * The supplier's own reference for the delivery, as written on their
    * paperwork. Free text, because it is their numbering and not ours.
    *
@@ -229,6 +249,30 @@ export const createCentralStockSchema = z.object({
     {
       message: "A local purchase has no T1 validation",
       path: ["t1ValidationId"],
+    },
+  )
+  /*
+   * An import's kind is settled by its T1: it crossed a border, and that is
+   * what `import` means. Anything else on the same row would be two answers to
+   * one question.
+   */
+  .refine(
+    (input) => input.t1ValidationId === null || !input.receiptType || input.receiptType === "import",
+    {
+      message: "An imported receipt is an import; gain, transfer and borrow are for a local receipt",
+      path: ["receiptType"],
+    },
+  )
+  /*
+   * And a local receipt has to say which of the three it is. Nothing else in
+   * the row can be read for it, and guessing would put a word on the record
+   * that nobody chose — so it is asked for rather than defaulted.
+   */
+  .refine(
+    (input) => input.t1ValidationId !== null || (!!input.receiptType && input.receiptType !== "import"),
+    {
+      message: "Say how this stock came in: a gain, a transfer or a borrow",
+      path: ["receiptType"],
     },
   )
   .refine(

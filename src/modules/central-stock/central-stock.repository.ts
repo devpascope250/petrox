@@ -17,7 +17,7 @@ export class CentralStockRepository {
   constructor(private db: PrismaClient) {}
 
   async list(query: CentralStockReportQuerySchema) {
-    const { startDate, endDate, itemId, status } = query;
+    const { startDate, endDate, itemId, status, receiptType } = query;
     const depotId = query.depotId ?? query.deportId;
     const centralStocks = await this.db.centralStock.findMany({
       orderBy: { createdAt: "desc" },
@@ -28,6 +28,7 @@ export class CentralStockRepository {
         ...receiptWindow(startDate, endDate),
         ...(depotId && { deportId: depotId }),
         ...(status && { status }),
+        ...(receiptType && { receiptType }),
         ...(itemId && { itemId }),
       },
       select: {
@@ -53,6 +54,7 @@ export class CentralStockRepository {
         currencyCode: true,
         truckNumber: true,
         sdReference: true,
+        receiptType: true,
         item: { select: {
           id: true, name: true, descriptions: true, status: true, toleranceRates: true,
           baseUnit: { select: { id: true, name: true, code: true } },
@@ -164,6 +166,7 @@ export class CentralStockRepository {
         /** A local purchase's price and carrier. Null on an import. */
         unitPrice: number | null; currencyCode: string | null; truckNumber: string | null;
         sdReference: string | null;
+        receiptType: "import" | "gain" | "transfer" | "borrow" | null;
         // What it cost to land this receipt: each charge, and the totals by
         // currency. Empty when no fee was charged against it.
         fees: ReturnType<typeof presentFees>["fees"];
@@ -286,6 +289,7 @@ export class CentralStockRepository {
         currencyCode: stock.currencyCode,
         truckNumber: stock.truckNumber,
         sdReference: stock.sdReference,
+        receiptType: stock.receiptType,
         lossQty: stock.lossQty === null ? null : Number(stock.lossQty),
         gainQty: stock.gainQty === null ? null : Number(stock.gainQty),
         toleranceRate: stock.toleranceRate === null ? null : Number(stock.toleranceRate),
@@ -382,6 +386,15 @@ export class CentralStockRepository {
         truckNumber: data.truckNumber ?? null,
         // The supplier's own reference, on a local purchase only.
         sdReference: data.sdReference ?? null,
+        /*
+         * How the stock came in. The schema has already refused anything but
+         * `import` alongside a T1 and insisted on one of the three local kinds
+         * without one, so this cannot disagree with `t1ValidationId`. An
+         * import that said nothing is still an import, written as such rather
+         * than left null: null is reserved for the receipts recorded before
+         * the question was asked.
+         */
+        receiptType: data.receiptType ?? (t1ValidationId ? ("import" as const) : null),
         transactions: { 
           create: { 
             quantity: data.quantityAt20C, 

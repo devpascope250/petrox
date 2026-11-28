@@ -957,7 +957,7 @@ enum ExtraT1ValidationStatus {
 }
 
 model CentralStock {
-  id                 String              @id @default(uuid())
+  id                 String                   @id @default(uuid())
   /// Where the load was **sent**, as the trip was dispatched.
   ///
   /// Chosen from the same depot list as `deportId`, and recorded beside it
@@ -970,14 +970,14 @@ model CentralStock {
   /// can be recovered for the past from a free-text field that may name a town
   /// rather than a depot.
   destinationId      String?
-  destination        Deport?             @relation("CentralStockDestination", fields: [destinationId], references: [id])
+  destination        Deport?                  @relation("CentralStockDestination", fields: [destinationId], references: [id])
   /// Where the load was actually discharged.
   deportId           String
-  deport             Deport              @relation("CentralStockDeport", fields: [deportId], references: [id])
+  deport             Deport                   @relation("CentralStockDeport", fields: [deportId], references: [id])
   itemId             String
-  item               Item                @relation(fields: [itemId], references: [id])
-  ambQuantity        Decimal             @default(0.0) @db.Decimal(18, 2)
-  quantityAt20C      Decimal             @default(0.0) @db.Decimal(18, 2)
+  item               Item                     @relation(fields: [itemId], references: [id])
+  ambQuantity        Decimal                  @default(0.0) @db.Decimal(18, 2)
+  quantityAt20C      Decimal                  @default(0.0) @db.Decimal(18, 2)
   receiptNumber      String?
   /// The day the truck was actually discharged into the depot.
   ///
@@ -1006,13 +1006,13 @@ model CentralStock {
   /// loose from its border paperwork. A T1 that has a receipt against it must
   /// not be deletable at all. It is also what the live key already is, so
   /// saying so here is what keeps the schema and the database in step.
-  t1Validation       T1Validation?       @relation(fields: [t1ValidationId], references: [id], onDelete: Restrict)
+  t1Validation       T1Validation?            @relation(fields: [t1ValidationId], references: [id], onDelete: Restrict)
   /// What a litre was bought for, on a local purchase. Null on an import,
   /// where the cost is the cargo's and the landing fees beside it.
   ///
   /// The unit price only: a total would go stale the moment a quantity is
   /// corrected, and is one multiplication away.
-  unitPrice          Decimal?            @db.Decimal(18, 2)
+  unitPrice          Decimal?                 @db.Decimal(18, 2)
   /// The currency `unitPrice` is in, **copied** from the `Currency` catalogue
   /// rather than referenced — the same discipline as `ChainStockFee`: renaming
   /// or retiring a currency must not rewrite what a past purchase cost.
@@ -1035,12 +1035,29 @@ model CentralStock {
   /// Null on an import — the schema refuses it there rather than letting a
   /// receipt carry two kinds of paperwork.
   sdReference        String?
-  status             CentralStockStatus  @default(inStock)
-  toleranceRate      Decimal?            @db.Decimal(12, 2)
-  lossQty            Decimal?            @db.Decimal(18, 2)
-  gainQty            Decimal?            @db.Decimal(18, 2)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  /// **How this stock came to be here.** `import` for a load that crossed a
+  /// border on a T1; for a receipt with no T1, which of the three local kinds
+  /// it is — fuel found over (`gain`), moved in from elsewhere (`transfer`)
+  /// or taken on loan (`borrow`).
+  ///
+  /// Tied to `t1ValidationId` by the create schema and never free to disagree
+  /// with it: `import` is refused without a T1, and the other three are
+  /// refused with one. It is stored rather than derived because the three
+  /// local kinds cannot be told apart from the rest of the row — unlike the
+  /// import/local split, which `t1ValidationId` already answers. `import` is
+  /// one of its values so that every receipt states its kind in one field.
+  ///
+  /// Nullable, and null means "recorded before this was asked". Defaulting the
+  /// local purchases already on record to `import` would have made the column
+  /// contradict the very thing it describes, and there is nothing in their
+  /// rows to recover the real answer from.
+  receiptType        CentralStockReceiptType?
+  status             CentralStockStatus       @default(inStock)
+  toleranceRate      Decimal?                 @db.Decimal(12, 2)
+  lossQty            Decimal?                 @db.Decimal(18, 2)
+  gainQty            Decimal?                 @db.Decimal(18, 2)
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
   stockClearances    StockClearance[]
   transactions       StockTransaction[]
   centralStockOrders CentralStockOrder[]
@@ -1053,11 +1070,26 @@ model CentralStock {
   @@index([itemId])
   @@index([t1ValidationId])
   @@index([status])
+  @@index([receiptType])
 }
 
 enum CentralStockStatus {
   inStock
   stockOut
+}
+
+/// How a central stock receipt came about — see `CentralStock.receiptType`.
+enum CentralStockReceiptType {
+  /// Crossed a border and discharged a T1 validation. The only kind a receipt
+  /// with a T1 may be, and the only kind the others may not be.
+  import
+  /// Fuel found over: a surplus standing in the depot that no receipt had
+  /// accounted for.
+  gain
+  /// Moved in from somewhere else of our own.
+  transfer
+  /// Taken on loan, to be given back.
+  borrow
 }
 
 model StockTransaction {

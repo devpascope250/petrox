@@ -19,6 +19,9 @@ const LOCAL = {
   // that merely omitted one would otherwise be written as a local purchase in
   // silence. See the schema's refinements.
   source: "local" as const,
+  // A local receipt has to say how the stock came in; nothing else in the row
+  // answers it. See the `receiptType` refinements.
+  receiptType: "transfer" as const,
   deportId: "11111111-1111-4111-8111-111111111111",
   itemId: "22222222-2222-4222-8222-222222222222",
   createdBy: "33333333-3333-4333-8333-333333333333",
@@ -27,6 +30,13 @@ const LOCAL = {
   receiptNumber: "LOCAL-001",
 };
 const T1_ID = "44444444-4444-4444-8444-444444444444";
+/**
+ * The same fixture as an imported receipt: the T1 it discharges, and the one
+ * kind a receipt with a T1 may be. Spread over `LOCAL` because every one of
+ * these cases asks what an import does with a field that belongs to a local
+ * purchase.
+ */
+const IMPORTED = { ...LOCAL, source: "import" as const, t1ValidationId: T1_ID, receiptType: "import" as const };
 const FOREIGN_DEPOT = "55555555-5555-4555-8555-555555555555";
 
 function repoFor(options: {
@@ -112,7 +122,7 @@ describe("the shape a local purchase has to arrive in", () => {
   });
 
   it("still accepts an imported receipt exactly as before", () => {
-    const parsed = createCentralStockSchema.parse({ ...LOCAL, source: "import" as const, t1ValidationId: T1_ID });
+    const parsed = createCentralStockSchema.parse({ ...IMPORTED });
 
     expect(parsed.t1ValidationId).toBe(T1_ID);
     expect(parsed.unitPrice).toBeNull();
@@ -131,7 +141,7 @@ describe("the shape a local purchase has to arrive in", () => {
    */
   it("refuses a unit price on an imported receipt", () => {
     const result = createCentralStockSchema.safeParse({
-      ...LOCAL, source: "import" as const, t1ValidationId: T1_ID, unitPrice: "1200", currencyCode: "RWF",
+      ...IMPORTED, unitPrice: "1200", currencyCode: "RWF",
     });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain("landing fees");
@@ -139,7 +149,7 @@ describe("the shape a local purchase has to arrive in", () => {
 
   it("refuses a typed truck number on an imported receipt", () => {
     const result = createCentralStockSchema.safeParse({
-      ...LOCAL, source: "import" as const, t1ValidationId: T1_ID, truckNumber: "RAB123F",
+      ...IMPORTED, truckNumber: "RAB123F",
     });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain("nomination");
@@ -150,7 +160,7 @@ describe("the shape a local purchase has to arrive in", () => {
     // delivery reference on the same row would leave two competing answers to
     // which document the receipt is.
     const result = createCentralStockSchema.safeParse({
-      ...LOCAL, source: "import" as const, t1ValidationId: T1_ID, sdReference: "SD-2026-0471",
+      ...IMPORTED, sdReference: "SD-2026-0471",
     });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain("supplier reference");
@@ -161,6 +171,48 @@ describe("the shape a local purchase has to arrive in", () => {
     expect(createCentralStockSchema.parse({ ...LOCAL, sdReference: "" }).sdReference).toBeNull();
   });
 
+  /**
+   * `receiptType` is a stored column, unlike `source`, because the three local
+   * kinds cannot be told apart from anything else in the row. That makes it
+   * the one place where a second source of truth could contradict
+   * `t1ValidationId`, so both directions are pinned shut.
+   */
+  describe("how the stock came in", () => {
+    it("takes each of the three local kinds", () => {
+      for (const kind of ["gain", "transfer", "borrow"] as const) {
+        expect(createCentralStockSchema.parse({ ...LOCAL, receiptType: kind }).receiptType).toBe(kind);
+      }
+    });
+
+    it("insists a local receipt says which kind it is", () => {
+      const { receiptType: _omitted, ...withoutKind } = LOCAL;
+      const result = createCentralStockSchema.safeParse(withoutKind);
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain("a gain, a transfer or a borrow");
+    });
+
+    it("refuses calling a local receipt an import", () => {
+      // It crossed no border. The word would contradict the missing T1 beside
+      // it, which is the whole thing this column must never do.
+      const result = createCentralStockSchema.safeParse({ ...LOCAL, receiptType: "import" });
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain("a gain, a transfer or a borrow");
+    });
+
+    it("refuses a local kind on an imported receipt", () => {
+      for (const kind of ["gain", "transfer", "borrow"] as const) {
+        const result = createCentralStockSchema.safeParse({ ...IMPORTED, receiptType: kind });
+        expect(result.success).toBe(false);
+        expect(JSON.stringify(result.error?.issues)).toContain("An imported receipt is an import");
+      }
+    });
+
+    it("lets an imported receipt leave it out, as every existing caller does", () => {
+      const { receiptType: _omitted, ...withoutKind } = IMPORTED;
+      expect(createCentralStockSchema.safeParse(withoutKind).success).toBe(true);
+    });
+  });
+
   it("refuses a price with no currency, and a currency with no price", () => {
     expect(createCentralStockSchema.safeParse({ ...LOCAL, unitPrice: "1200" }).success).toBe(false);
     expect(createCentralStockSchema.safeParse({ ...LOCAL, currencyCode: "RWF" }).success).toBe(false);
@@ -168,7 +220,7 @@ describe("the shape a local purchase has to arrive in", () => {
 
   it("refuses clearing an imported load on arrival, which is the authorizers' job", () => {
     const result = createCentralStockSchema.safeParse({
-      ...LOCAL, source: "import" as const, t1ValidationId: T1_ID, arrivesCleared: "true",
+      ...IMPORTED, arrivesCleared: "true",
     });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain("clearance request");
@@ -192,6 +244,21 @@ describe("writing a local purchase", () => {
     expect(data.currencyCode).toBe("RWF");
     expect(data.truckNumber).toBe("RAB123F/TR-884");
     expect(data.sdReference).toBe("SD-2026-0471");
+  });
+
+  it("stores the kind the clerk chose", async () => {
+    const { repo, create } = repoFor();
+    await repo.create(createCentralStockSchema.parse({ ...LOCAL, receiptType: "borrow" }));
+    expect(create.mock.calls[0]![0].data.receiptType).toBe("borrow");
+  });
+
+  it("writes an import as an import even when it said nothing", async () => {
+    // Null is reserved for the receipts recorded before the question was
+    // asked; a receipt written from here always states its kind.
+    const { repo, create } = repoFor();
+    const { receiptType: _omitted, ...withoutKind } = IMPORTED;
+    await repo.create(createCentralStockSchema.parse(withoutKind));
+    expect(create.mock.calls[0]![0].data.receiptType).toBe("import");
   });
 
   it("leaves loss, gain and the allowance unrecorded", async () => {
@@ -269,7 +336,7 @@ describe("writing a local purchase", () => {
 
   it("does not check depots or currency for an imported receipt", async () => {
     const { repo, db } = repoFor();
-    await repo.create(createCentralStockSchema.parse({ ...LOCAL, source: "import" as const, t1ValidationId: T1_ID }));
+    await repo.create(createCentralStockSchema.parse({ ...IMPORTED }));
 
     // An import is discharged wherever its trip took it, and is costed by its
     // cargo — neither question belongs to it.

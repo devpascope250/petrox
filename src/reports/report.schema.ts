@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CentralStockStatus, StockStateStatus, StockTransactionType } from "../../prisma/generated/prisma/enums.js";
+import { CentralStockReceiptType, CentralStockStatus, StockStateStatus, StockTransactionType } from "../../prisma/generated/prisma/enums.js";
 import { paginationQuerySchema, uuidSchema } from "../shared/validation/index.js";
 
 const reportDate = z.union([z.iso.date(), z.iso.datetime({ offset: true })]);
@@ -27,6 +27,8 @@ export const centralStockReportSchema = paginationQuerySchema.extend({
   itemId: uuidSchema.optional(),
   depotId: uuidSchema.optional(),
   status: z.enum(CentralStockStatus).optional(),
+  /** How the stock came in: an import, or a gain, transfer or borrow. */
+  receiptType: z.enum(CentralStockReceiptType).optional(),
   clearanceStatus: z.enum(StockStateStatus).optional(),
 }).refine(({ startDate, endDate }) => !startDate || !endDate || startDate <= endDate, {
   message: "startDate must be before or equal to endDate", path: ["endDate"],

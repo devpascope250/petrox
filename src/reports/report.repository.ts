@@ -837,6 +837,7 @@ export class ReportRepository {
       ...(query.itemId && { itemId: query.itemId }),
       ...(query.depotId && { deportId: query.depotId }),
       ...(query.status && { status: query.status }),
+      ...(query.receiptType && { receiptType: query.receiptType }),
       ...(query.clearanceStatus && {
         stockClearances: { some: { status: query.clearanceStatus } },
       }),
@@ -872,6 +873,7 @@ export class ReportRepository {
               currencyCode: true,
               truckNumber: true,
               sdReference: true,
+              receiptType: true,
               item: {
                 select: {
                   id: true,
